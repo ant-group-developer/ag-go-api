@@ -26,4 +26,12 @@ Mọi response đều có `x-request-id`; request được ghi dưới dạng JS
 log để liên kết với hệ thống observability.
 
 Project media hiện hỗ trợ metadata attach/list/update/remove/reorder và thumbnail
-selection. Binary upload, multipart và R2 worker thuộc Phase 3.
+selection. Local binary upload và processing đã có ở Phase 3; multipart/R2
+production vẫn để sau.
+
+Phase 3 local upload:
+
+- `STORAGE_PROVIDER=local` lưu object trong `LOCAL_STORAGE_ROOT`.
+- Upload flow: tạo session → PUT binary → complete → worker tạo `thumbnail` và
+  `preview` variants.
+- R2/S3 adapter sẽ thay thế local adapter khi triển khai production storage.

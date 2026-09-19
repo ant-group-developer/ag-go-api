@@ -6,18 +6,22 @@ import { AppController } from './app.controller';
 import { Auth0Guard } from './common/auth/auth0.guard';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
+import { AssetUploadSessionEntity } from './database/entities/asset-upload-session.entity';
+import { AssetVariantEntity } from './database/entities/asset-variant.entity';
 import { AssetEntity } from './database/entities/asset.entity';
 import { CategoryEntity } from './database/entities/category.entity';
 import { CountryEntity } from './database/entities/country.entity';
 import { FolderAccessGrantEntity } from './database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from './database/entities/folder-closure.entity';
 import { FolderEntity } from './database/entities/folder.entity';
+import { MediaRenderJobEntity } from './database/entities/media-render-job.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
 import { ProjectMediaEntity } from './database/entities/project-media.entity';
 import { ProjectEntity } from './database/entities/project.entity';
 import { ProvinceEntity } from './database/entities/province.entity';
 import { TagEntity } from './database/entities/tag.entity';
 import { HealthController } from './health/health.controller';
+import { AssetsModule } from './modules/assets/assets.module';
 import { CatalogsModule } from './modules/catalogs/catalogs.module';
 import { FoldersModule } from './modules/folders/folders.module';
 import { MediaModule } from './modules/media/media.module';
@@ -46,6 +50,9 @@ import { ProjectsModule } from './modules/projects/projects.module';
           AssetEntity,
           ProjectMediaEntity,
           ProjectEvaluationSummaryEntity,
+          AssetUploadSessionEntity,
+          AssetVariantEntity,
+          MediaRenderJobEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -55,6 +62,7 @@ import { ProjectsModule } from './modules/projects/projects.module';
     CatalogsModule,
     ProjectsModule,
     MediaModule,
+    AssetsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

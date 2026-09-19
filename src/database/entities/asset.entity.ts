@@ -17,6 +17,9 @@ export class AssetEntity {
   @Column({ name: 'mime_type', type: 'varchar', length: 100 })
   mimeType!: string;
 
+  @Column({ name: 'checksum_sha256', type: 'char', length: 64, nullable: true })
+  checksumSha256!: string | null;
+
   @Column({ name: 'file_size_bytes', type: 'bigint' })
   fileSizeBytes!: string;
 
