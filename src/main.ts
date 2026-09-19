@@ -29,7 +29,9 @@ async function bootstrap(): Promise<void> {
     .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup(`${prefix}/docs`, app, document);
+  SwaggerModule.setup(`${prefix}/docs`, app, document, {
+    jsonDocumentUrl: `${prefix}/openapi.json`,
+  });
 
   const port = config.get<number>('PORT', 3000);
   await app.listen(port);
