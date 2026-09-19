@@ -13,6 +13,7 @@ async function bootstrap(): Promise<void> {
   app.enableCors({
     origin: config.get<string>('FRONTEND_ORIGIN', 'http://localhost:5173'),
     credentials: true,
+    exposedHeaders: ['x-request-id'],
   });
   app.useGlobalPipes(
     new ValidationPipe({

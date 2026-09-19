@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { CatalogsService } from './catalogs.service';
@@ -11,6 +11,7 @@ import {
 } from './dto/create-catalog.dto';
 
 @ApiTags('catalogs')
+@ApiBearerAuth()
 @Controller()
 export class CatalogsController {
   constructor(

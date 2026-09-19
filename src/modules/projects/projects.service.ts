@@ -5,6 +5,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { CategoryEntity } from '../../database/entities/category.entity';
 import { CountryEntity } from '../../database/entities/country.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
+import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-evaluation-summary.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ProvinceEntity } from '../../database/entities/province.entity';
 import { FolderAccessService } from '../folders/folder-access.service';
@@ -24,6 +25,8 @@ export class ProjectsService {
     private readonly countryRepository: Repository<CountryEntity>,
     @InjectRepository(ProvinceEntity)
     private readonly provinceRepository: Repository<ProvinceEntity>,
+    @InjectRepository(ProjectEvaluationSummaryEntity)
+    private readonly summaryRepository: Repository<ProjectEvaluationSummaryEntity>,
     private readonly folderAccessService: FolderAccessService,
   ) {}
 
@@ -52,7 +55,7 @@ export class ProjectsService {
   async create(dto: CreateProjectDto, userId: string, groupIds: string[]) {
     await this.requireFolderAccess(dto.folderId, userId, groupIds, 'editor');
     await this.validateCatalogs(dto.countryId, dto.provinceId, dto.categoryId);
-    return this.projectRepository.save(
+    const project = await this.projectRepository.save(
       this.projectRepository.create({
         id: uuidv7(),
         ownerUserId: userId,
@@ -64,8 +67,23 @@ export class ProjectsService {
         provinceId: dto.provinceId ?? null,
         evaluationStatus: 'draft',
         mediaCount: 0,
+        imageCount: 0,
+        videoCount: 0,
+        originalBytes: '0',
+        renderedBytes: '0',
       }),
     );
+    await this.summaryRepository.save(
+      this.summaryRepository.create({
+        projectId: project.id,
+        totalMedia: 0,
+        pendingCount: 0,
+        approvedCount: 0,
+        rejectedCount: 0,
+        evaluationStatus: 'draft',
+      }),
+    );
+    return project;
   }
 
   async update(id: string, dto: UpdateProjectDto, userId: string, groupIds: string[]) {

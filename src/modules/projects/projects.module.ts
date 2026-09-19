@@ -4,6 +4,7 @@ import { AuthContextService } from '../../common/auth-context.service';
 import { CategoryEntity } from '../../database/entities/category.entity';
 import { CountryEntity } from '../../database/entities/country.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
+import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-evaluation-summary.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ProvinceEntity } from '../../database/entities/province.entity';
 import { FoldersModule } from '../folders/folders.module';
@@ -15,6 +16,7 @@ import { ProjectsService } from './projects.service';
     FoldersModule,
     TypeOrmModule.forFeature([
       ProjectEntity,
+      ProjectEvaluationSummaryEntity,
       FolderEntity,
       CategoryEntity,
       CountryEntity,

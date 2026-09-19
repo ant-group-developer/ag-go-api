@@ -20,6 +20,9 @@ export class ProjectEntity {
   @Column({ name: 'province_id', type: 'uuid', nullable: true })
   provinceId!: string | null;
 
+  @Column({ name: 'thumbnail_project_media_id', type: 'uuid', nullable: true })
+  thumbnailProjectMediaId!: string | null;
+
   @Column({ type: 'varchar', length: 200 })
   name!: string;
 
@@ -31,6 +34,18 @@ export class ProjectEntity {
 
   @Column({ name: 'media_count', type: 'integer', default: 0 })
   mediaCount!: number;
+
+  @Column({ name: 'image_count', type: 'integer', default: 0 })
+  imageCount!: number;
+
+  @Column({ name: 'video_count', type: 'integer', default: 0 })
+  videoCount!: number;
+
+  @Column({ name: 'original_bytes', type: 'bigint', default: 0 })
+  originalBytes!: string;
+
+  @Column({ name: 'rendered_bytes', type: 'bigint', default: 0 })
+  renderedBytes!: string;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
