@@ -9,5 +9,8 @@ Package manager: Yarn `1.22.22`.
 
 ```bash
 yarn install
+yarn migration:run
 yarn start:dev
 ```
+
+Local PostgreSQL được publish ở port `55432` qua Docker Compose.
