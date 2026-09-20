@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, Post, Put, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post, Req, Res } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
@@ -23,22 +23,7 @@ export class AssetsController {
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
-    return this.assetsService.createUploadSession(
-      dto,
-      context.userId,
-      context.groupIds,
-      idempotencyKey,
-    );
-  }
-
-  @Put('assets/:assetId/upload-session/:sessionId/content')
-  writeUpload(
-    @Param('assetId') assetId: string,
-    @Param('sessionId') sessionId: string,
-    @Req() request: Request,
-  ) {
-    const context = this.authContext.getContext(request);
-    return this.assetsService.writeUpload(assetId, sessionId, request, context.userId);
+    return this.assetsService.createUploadSession(dto, context.userId, idempotencyKey);
   }
 
   @Post('assets/:assetId/complete')
@@ -64,7 +49,7 @@ export class AssetsController {
   @Get('assets/:assetId/variants')
   listVariants(@Param('assetId') assetId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.assetsService.listVariants(assetId, context.userId, context.groupIds);
+    return this.assetsService.listVariants(assetId, context.userId);
   }
 
   @Get('assets/:assetId/preview/:variantCode')
@@ -75,18 +60,12 @@ export class AssetsController {
     @Res() response: Response,
   ) {
     const context = this.authContext.getContext(request);
-    return this.assetsService.preview(
-      assetId,
-      variantCode,
-      context.userId,
-      context.groupIds,
-      response,
-    );
+    return this.assetsService.preview(assetId, variantCode, context.userId, response);
   }
 
   @Post('assets/:assetId/retry')
   retry(@Param('assetId') assetId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.assetsService.retry(assetId, context.userId, context.groupIds);
+    return this.assetsService.retry(assetId, context.userId);
   }
 }

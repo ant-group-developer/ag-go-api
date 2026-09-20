@@ -4,11 +4,15 @@ export const STORAGE_ADAPTER = Symbol('STORAGE_ADAPTER');
 
 export type ObjectHead = {
   sizeBytes: number;
-  checksumSha256: string;
+  checksumSha256?: string;
 };
 
 export interface StorageAdapter {
-  writeObject(storageKey: string, input: Readable): Promise<ObjectHead>;
+  getPresignedPutUrl(
+    storageKey: string,
+    contentType: string,
+    expiresInSeconds: number,
+  ): Promise<string>;
   headObject(storageKey: string): Promise<ObjectHead | null>;
   readObject(storageKey: string): Readable;
   copyObject(sourceKey: string, targetKey: string): Promise<ObjectHead>;

@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
@@ -20,10 +21,11 @@ export class MediaProcessingService implements OnModuleInit, OnModuleDestroy {
     @InjectRepository(MediaRenderJobEntity)
     private readonly jobRepository: Repository<MediaRenderJobEntity>,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
+    private readonly config: ConfigService,
   ) {}
 
   onModuleInit(): void {
-    if (process.env.MEDIA_WORKER_ENABLED === 'false') {
+    if (!this.config.getOrThrow<boolean>('MEDIA_WORKER_ENABLED')) {
       return;
     }
     this.workerTimer = setInterval(() => {
@@ -64,7 +66,7 @@ export class MediaProcessingService implements OnModuleInit, OnModuleDestroy {
         dedupeKey,
         status: 'queued',
         progressPercent: 0,
-        progressMessage: 'Queued for local processing',
+        progressMessage: 'Queued for R2 media processing',
         attemptCount: (previous?.attemptCount ?? 0) + 1,
         errorCode: null,
         errorMessage: null,
@@ -115,7 +117,7 @@ export class MediaProcessingService implements OnModuleInit, OnModuleDestroy {
       await this.assetRepository.update(asset.id, { processingStatus: 'processing' });
       await this.jobRepository.update(job.id, {
         progressPercent: 40,
-        progressMessage: 'Creating local preview variants',
+        progressMessage: 'Creating R2 preview variants',
       });
 
       const variantCodes = ['thumbnail', 'preview'];
@@ -150,7 +152,7 @@ export class MediaProcessingService implements OnModuleInit, OnModuleDestroy {
       await this.jobRepository.update(job.id, {
         status: 'completed',
         progressPercent: 100,
-        progressMessage: 'Local variants are ready',
+        progressMessage: 'R2 variants are ready',
         finishedAt: new Date(),
         errorCode: null,
         errorMessage: null,

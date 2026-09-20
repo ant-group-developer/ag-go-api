@@ -61,19 +61,14 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async createUploadSession(
-    dto: CreateUploadSessionDto,
-    userId: string,
-    groupIds: string[],
-    idempotencyKey?: string,
-  ) {
-    const maxUploadBytes = this.config.get<number>('MAX_UPLOAD_SIZE_BYTES', 100 * 1024 * 1024);
+  async createUploadSession(dto: CreateUploadSessionDto, userId: string, idempotencyKey?: string) {
+    const maxUploadBytes = this.config.getOrThrow<number>('MAX_UPLOAD_SIZE_BYTES');
     if (dto.fileSizeBytes > maxUploadBytes) {
       throw new BadRequestException(`File exceeds the ${maxUploadBytes} byte upload limit`);
     }
     if (dto.targetProjectId) {
       const project = await this.getProject(dto.targetProjectId);
-      await this.requireProjectAccess(project, userId, groupIds, 'editor');
+      await this.requireProjectAccess(project, userId, 'editor');
     }
 
     const normalizedIdempotencyKey = idempotencyKey?.trim().slice(0, 255);
@@ -92,11 +87,11 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
 
     const assetId = uuidv7();
     const sessionId = uuidv7();
-    const bucketName = this.config.get<string>('MEDIA_BUCKET', 'ag-go-media');
+    const bucketName = this.config.getOrThrow<string>('R2_BUCKET');
     const extension = this.normalizeExtension(dto.extension, dto.originalFilename);
     const storageKey = `uploads/${userId}/${assetId}${extension ? `.${extension}` : ''}`;
     const expiresAt = new Date(
-      Date.now() + this.config.get<number>('UPLOAD_SESSION_TTL_SECONDS', 3600) * 1000,
+      Date.now() + this.config.getOrThrow<number>('UPLOAD_SESSION_TTL_SECONDS') * 1000,
     );
 
     const session = await this.dataSource.transaction(async (manager) => {
@@ -108,7 +103,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
         mimeType: dto.mimeType.trim(),
         checksumSha256: null,
         fileSizeBytes: String(dto.fileSizeBytes),
-        storageProvider: this.config.get<string>('STORAGE_PROVIDER', 'local'),
+        storageProvider: 'r2',
         originalBucket: bucketName,
         originalStorageKey: storageKey,
         processingStatus: 'uploading',
@@ -137,29 +132,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       );
     });
 
-    return this.toUploadSessionResponse(session);
-  }
-
-  async writeUpload(
-    assetId: string,
-    sessionId: string,
-    input: import('node:stream').Readable,
-    userId: string,
-  ) {
-    const session = await this.getOwnedSession(assetId, sessionId, userId);
-    if (session.status === 'completed') {
-      return this.getAsset(assetId);
-    }
-    this.ensureSessionOpen(session);
-
-    const head = await this.storage.writeObject(session.storageKey, input);
-    await this.sessionRepository.update(session.id, { status: 'uploading' });
-    return {
-      assetId,
-      uploadSessionId: session.id,
-      sizeBytes: head.sizeBytes,
-      checksumSha256: head.checksumSha256,
-    };
+    return this.toUploadSessionResponse(session, dto.mimeType);
   }
 
   async completeUpload(assetId: string, dto: CompleteUploadDto, userId: string) {
@@ -191,7 +164,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
 
     await this.dataSource.transaction(async (manager) => {
       await manager.update(AssetEntity, session.assetId, {
-        checksumSha256: head.checksumSha256,
+        checksumSha256: head.checksumSha256 ?? expectedChecksum ?? null,
         processingStatus: 'uploaded',
       });
       await manager.update(AssetUploadSessionEntity, session.id, {
@@ -245,22 +218,16 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     return { success: true };
   }
 
-  async listVariants(assetId: string, userId: string, groupIds: string[]) {
-    await this.requireAssetAccess(assetId, userId, groupIds, 'viewer');
+  async listVariants(assetId: string, userId: string) {
+    await this.requireAssetAccess(assetId, userId, 'viewer');
     return this.variantRepository.find({
       where: { assetId },
       order: { variantCode: 'ASC' },
     });
   }
 
-  async preview(
-    assetId: string,
-    variantCode: string,
-    userId: string,
-    groupIds: string[],
-    response: Response,
-  ) {
-    await this.requireAssetAccess(assetId, userId, groupIds, 'viewer');
+  async preview(assetId: string, variantCode: string, userId: string, response: Response) {
+    await this.requireAssetAccess(assetId, userId, 'viewer');
     const variant = await this.variantRepository.findOne({
       where: { assetId, variantCode, status: 'ready' },
     });
@@ -272,8 +239,8 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     this.storage.readObject(variant.storageKey).pipe(response);
   }
 
-  async retry(assetId: string, userId: string, groupIds: string[]) {
-    await this.requireAssetAccess(assetId, userId, groupIds, 'editor');
+  async retry(assetId: string, userId: string) {
+    await this.requireAssetAccess(assetId, userId, 'editor');
     return this.processingService.enqueue(assetId, userId);
   }
 
@@ -301,12 +268,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     return asset;
   }
 
-  private async requireAssetAccess(
-    assetId: string,
-    userId: string,
-    groupIds: string[],
-    minimum: FolderAccessLevel,
-  ) {
+  private async requireAssetAccess(assetId: string, userId: string, minimum: FolderAccessLevel) {
     const asset = await this.getAsset(assetId);
     if (asset.createdBy === userId) {
       return asset;
@@ -317,21 +279,11 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       .where('media.asset_id = :assetId', { assetId })
       .getMany();
     for (const project of projects) {
-      if (await this.folderAccessService.canAccess(project.folderId, userId, groupIds, minimum)) {
+      if (await this.folderAccessService.canAccess(project.folderId, userId, minimum)) {
         return asset;
       }
     }
     throw new ForbiddenException('Insufficient asset permission');
-  }
-
-  private async getOwnedSession(assetId: string, sessionId: string, userId: string) {
-    const session = await this.sessionRepository.findOne({
-      where: { id: sessionId, assetId, createdBy: userId },
-    });
-    if (!session) {
-      throw new NotFoundException('Upload session not found');
-    }
-    return session;
   }
 
   private async getProject(projectId: string) {
@@ -345,15 +297,9 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
   private async requireProjectAccess(
     project: ProjectEntity,
     userId: string,
-    groupIds: string[],
     minimum: FolderAccessLevel,
   ) {
-    const allowed = await this.folderAccessService.canAccess(
-      project.folderId,
-      userId,
-      groupIds,
-      minimum,
-    );
+    const allowed = await this.folderAccessService.canAccess(project.folderId, userId, minimum);
     if (!allowed) {
       throw new ForbiddenException('Insufficient project permission');
     }
@@ -369,13 +315,21 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  private toUploadSessionResponse(session: AssetUploadSessionEntity) {
+  private async toUploadSessionResponse(session: AssetUploadSessionEntity, contentType?: string) {
+    const expiresInSeconds = Math.max(
+      1,
+      Math.floor((session.expiresAt.getTime() - Date.now()) / 1000),
+    );
     return {
       assetId: session.assetId,
       uploadSessionId: session.id,
       storageProvider: session.storageProvider,
       storageKey: session.storageKey,
-      uploadUrl: `/assets/${session.assetId}/upload-session/${session.id}/content`,
+      uploadUrl: await this.storage.getPresignedPutUrl(
+        session.storageKey,
+        session.asset?.mimeType ?? contentType ?? 'application/octet-stream',
+        Math.min(expiresInSeconds, this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS')),
+      ),
       expiresAt: session.expiresAt,
       status: session.status,
     };

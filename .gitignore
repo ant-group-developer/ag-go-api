@@ -5,7 +5,6 @@ coverage/
 .env.*
 !.env.example
 logs/
-.data/
 .DS_Store
 .prettier-cache
 *.tsbuildinfo

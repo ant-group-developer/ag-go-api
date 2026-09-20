@@ -20,7 +20,7 @@ export class AssetUploadSessionEntity {
   @Column({ name: 'target_project_id', type: 'uuid', nullable: true })
   targetProjectId!: string | null;
 
-  @Column({ name: 'storage_provider', type: 'varchar', length: 20, default: 'local' })
+  @Column({ name: 'storage_provider', type: 'varchar', length: 20, default: 'r2' })
   storageProvider!: string;
 
   @Column({ name: 'bucket_name', type: 'varchar', length: 100 })

@@ -6,6 +6,7 @@ import { AppController } from './app.controller';
 import { Auth0Guard } from './common/auth/auth0.guard';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
+import { envValidationSchema } from './config/env.validation';
 import { AssetUploadSessionEntity } from './database/entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './database/entities/asset-variant.entity';
 import { AssetEntity } from './database/entities/asset.entity';
@@ -32,12 +33,17 @@ import { ProjectsModule } from './modules/projects/projects.module';
     ConfigModule.forRoot({
       isGlobal: true,
       cache: true,
+      validationSchema: envValidationSchema,
+      validationOptions: {
+        abortEarly: false,
+        allowUnknown: true,
+      },
     }),
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
-        url: config.get<string>('DATABASE_URL', 'postgres://aggo:aggo@localhost:55432/aggo'),
+        url: config.getOrThrow<string>('DATABASE_URL'),
         entities: [
           FolderEntity,
           FolderClosureEntity,

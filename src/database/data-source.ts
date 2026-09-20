@@ -1,5 +1,7 @@
+import { config as loadEnv } from 'dotenv';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
+import { envValidationSchema } from '../config/env.validation';
 import { AssetUploadSessionEntity } from './entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './entities/asset-variant.entity';
 import { AssetEntity } from './entities/asset.entity';
@@ -19,10 +21,23 @@ import { ProjectMediaMigration1720000000000 } from './migrations/1720000000000-p
 import { BackfillProjectSummariesMigration1730000000000 } from './migrations/1730000000000-backfill-project-summaries';
 import { LocalUploadRenderMigration1740000000000 } from './migrations/1740000000000-local-upload-render';
 import { UploadTargetProjectMigration1750000000000 } from './migrations/1750000000000-upload-target-project';
+import { R2StorageDefaultsMigration1760000000000 } from './migrations/1760000000000-r2-storage-defaults';
+import { UserOnlyAccessMigration1770000000000 } from './migrations/1770000000000-user-only-access';
+
+loadEnv();
+
+const { error, value: validatedEnv } = envValidationSchema.validate(process.env, {
+  abortEarly: false,
+  allowUnknown: true,
+});
+
+if (error) {
+  throw new Error(`Environment validation failed: ${error.message}`);
+}
 
 export const AppDataSource = new DataSource({
   type: 'postgres',
-  url: process.env.DATABASE_URL ?? 'postgres://aggo:aggo@localhost:55432/aggo',
+  url: validatedEnv.DATABASE_URL,
   entities: [
     AssetEntity,
     AssetUploadSessionEntity,
@@ -45,6 +60,8 @@ export const AppDataSource = new DataSource({
     BackfillProjectSummariesMigration1730000000000,
     LocalUploadRenderMigration1740000000000,
     UploadTargetProjectMigration1750000000000,
+    R2StorageDefaultsMigration1760000000000,
+    UserOnlyAccessMigration1770000000000,
   ],
   synchronize: false,
 });

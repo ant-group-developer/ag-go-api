@@ -7,11 +7,11 @@ import { AppModule } from './app.module';
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule);
   const config = app.get(ConfigService);
-  const prefix = config.get<string>('API_PREFIX', 'api');
+  const prefix = config.getOrThrow<string>('API_PREFIX');
 
   app.setGlobalPrefix(prefix);
   app.enableCors({
-    origin: config.get<string>('FRONTEND_ORIGIN', 'http://localhost:5173'),
+    origin: config.getOrThrow<string>('FRONTEND_ORIGIN'),
     credentials: true,
     exposedHeaders: ['x-request-id'],
   });
@@ -34,7 +34,7 @@ async function bootstrap(): Promise<void> {
     jsonDocumentUrl: `${prefix}/openapi.json`,
   });
 
-  const port = config.get<number>('PORT', 3000);
+  const port = config.getOrThrow<number>('PORT');
   await app.listen(port);
 }
 
