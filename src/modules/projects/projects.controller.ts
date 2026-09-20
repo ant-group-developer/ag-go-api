@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { ListProjectsQueryDto } from './dto/list-projects-query.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { ProjectsService } from './projects.service';
 
@@ -16,9 +17,9 @@ export class ProjectsController {
   ) {}
 
   @Get()
-  list(@Req() request: Request) {
+  list(@Query() query: ListProjectsQueryDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.projectsService.list(context.userId);
+    return this.projectsService.list(query, context.userId);
   }
 
   @Post()

@@ -2,15 +2,18 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
+import { ListResponseDto } from '../../common/dto/list-response.dto';
 import { CategoryEntity } from '../../database/entities/category.entity';
 import { CountryEntity } from '../../database/entities/country.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
 import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-evaluation-summary.entity';
+import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ProvinceEntity } from '../../database/entities/province.entity';
 import { TagEntity } from '../../database/entities/tag.entity';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateProjectDto } from './dto/create-project.dto';
+import { ListProjectsQueryDto } from './dto/list-projects-query.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 
 @Injectable()
@@ -33,17 +36,132 @@ export class ProjectsService {
     private readonly folderAccessService: FolderAccessService,
   ) {}
 
-  async list(userId: string) {
+  async list(query: ListProjectsQueryDto, userId: string) {
     const folderIds = await this.folderAccessService.accessibleFolderIds(userId);
     if (folderIds.length === 0) {
-      return { items: [], nextCursor: null };
+      return new ListResponseDto([], query.page, query.pageSize, 0);
     }
-    const items = await this.projectRepository.find({
-      where: { folderId: In(folderIds) },
-      order: { updatedAt: 'DESC', id: 'DESC' },
-      take: 50,
+
+    const projectQuery = this.projectRepository
+      .createQueryBuilder('project')
+      .where('project.folderId IN (:...accessibleFolderIds)', { accessibleFolderIds: folderIds });
+
+    if (query.normalizedKeyword) {
+      projectQuery.andWhere(
+        "(LOWER(project.name) LIKE :keyword OR LOWER(COALESCE(project.description, '')) LIKE :keyword)",
+        { keyword: `%${query.normalizedKeyword.toLocaleLowerCase('vi-VN')}%` },
+      );
+    }
+    if (query.folderId) {
+      projectQuery.andWhere(
+        `project.folderId IN (
+          SELECT folder_closure.descendant_id
+          FROM folder_closure
+          WHERE folder_closure.ancestor_id = :filterFolderId
+        )`,
+        { filterFolderId: query.folderId },
+      );
+    }
+    if (query.countryId) {
+      projectQuery.andWhere('project.countryId = :countryId', { countryId: query.countryId });
+    }
+    if (query.provinceId) {
+      projectQuery.andWhere('project.provinceId = :provinceId', { provinceId: query.provinceId });
+    }
+    if (query.categoryId) {
+      projectQuery.andWhere('project.categoryId = :categoryId', { categoryId: query.categoryId });
+    }
+    if (query.tagIds?.length) {
+      projectQuery.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM project_tags project_tag
+          WHERE project_tag.project_id = project.id
+            AND project_tag.tag_id IN (:...tagIds)
+        )`,
+        { tagIds: query.tagIds },
+      );
+    }
+
+    const [projects, total] = await projectQuery
+      .orderBy('project.updatedAt', 'DESC')
+      .addOrderBy('project.id', 'DESC')
+      .skip(query.skip)
+      .take(query.pageSize)
+      .getManyAndCount();
+
+    if (projects.length === 0) {
+      return new ListResponseDto([], query.page, query.pageSize, total);
+    }
+
+    const projectIds = projects.map((project) => project.id);
+    const folderRecords = await this.folderRepository.findBy({
+      id: In([...new Set(projects.map((project) => project.folderId))]),
     });
-    return { items, nextCursor: null };
+    const countries = await this.countryRepository.findBy({
+      id: In([
+        ...new Set(projects.flatMap((project) => (project.countryId ? [project.countryId] : []))),
+      ]),
+    });
+    const provinces = await this.provinceRepository.findBy({
+      id: In([
+        ...new Set(projects.flatMap((project) => (project.provinceId ? [project.provinceId] : []))),
+      ]),
+    });
+    const categories = await this.categoryRepository.findBy({
+      id: In([
+        ...new Set(projects.flatMap((project) => (project.categoryId ? [project.categoryId] : []))),
+      ]),
+    });
+    const tags = (await this.dataSource.query(
+      `SELECT project_tag.project_id AS "projectId", tag.id, tag.name
+       FROM project_tags project_tag
+       INNER JOIN tags tag ON tag.id = project_tag.tag_id
+       WHERE project_tag.project_id = ANY($1::uuid[])
+       ORDER BY tag.normalized_name ASC`,
+      [projectIds],
+    )) as Array<{ projectId: string; id: string; name: string }>;
+    const thumbnailMediaIds = projects.flatMap((project) =>
+      project.thumbnailProjectMediaId ? [project.thumbnailProjectMediaId] : [],
+    );
+    const thumbnailMedia = thumbnailMediaIds.length
+      ? await this.dataSource.getRepository(ProjectMediaEntity).findBy({
+          id: In(thumbnailMediaIds),
+        })
+      : [];
+    const thumbnailAssetIds = new Map(thumbnailMedia.map((media) => [media.id, media.assetId]));
+    const folderById = new Map(folderRecords.map((folder) => [folder.id, folder]));
+    const countryById = new Map(countries.map((country) => [country.id, country]));
+    const provinceById = new Map(provinces.map((province) => [province.id, province]));
+    const categoryById = new Map(categories.map((category) => [category.id, category]));
+    const tagsByProjectId = new Map<string, Array<{ id: string; name: string }>>();
+    for (const tag of tags) {
+      const projectTags = tagsByProjectId.get(tag.projectId) ?? [];
+      projectTags.push({ id: tag.id, name: tag.name });
+      tagsByProjectId.set(tag.projectId, projectTags);
+    }
+
+    const items = projects.map((project) => {
+      const country = project.countryId ? countryById.get(project.countryId) : undefined;
+      const province = project.provinceId ? provinceById.get(project.provinceId) : undefined;
+      const category = project.categoryId ? categoryById.get(project.categoryId) : undefined;
+      const folder = folderById.get(project.folderId);
+
+      return Object.assign(project, {
+        folderPath: folder?.pathText ?? '',
+        countryName: country?.name ?? null,
+        countryFlagUrl: country?.flagUrl ?? null,
+        provinceName: province?.name ?? null,
+        categoryName: category?.name ?? null,
+        thumbnailAssetId: project.thumbnailProjectMediaId
+          ? (thumbnailAssetIds.get(project.thumbnailProjectMediaId) ?? null)
+          : null,
+        tags: (tagsByProjectId.get(project.id) ?? []).map((tag) => tag.name),
+        tagIds: (tagsByProjectId.get(project.id) ?? []).map((tag) => tag.id),
+      });
+    });
+
+    return new ListResponseDto(items, query.page, query.pageSize, total);
   }
 
   async findOne(id: string, userId: string) {
