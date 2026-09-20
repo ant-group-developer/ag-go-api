@@ -36,7 +36,8 @@ export class ProvincesService {
     }
 
     const [items, total] = await builder
-      .orderBy('province.sort_order', 'ASC')
+      .orderBy('country.name', 'ASC')
+      .addOrderBy('province.sort_order', 'ASC')
       .addOrderBy('province.name', 'ASC')
       .skip((page - 1) * pageSize)
       .take(pageSize)
