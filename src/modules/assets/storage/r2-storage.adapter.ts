@@ -89,6 +89,26 @@ export class R2StorageAdapter implements StorageAdapter {
     );
   }
 
+  async putObject(
+    storageKey: string,
+    body: Readable | Buffer,
+    contentType: string,
+  ): Promise<ObjectHead> {
+    await this.client.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: storageKey,
+        Body: body,
+        ContentType: contentType,
+      }),
+    );
+    const result = await this.headObject(storageKey);
+    if (!result) {
+      throw new Error('Uploaded R2 object was not found');
+    }
+    return result;
+  }
+
   async copyObject(sourceKey: string, targetKey: string): Promise<ObjectHead> {
     await this.client.send(
       new CopyObjectCommand({

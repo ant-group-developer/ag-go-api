@@ -34,6 +34,16 @@ export const envValidationSchema = Joi.object({
   UPLOAD_SESSION_TTL_SECONDS: Joi.number().integer().min(1).required(),
   MAX_UPLOAD_SIZE_BYTES: Joi.number().integer().min(1).required(),
   MEDIA_WORKER_ENABLED: Joi.boolean().truthy('true').falsy('false').required(),
+  QUEUE_PREFIX: requiredString,
+  MEDIA_WORKER_CONCURRENCY: Joi.number().integer().min(1).max(32).required(),
+  OUTBOX_POLL_INTERVAL_MS: Joi.number().integer().min(100).required(),
+  MEDIA_JOB_ATTEMPTS: Joi.number().integer().min(1).max(20).required(),
+  MEDIA_JOB_BACKOFF_MS: Joi.number().integer().min(100).required(),
+  MEDIA_RENDER_TIMEOUT_SECONDS: Joi.number().integer().min(1).required(),
+  MEDIA_THUMBNAIL_MAX_WIDTH: Joi.number().integer().min(1).required(),
+  MEDIA_THUMBNAIL_MAX_HEIGHT: Joi.number().integer().min(1).required(),
+  MEDIA_PREVIEW_MAX_WIDTH: Joi.number().integer().min(1).required(),
+  MEDIA_PREVIEW_MAX_HEIGHT: Joi.number().integer().min(1).required(),
 
   // Cloudflare R2
   R2_ACCOUNT_ID: requiredString,

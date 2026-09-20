@@ -13,16 +13,17 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
+import { OutboxService } from '../../common/outbox.service';
 import { AssetUploadSessionEntity } from '../../database/entities/asset-upload-session.entity';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
-import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-evaluation-summary.entity';
+import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
+import { deriveProjectEvaluationStatus } from '../media/evaluation-status';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { CreateUploadSessionDto } from './dto/create-upload-session.dto';
-import { MediaProcessingService } from './media-processing.service';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage/storage-adapter';
 
 @Injectable()
@@ -44,7 +45,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     private readonly folderAccessService: FolderAccessService,
     private readonly config: ConfigService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
-    private readonly processingService: MediaProcessingService,
+    private readonly outboxService: OutboxService,
   ) {}
 
   onModuleInit(): void {
@@ -107,6 +108,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
         originalBucket: bucketName,
         originalStorageKey: storageKey,
         processingStatus: 'uploading',
+        processingError: null,
         sourceType: 'local',
         sourceMetadata: {},
         createdBy: userId,
@@ -162,6 +164,8 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('Uploaded object checksum does not match');
     }
 
+    let renderJobId: string | null = null;
+    let outboxEventId: string | null = null;
     await this.dataSource.transaction(async (manager) => {
       await manager.update(AssetEntity, session.assetId, {
         checksumSha256: head.checksumSha256 ?? expectedChecksum ?? null,
@@ -187,12 +191,54 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
           await this.refreshProjectCounters(manager, session.targetProjectId);
         }
       }
+      const dedupeKey = `${session.assetId}:system:1`;
+      const activeJob = await manager
+        .createQueryBuilder(MediaRenderJobEntity, 'job')
+        .where('job.dedupe_key = :dedupeKey', { dedupeKey })
+        .andWhere('job.status IN (:...statuses)', { statuses: ['queued', 'processing'] })
+        .getOne();
+      const job =
+        activeJob ??
+        (await manager.save(
+          manager.create(MediaRenderJobEntity, {
+            id: uuidv7(),
+            assetId: session.assetId,
+            renderProfileId: null,
+            renderVersion: 1,
+            queueJobId: null,
+            dedupeKey,
+            status: 'queued',
+            progressPercent: 0,
+            progressMessage: 'Queued for media processing',
+            attemptCount: 0,
+            errorCode: null,
+            errorMessage: null,
+            startedAt: null,
+            finishedAt: null,
+            createdBy: userId,
+          }),
+        ));
+      renderJobId = job.id;
+      if (!activeJob) {
+        const event = this.outboxService.create(manager, {
+          eventType: 'asset.processing.requested',
+          aggregateType: 'asset',
+          aggregateId: session.assetId,
+          payload: {
+            assetId: session.assetId,
+            renderJobId: job.id,
+            userId,
+          },
+        });
+        const savedEvent = await manager.save(event);
+        outboxEventId = savedEvent.id;
+      }
     });
-    const job = await this.processingService.enqueue(session.assetId, userId);
     return {
       ...(await this.getAsset(session.assetId)),
       uploadSessionId: session.id,
-      renderJobId: job.id,
+      renderJobId,
+      outboxEventId,
     };
   }
 
@@ -241,7 +287,36 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
 
   async retry(assetId: string, userId: string) {
     await this.requireAssetAccess(assetId, userId, 'editor');
-    return this.processingService.enqueue(assetId, userId);
+    return this.dataSource.transaction(async (manager) => {
+      const job = await manager.save(
+        manager.create(MediaRenderJobEntity, {
+          id: uuidv7(),
+          assetId,
+          renderProfileId: null,
+          renderVersion: 1,
+          queueJobId: null,
+          dedupeKey: `${assetId}:retry:${uuidv7()}`,
+          status: 'queued',
+          progressPercent: 0,
+          progressMessage: 'Queued for media processing retry',
+          attemptCount: 0,
+          errorCode: null,
+          errorMessage: null,
+          startedAt: null,
+          finishedAt: null,
+          createdBy: userId,
+        }),
+      );
+      const event = await manager.save(
+        this.outboxService.create(manager, {
+          eventType: 'asset.processing.requested',
+          aggregateType: 'asset',
+          aggregateId: assetId,
+          payload: { assetId, renderJobId: job.id, userId },
+        }),
+      );
+      return { ...job, outboxEventId: event.id };
+    });
   }
 
   async cleanupExpiredSessions() {
@@ -362,23 +437,38 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
         originalBytes: string;
       }>();
     const totalMedia = Number(aggregate?.totalMedia ?? 0);
-    const evaluationStatus = totalMedia === 0 ? 'draft' : 'pending';
     await manager.update(ProjectEntity, projectId, {
       mediaCount: totalMedia,
       imageCount: Number(aggregate?.imageCount ?? 0),
       videoCount: Number(aggregate?.videoCount ?? 0),
       originalBytes: String(aggregate?.originalBytes ?? 0),
-      evaluationStatus,
     });
-    await manager.save(
-      manager.create(ProjectEvaluationSummaryEntity, {
-        projectId,
-        totalMedia,
-        pendingCount: totalMedia,
-        approvedCount: 0,
-        rejectedCount: 0,
-        evaluationStatus,
-      }),
+    const counts = await manager
+      .createQueryBuilder(ProjectMediaEntity, 'media')
+      .select('COUNT(*)', 'total')
+      .addSelect("COUNT(*) FILTER (WHERE media.evaluation_status = 'pending')", 'pending')
+      .addSelect("COUNT(*) FILTER (WHERE media.evaluation_status = 'approved')", 'approved')
+      .addSelect("COUNT(*) FILTER (WHERE media.evaluation_status = 'rejected')", 'rejected')
+      .where('media.project_id = :projectId', { projectId })
+      .getRawOne<{ total: string; pending: string; approved: string; rejected: string }>();
+    const pending = Number(counts?.pending ?? 0);
+    const approved = Number(counts?.approved ?? 0);
+    const rejected = Number(counts?.rejected ?? 0);
+    const evaluationStatus = deriveProjectEvaluationStatus(totalMedia, pending, approved, rejected);
+    await manager.update(ProjectEntity, projectId, { evaluationStatus });
+    await manager.query(
+      `INSERT INTO project_evaluation_summaries
+        (project_id, total_media, pending_count, approved_count, rejected_count, evaluation_status)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (project_id) DO UPDATE SET
+        total_media = EXCLUDED.total_media,
+        pending_count = EXCLUDED.pending_count,
+        approved_count = EXCLUDED.approved_count,
+        rejected_count = EXCLUDED.rejected_count,
+        evaluation_status = EXCLUDED.evaluation_status,
+        calculated_at = now(),
+        updated_at = now()`,
+      [projectId, totalMedia, pending, approved, rejected, evaluationStatus],
     );
   }
 }

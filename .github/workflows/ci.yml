@@ -21,3 +21,4 @@ jobs:
       - run: yarn lint
       - run: yarn test --runInBand
       - run: yarn build
+      - run: yarn openapi:validate

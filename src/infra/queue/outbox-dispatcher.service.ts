@@ -1,0 +1,95 @@
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { InjectDataSource } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
+import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
+import { MediaQueueService } from './media-queue.service';
+
+@Injectable()
+export class OutboxDispatcherService implements OnModuleDestroy {
+  private readonly logger = new Logger(OutboxDispatcherService.name);
+  private timer?: NodeJS.Timeout;
+
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly mediaQueue: MediaQueueService,
+    private readonly config: ConfigService,
+  ) {}
+
+  start(): void {
+    if (this.timer) {
+      return;
+    }
+    const interval = this.config.getOrThrow<number>('OUTBOX_POLL_INTERVAL_MS');
+    this.timer = setInterval(() => {
+      void this.dispatchPending();
+    }, interval);
+    this.timer.unref();
+    void this.dispatchPending();
+  }
+
+  async dispatchPending(): Promise<number> {
+    const events = await this.dataSource.transaction(async (manager) => {
+      const rows = await manager
+        .createQueryBuilder(OutboxEventEntity, 'event')
+        .where('event.status IN (:...statuses)', { statuses: ['pending', 'failed'] })
+        .andWhere('event.availableAt <= NOW()')
+        .orderBy('event.createdAt', 'ASC')
+        .setLock('pessimistic_write')
+        .setOnLocked('skip_locked')
+        .take(20)
+        .getMany();
+
+      for (const event of rows) {
+        await manager.update(OutboxEventEntity, event.id, {
+          attemptCount: event.attemptCount + 1,
+          lastError: null,
+        });
+      }
+      return rows;
+    });
+
+    let published = 0;
+    for (const event of events) {
+      try {
+        if (event.eventType === 'asset.processing.requested') {
+          const assetId = this.readString(event.payload.assetId);
+          if (!assetId) {
+            throw new Error('Outbox event is missing assetId');
+          }
+          await this.mediaQueue.addProcessingJob({
+            eventId: event.id,
+            assetId,
+            renderJobId: this.readString(event.payload.renderJobId) ?? assetId,
+            userId: this.readString(event.payload.userId),
+          });
+        }
+        await this.dataSource.getRepository(OutboxEventEntity).update(event.id, {
+          status: 'published',
+          publishedAt: new Date(),
+          lastError: null,
+        });
+        published += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Outbox publish failed';
+        this.logger.error(`Outbox event ${event.id} failed: ${message}`);
+        await this.dataSource.getRepository(OutboxEventEntity).update(event.id, {
+          status: 'failed',
+          availableAt: new Date(Date.now() + 5_000),
+          lastError: message,
+        });
+      }
+    }
+    return published;
+  }
+
+  onModuleDestroy(): void {
+    if (this.timer) {
+      clearInterval(this.timer);
+    }
+  }
+
+  private readString(value: unknown): string | undefined {
+    return typeof value === 'string' && value.length > 0 ? value : undefined;
+  }
+}

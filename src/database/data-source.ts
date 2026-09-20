@@ -11,6 +11,7 @@ import { FolderAccessGrantEntity } from './entities/folder-access-grant.entity';
 import { FolderClosureEntity } from './entities/folder-closure.entity';
 import { FolderEntity } from './entities/folder.entity';
 import { MediaRenderJobEntity } from './entities/media-render-job.entity';
+import { OutboxEventEntity } from './entities/outbox-event.entity';
 import { ProjectEvaluationSummaryEntity } from './entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from './entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from './entities/project-media.entity';
@@ -27,6 +28,8 @@ import { UserOnlyAccessMigration1770000000000 } from './migrations/1770000000000
 import { AddCountryFlagUrl1780000000000 } from './migrations/1780000000000-add-country-flag-url';
 import { ProjectMediaEvaluation1790000000000 } from './migrations/1790000000000-project-media-evaluation';
 import { ProjectMediaEvaluationHistory1800000000000 } from './migrations/1800000000000-project-media-evaluation-history';
+import { OutboxEvents1810000000000 } from './migrations/1810000000000-outbox-events';
+import { AssetProcessingError1820000000000 } from './migrations/1820000000000-asset-processing-error';
 
 loadEnv();
 
@@ -58,6 +61,7 @@ export const AppDataSource = new DataSource({
     ProjectMediaEvaluationEntity,
     ProjectEvaluationSummaryEntity,
     MediaRenderJobEntity,
+    OutboxEventEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -70,6 +74,8 @@ export const AppDataSource = new DataSource({
     AddCountryFlagUrl1780000000000,
     ProjectMediaEvaluation1790000000000,
     ProjectMediaEvaluationHistory1800000000000,
+    OutboxEvents1810000000000,
+    AssetProcessingError1820000000000,
   ],
   synchronize: false,
 });

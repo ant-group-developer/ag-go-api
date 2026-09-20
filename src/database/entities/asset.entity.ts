@@ -35,6 +35,9 @@ export class AssetEntity {
   @Column({ name: 'processing_status', type: 'varchar', length: 20, default: 'uploaded' })
   processingStatus!: string;
 
+  @Column({ name: 'processing_error', type: 'text', nullable: true })
+  processingError!: string | null;
+
   @Column({ name: 'source_type', type: 'varchar', length: 30, default: 'local' })
   sourceType!: string;
 

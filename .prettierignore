@@ -2,3 +2,4 @@ node_modules
 dist
 coverage
 *.generated.ts
+openapi.yaml

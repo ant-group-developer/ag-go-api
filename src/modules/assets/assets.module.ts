@@ -7,16 +7,19 @@ import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
+import { QueueModule } from '../../infra/queue/queue.module';
 import { FoldersModule } from '../folders/folders.module';
 import { AssetsController } from './assets.controller';
 import { AssetsService } from './assets.service';
 import { MediaProcessingService } from './media-processing.service';
+import { MediaQueueWorkerService } from './media-queue-worker.service';
 import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
     FoldersModule,
     StorageModule,
+    QueueModule,
     TypeOrmModule.forFeature([
       AssetEntity,
       AssetUploadSessionEntity,
@@ -27,6 +30,6 @@ import { StorageModule } from './storage/storage.module';
     ]),
   ],
   controllers: [AssetsController],
-  providers: [AuthContextService, AssetsService, MediaProcessingService],
+  providers: [AuthContextService, AssetsService, MediaProcessingService, MediaQueueWorkerService],
 })
 export class AssetsModule {}

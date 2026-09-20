@@ -18,6 +18,7 @@ import { FolderAccessGrantEntity } from './database/entities/folder-access-grant
 import { FolderClosureEntity } from './database/entities/folder-closure.entity';
 import { FolderEntity } from './database/entities/folder.entity';
 import { MediaRenderJobEntity } from './database/entities/media-render-job.entity';
+import { OutboxEventEntity } from './database/entities/outbox-event.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from './database/entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from './database/entities/project-media.entity';
@@ -25,6 +26,7 @@ import { ProjectEntity } from './database/entities/project.entity';
 import { ProvinceEntity } from './database/entities/province.entity';
 import { TagEntity } from './database/entities/tag.entity';
 import { HealthController } from './health/health.controller';
+import { QueueModule } from './infra/queue/queue.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { CountriesModule } from './modules/countries/countries.module';
@@ -66,6 +68,7 @@ import { TagsModule } from './modules/tags/tags.module';
           AssetUploadSessionEntity,
           AssetVariantEntity,
           MediaRenderJobEntity,
+          OutboxEventEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -79,6 +82,7 @@ import { TagsModule } from './modules/tags/tags.module';
     ProjectsModule,
     MediaModule,
     AssetsModule,
+    QueueModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

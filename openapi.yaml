@@ -1,0 +1,1174 @@
+openapi: 3.0.0
+paths:
+  /:
+    get:
+      operationId: AppController_getMetadata
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      summary: API metadata
+      tags:
+        - system
+  /health:
+    get:
+      operationId: HealthController_getHealth
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      summary: Health check
+      tags:
+        - system
+  /folders/tree:
+    get:
+      operationId: FoldersController_tree
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a1
+        - bearer: []
+      tags: &a2
+        - folders
+  /folders:
+    post:
+      operationId: FoldersController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateFolderDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a1
+      tags: *a2
+  /folders/{id}:
+    patch:
+      operationId: FoldersController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateFolderDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a1
+      tags: *a2
+    delete:
+      operationId: FoldersController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a1
+      tags: *a2
+  /folders/{id}/access-grants:
+    get:
+      operationId: FoldersController_grants
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a1
+      tags: *a2
+    put:
+      operationId: FoldersController_replaceGrants
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a1
+      tags: *a2
+  /categories:
+    get:
+      operationId: CategoriesController_list
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a3
+        - bearer: []
+      tags: &a4
+        - categories
+    post:
+      operationId: CategoriesController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCategoryDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      tags: *a4
+  /countries:
+    get:
+      operationId: CountriesController_list
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a5
+        - bearer: []
+      tags: &a6
+        - countries
+    post:
+      operationId: CountriesController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCountryDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a5
+      tags: *a6
+  /provinces:
+    get:
+      operationId: ProvincesController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            example: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            example: 20
+            type: number
+        - name: keyword
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: countryId
+          required: false
+          in: query
+          schema:
+            type: string
+        - name: search
+          required: false
+          in: query
+          deprecated: true
+          schema:
+            maxLength: 200
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a7
+        - bearer: []
+      tags: &a8
+        - provinces
+    post:
+      operationId: ProvincesController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProvinceDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a7
+      tags: *a8
+  /tags:
+    get:
+      operationId: TagsController_list
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a9
+        - bearer: []
+      tags: &a10
+        - tags
+    post:
+      operationId: TagsController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTagDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a9
+      tags: *a10
+  /projects:
+    get:
+      operationId: ProjectsController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: keyword
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: folderId
+          required: false
+          in: query
+          description: Filters by a folder and its descendants.
+          schema:
+            format: uuid
+            type: string
+        - name: countryId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: provinceId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: categoryId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: tagIds
+          required: false
+          in: query
+          description: Comma-separated tag IDs; matches any.
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a11
+        - bearer: []
+      tags: &a12
+        - projects
+    post:
+      operationId: ProjectsController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a11
+      tags: *a12
+  /projects/{id}:
+    get:
+      operationId: ProjectsController_findOne
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a11
+      tags: *a12
+    patch:
+      operationId: ProjectsController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProjectDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a11
+      tags: *a12
+    delete:
+      operationId: ProjectsController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a11
+      tags: *a12
+  /projects/{projectId}/media:
+    get:
+      operationId: MediaController_list
+      parameters:
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a13
+        - bearer: []
+      tags: &a14
+        - project-media
+    post:
+      operationId: MediaController_attach
+      parameters:
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectMediaDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a13
+      tags: *a14
+  /project-media/{id}:
+    patch:
+      operationId: MediaController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProjectMediaDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a13
+      tags: *a14
+    delete:
+      operationId: MediaController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a13
+      tags: *a14
+  /project-media/{id}/evaluations:
+    get:
+      operationId: MediaController_listEvaluationHistory
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a13
+      tags: *a14
+  /projects/{projectId}/reorder-media:
+    patch:
+      operationId: MediaController_reorder
+      parameters:
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReorderProjectMediaDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a13
+      tags: *a14
+  /projects/{projectId}/thumbnail:
+    patch:
+      operationId: MediaController_setThumbnail
+      parameters:
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetProjectThumbnailDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a13
+      tags: *a14
+  /assets/upload-session:
+    post:
+      operationId: AssetsController_createUploadSession
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUploadSessionDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a15
+        - bearer: []
+      tags: &a16
+        - assets
+  /assets/{assetId}/complete:
+    post:
+      operationId: AssetsController_completeUpload
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteUploadDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a15
+      tags: *a16
+  /assets/{assetId}/abort:
+    post:
+      operationId: AssetsController_abortUpload
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AbortUploadDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a15
+      tags: *a16
+  /assets/{assetId}/variants:
+    get:
+      operationId: AssetsController_listVariants
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a15
+      tags: *a16
+  /assets/{assetId}/preview/{variantCode}:
+    get:
+      operationId: AssetsController_preview
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: variantCode
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+      security: *a15
+      tags: *a16
+  /assets/{assetId}/retry:
+    post:
+      operationId: AssetsController_retry
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a15
+      tags: *a16
+info:
+  title: AG Go API
+  description: AG Go backend API
+  version: 0.1.0
+  contact: {}
+tags: []
+servers:
+  - url: http://localhost:3000/api
+components:
+  securitySchemes:
+    bearer:
+      scheme: bearer
+      bearerFormat: JWT
+      type: http
+  schemas:
+    CreateFolderDto:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        parentId:
+          type: string
+          format: uuid
+        sortOrder:
+          type: number
+          minimum: 0
+      required:
+        - name
+    UpdateFolderDto:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 200
+        sortOrder:
+          type: number
+          minimum: 0
+    CreateCategoryDto:
+      type: object
+      properties: {}
+    CreateCountryDto:
+      type: object
+      properties: {}
+    CreateProvinceDto:
+      type: object
+      properties: {}
+    CreateTagDto:
+      type: object
+      properties: {}
+    CreateProjectDto:
+      type: object
+      properties:
+        folderId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+        categoryId:
+          type: string
+          format: uuid
+        countryId:
+          type: string
+          format: uuid
+        provinceId:
+          type: string
+          format: uuid
+        tagIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        tags:
+          type: array
+          items:
+            type: string
+      required:
+        - folderId
+        - name
+    UpdateProjectDto:
+      type: object
+      properties:
+        folderId:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          nullable: true
+        categoryId:
+          type: string
+          format: uuid
+          nullable: true
+        countryId:
+          type: string
+          format: uuid
+          nullable: true
+        provinceId:
+          type: string
+          format: uuid
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+    CreateProjectMediaDto:
+      type: object
+      properties:
+        assetId:
+          type: string
+          format: uuid
+        assetType:
+          type: string
+          enum:
+            - image
+            - video
+        originalFilename:
+          type: string
+          maxLength: 255
+        mimeType:
+          type: string
+          maxLength: 100
+        fileSizeBytes:
+          type: number
+          minimum: 0
+        extension:
+          type: string
+          maxLength: 20
+        originalBucket:
+          type: string
+          maxLength: 100
+        originalStorageKey:
+          type: string
+          maxLength: 500
+        sortOrder:
+          type: number
+          minimum: 0
+        caption:
+          type: string
+          maxLength: 500
+    UpdateProjectMediaDto:
+      type: object
+      properties:
+        sortOrder:
+          type: number
+          minimum: 0
+        caption:
+          type: string
+          maxLength: 500
+        evaluationStatus:
+          type: string
+          enum:
+            - pending
+            - approved
+            - rejected
+        comment:
+          type: string
+          maxLength: 2000
+          nullable: true
+    ReorderProjectMediaDto:
+      type: object
+      properties:
+        mediaIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+      required:
+        - mediaIds
+    SetProjectThumbnailDto:
+      type: object
+      properties:
+        projectMediaId:
+          type: string
+          format: uuid
+          nullable: true
+    CreateUploadSessionDto:
+      type: object
+      properties:
+        assetType:
+          type: string
+          enum:
+            - image
+            - video
+        originalFilename:
+          type: string
+          maxLength: 255
+        extension:
+          type: string
+          maxLength: 20
+        mimeType:
+          type: string
+          maxLength: 100
+        fileSizeBytes:
+          type: number
+          minimum: 1
+        expectedChecksumSha256:
+          type: string
+          pattern: ^[a-fA-F0-9]{64}$
+        targetProjectId:
+          type: string
+          format: uuid
+      required:
+        - assetType
+        - originalFilename
+        - mimeType
+        - fileSizeBytes
+    CompleteUploadDto:
+      type: object
+      properties:
+        uploadSessionId:
+          type: string
+          format: uuid
+        checksumSha256:
+          type: string
+          pattern: ^[a-fA-F0-9]{64}$
+      required:
+        - uploadSessionId
+    AbortUploadDto:
+      type: object
+      properties:
+        uploadSessionId:
+          type: string
+          format: uuid
+      required:
+        - uploadSessionId
+    ApiError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        details: {}
+        fieldErrors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+    ApiResponse:
+      type: object
+      required:
+        - data
+        - requestId
+        - timestamp
+        - success
+        - error
+      properties:
+        data: {}
+        requestId:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        success:
+          type: boolean
+        error:
+          allOf:
+            - $ref: "#/components/schemas/ApiError"
+          nullable: true
+    ListResponse:
+      type: object
+      required:
+        - items
+        - page
+        - pageSize
+        - total
+        - totalPages
+      properties:
+        items:
+          type: array
+          items: {}
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+    CursorListResponse:
+      type: object
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items: {}
+        nextCursor:
+          type: string
+          nullable: true
+    Asset:
+      type: object
+      required:
+        - id
+        - assetType
+        - originalFilename
+        - mimeType
+        - fileSizeBytes
+        - processingStatus
+      properties:
+        id:
+          type: string
+          format: uuid
+        assetType:
+          type: string
+          enum:
+            - image
+            - video
+        originalFilename:
+          type: string
+        mimeType:
+          type: string
+        fileSizeBytes:
+          type: string
+        processingStatus:
+          type: string
+        processingError:
+          type: string
+          nullable: true
+        sourceMetadata:
+          type: object
+          additionalProperties: true
+    ProjectMedia:
+      type: object
+      required:
+        - id
+        - projectId
+        - assetId
+        - sortOrder
+        - evaluationStatus
+        - asset
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectId:
+          type: string
+          format: uuid
+        assetId:
+          type: string
+          format: uuid
+        sortOrder:
+          type: integer
+        caption:
+          type: string
+          nullable: true
+        evaluationStatus:
+          type: string
+          enum:
+            - pending
+            - approved
+            - rejected
+        durationSeconds:
+          type: number
+          nullable: true
+        width:
+          type: integer
+          nullable: true
+        height:
+          type: integer
+          nullable: true
+        asset:
+          $ref: "#/components/schemas/Asset"
+    Project:
+      type: object
+      required:
+        - id
+        - name
+        - folderId
+        - evaluationStatus
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        folderId:
+          type: string
+          format: uuid
+        evaluationStatus:
+          type: string
+          enum:
+            - draft
+            - pending
+            - completed
+            - partially_completed
+            - failed
+        mediaCount:
+          type: integer
+          minimum: 0
+        imageCount:
+          type: integer
+          minimum: 0
+        videoCount:
+          type: integer
+          minimum: 0
+        originalBytes:
+          type: string
+        renderedBytes:
+          type: string
+    EvaluationHistory:
+      type: object
+      required:
+        - id
+        - projectMediaId
+        - evaluationStatus
+        - evaluatedBy
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        projectMediaId:
+          type: string
+          format: uuid
+        evaluationStatus:
+          type: string
+          enum:
+            - pending
+            - approved
+            - rejected
+        comment:
+          type: string
+          nullable: true
+        evaluatedBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time

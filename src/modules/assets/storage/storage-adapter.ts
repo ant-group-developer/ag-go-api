@@ -15,6 +15,7 @@ export interface StorageAdapter {
   ): Promise<string>;
   headObject(storageKey: string): Promise<ObjectHead | null>;
   readObject(storageKey: string): Readable;
+  putObject(storageKey: string, body: Readable | Buffer, contentType: string): Promise<ObjectHead>;
   copyObject(sourceKey: string, targetKey: string): Promise<ObjectHead>;
   deleteObject(storageKey: string): Promise<void>;
 }

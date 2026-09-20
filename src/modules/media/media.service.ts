@@ -19,6 +19,7 @@ import { CreateProjectMediaDto } from './dto/create-project-media.dto';
 import { ReorderProjectMediaDto } from './dto/reorder-project-media.dto';
 import { SetProjectThumbnailDto } from './dto/set-project-thumbnail.dto';
 import { UpdateProjectMediaDto } from './dto/update-project-media.dto';
+import { deriveProjectEvaluationStatus } from './evaluation-status';
 
 type MediaCursor = {
   sortOrder: number;
@@ -123,6 +124,7 @@ export class MediaService {
               dto.originalStorageKey?.trim() ||
               `projects/${projectId}/assets/${uuidv7()}-${dto.originalFilename.trim()}`,
             processingStatus: 'uploaded',
+            processingError: null,
             sourceType: 'local',
             sourceMetadata: {},
             createdBy: userId,
@@ -159,16 +161,29 @@ export class MediaService {
   }
 
   async update(mediaId: string, dto: UpdateProjectMediaDto, userId: string) {
-    const media = await this.getMedia(mediaId);
-    const project = await this.getProject(media.projectId);
-    await this.requireProjectAccess(project, userId, 'editor');
-
-    Object.assign(media, {
-      sortOrder: dto.sortOrder ?? media.sortOrder,
-      caption: dto.caption === undefined ? media.caption : dto.caption.trim() || null,
-      evaluationStatus: dto.evaluationStatus ?? media.evaluationStatus,
-    });
     return this.dataSource.transaction(async (manager) => {
+      const media = await manager
+        .createQueryBuilder(ProjectMediaEntity, 'media')
+        .leftJoinAndSelect('media.asset', 'asset')
+        .where('media.id = :mediaId', { mediaId })
+        .setLock('pessimistic_write')
+        .getOne();
+      if (!media) {
+        throw new NotFoundException('Project media not found');
+      }
+      const project = await manager.findOne(ProjectEntity, {
+        where: { id: media.projectId },
+      });
+      if (!project) {
+        throw new NotFoundException('Project not found');
+      }
+      await this.requireProjectAccess(project, userId, 'editor');
+
+      Object.assign(media, {
+        sortOrder: dto.sortOrder ?? media.sortOrder,
+        caption: dto.caption === undefined ? media.caption : dto.caption.trim() || null,
+        evaluationStatus: dto.evaluationStatus ?? media.evaluationStatus,
+      });
       const updatedMedia = await manager.save(media);
       if (dto.evaluationStatus !== undefined || dto.comment !== undefined) {
         await manager.save(
@@ -181,10 +196,10 @@ export class MediaService {
           }),
         );
       }
-      if (dto.evaluationStatus !== undefined) {
+      if (dto.evaluationStatus !== undefined || dto.comment !== undefined) {
         await this.refreshProjectEvaluation(manager, media.projectId);
       }
-      return updatedMedia;
+      return this.findMedia(updatedMedia.id, manager);
     });
   }
 
@@ -311,25 +326,13 @@ export class MediaService {
       }>();
 
     const totalMedia = Number(aggregate?.totalMedia ?? 0);
-    const evaluationStatus = totalMedia === 0 ? 'draft' : 'pending';
     await manager.update(ProjectEntity, projectId, {
       mediaCount: totalMedia,
       imageCount: Number(aggregate?.imageCount ?? 0),
       videoCount: Number(aggregate?.videoCount ?? 0),
       originalBytes: String(aggregate?.originalBytes ?? 0),
-      evaluationStatus,
     });
-
-    await manager.save(
-      manager.create(ProjectEvaluationSummaryEntity, {
-        projectId,
-        totalMedia,
-        pendingCount: totalMedia,
-        approvedCount: 0,
-        rejectedCount: 0,
-        evaluationStatus,
-      }),
-    );
+    await this.refreshProjectEvaluation(manager, projectId);
   }
 
   private encodeCursor(media: ProjectMediaEntity): string {
@@ -367,27 +370,20 @@ export class MediaService {
     const pending = Number(counts?.pending ?? 0);
     const approved = Number(counts?.approved ?? 0);
     const rejected = Number(counts?.rejected ?? 0);
-    const evaluationStatus =
-      total === 0
-        ? 'draft'
-        : pending > 0
-          ? 'pending'
-          : approved === total
-            ? 'completed'
-            : rejected === total
-              ? 'failed'
-              : 'partially_completed';
+    const evaluationStatus = deriveProjectEvaluationStatus(total, pending, approved, rejected);
 
     await manager.update(ProjectEntity, projectId, { evaluationStatus });
-    await manager.save(
-      manager.create(ProjectEvaluationSummaryEntity, {
+    await manager.upsert(
+      ProjectEvaluationSummaryEntity,
+      {
         projectId,
         totalMedia: total,
         pendingCount: pending,
         approvedCount: approved,
         rejectedCount: rejected,
         evaluationStatus,
-      }),
+      },
+      ['projectId'],
     );
   }
 }
