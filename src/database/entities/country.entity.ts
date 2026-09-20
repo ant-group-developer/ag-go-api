@@ -11,6 +11,9 @@ export class CountryEntity {
   @Column({ type: 'varchar', length: 200 })
   name!: string;
 
+  @Column({ name: 'flag_url', type: 'varchar', length: 500, nullable: true })
+  flagUrl!: string | null;
+
   @Column({ name: 'sort_order', type: 'integer', default: 0 })
   sortOrder!: number;
 

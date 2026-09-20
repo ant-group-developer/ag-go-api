@@ -23,10 +23,13 @@ import { ProvinceEntity } from './database/entities/province.entity';
 import { TagEntity } from './database/entities/tag.entity';
 import { HealthController } from './health/health.controller';
 import { AssetsModule } from './modules/assets/assets.module';
-import { CatalogsModule } from './modules/catalogs/catalogs.module';
+import { CategoriesModule } from './modules/categories/categories.module';
+import { CountriesModule } from './modules/countries/countries.module';
 import { FoldersModule } from './modules/folders/folders.module';
 import { MediaModule } from './modules/media/media.module';
 import { ProjectsModule } from './modules/projects/projects.module';
+import { ProvincesModule } from './modules/provinces/provinces.module';
+import { TagsModule } from './modules/tags/tags.module';
 
 @Module({
   imports: [
@@ -65,7 +68,10 @@ import { ProjectsModule } from './modules/projects/projects.module';
       }),
     }),
     FoldersModule,
-    CatalogsModule,
+    CategoriesModule,
+    CountriesModule,
+    ProvincesModule,
+    TagsModule,
     ProjectsModule,
     MediaModule,
     AssetsModule,

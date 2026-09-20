@@ -1,4 +1,5 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
+import { CountryEntity } from './country.entity';
 
 @Entity('provinces')
 export class ProvinceEntity {
@@ -7,6 +8,10 @@ export class ProvinceEntity {
 
   @Column({ name: 'country_id', type: 'uuid' })
   countryId!: string;
+
+  @ManyToOne(() => CountryEntity, { nullable: false })
+  @JoinColumn({ name: 'country_id' })
+  country!: CountryEntity;
 
   @Column({ type: 'varchar', length: 20, nullable: true })
   code!: string | null;

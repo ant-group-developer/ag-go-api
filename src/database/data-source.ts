@@ -23,6 +23,7 @@ import { LocalUploadRenderMigration1740000000000 } from './migrations/1740000000
 import { UploadTargetProjectMigration1750000000000 } from './migrations/1750000000000-upload-target-project';
 import { R2StorageDefaultsMigration1760000000000 } from './migrations/1760000000000-r2-storage-defaults';
 import { UserOnlyAccessMigration1770000000000 } from './migrations/1770000000000-user-only-access';
+import { AddCountryFlagUrl1780000000000 } from './migrations/1780000000000-add-country-flag-url';
 
 loadEnv();
 
@@ -62,6 +63,7 @@ export const AppDataSource = new DataSource({
     UploadTargetProjectMigration1750000000000,
     R2StorageDefaultsMigration1760000000000,
     UserOnlyAccessMigration1770000000000,
+    AddCountryFlagUrl1780000000000,
   ],
   synchronize: false,
 });
