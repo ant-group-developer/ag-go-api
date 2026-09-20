@@ -7,6 +7,7 @@ import { FolderEntity } from '../../database/entities/folder.entity';
 import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-evaluation-summary.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ProvinceEntity } from '../../database/entities/province.entity';
+import { TagEntity } from '../../database/entities/tag.entity';
 import { FoldersModule } from '../folders/folders.module';
 import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
@@ -21,6 +22,7 @@ import { ProjectsService } from './projects.service';
       CategoryEntity,
       CountryEntity,
       ProvinceEntity,
+      TagEntity,
     ]),
   ],
   controllers: [ProjectsController],

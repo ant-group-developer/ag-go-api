@@ -1,6 +1,10 @@
-import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsArray, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class UpdateProjectDto {
+  @IsOptional()
+  @IsUUID()
+  folderId?: string;
+
   @IsOptional()
   @IsString()
   @MaxLength(200)
@@ -8,17 +12,23 @@ export class UpdateProjectDto {
 
   @IsOptional()
   @IsString()
-  description?: string;
+  description?: string | null;
 
   @IsOptional()
   @IsUUID()
-  categoryId?: string;
+  categoryId?: string | null;
 
   @IsOptional()
   @IsUUID()
-  countryId?: string;
+  countryId?: string | null;
 
   @IsOptional()
   @IsUUID()
-  provinceId?: string;
+  provinceId?: string | null;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(100, { each: true })
+  tags?: string[];
 }
