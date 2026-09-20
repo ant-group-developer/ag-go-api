@@ -21,12 +21,7 @@ export class FolderAccessService {
     private readonly closureRepository: Repository<FolderClosureEntity>,
   ) {}
 
-  async canAccess(
-    folderId: string,
-    userId: string,
-    groupIds: string[],
-    minimum: FolderAccessLevel,
-  ): Promise<boolean> {
+  async canAccess(folderId: string, userId: string, minimum: FolderAccessLevel): Promise<boolean> {
     const closure = await this.closureRepository.find({
       where: { descendantId: folderId },
     });
@@ -38,16 +33,10 @@ export class FolderAccessService {
     const grants = await this.grantRepository
       .createQueryBuilder('grant')
       .where('grant.folder_id IN (:...ancestorIds)', { ancestorIds })
-      .andWhere(
-        '(grant.principal_type = :userType AND grant.principal_id = :userId) OR ' +
-          '(grant.principal_type = :groupType AND grant.principal_id IN (:...groupIds))',
-        {
-          userType: 'user',
-          userId,
-          groupType: 'group',
-          groupIds: groupIds.length > 0 ? groupIds : ['__no_group__'],
-        },
-      )
+      .andWhere('grant.principal_type = :userType AND grant.principal_id = :userId', {
+        userType: 'user',
+        userId,
+      })
       .getMany();
 
     return grants.some((grant) => {
@@ -57,20 +46,14 @@ export class FolderAccessService {
     });
   }
 
-  async accessibleFolderIds(userId: string, groupIds: string[]): Promise<string[]> {
+  async accessibleFolderIds(userId: string): Promise<string[]> {
     const closure = await this.closureRepository.find();
     const grants = await this.grantRepository
       .createQueryBuilder('grant')
-      .where(
-        '(grant.principal_type = :userType AND grant.principal_id = :userId) OR ' +
-          '(grant.principal_type = :groupType AND grant.principal_id IN (:...groupIds))',
-        {
-          userType: 'user',
-          userId,
-          groupType: 'group',
-          groupIds: groupIds.length > 0 ? groupIds : ['__no_group__'],
-        },
-      )
+      .where('grant.principal_type = :userType AND grant.principal_id = :userId', {
+        userType: 'user',
+        userId,
+      })
       .getMany();
     const accessible = new Set<string>();
 

@@ -18,30 +18,30 @@ export class ProjectsController {
   @Get()
   list(@Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.projectsService.list(context.userId, context.groupIds);
+    return this.projectsService.list(context.userId);
   }
 
   @Post()
   create(@Body() dto: CreateProjectDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.projectsService.create(dto, context.userId, context.groupIds);
+    return this.projectsService.create(dto, context.userId);
   }
 
   @Get(':id')
   findOne(@Param('id') id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.projectsService.findOne(id, context.userId, context.groupIds);
+    return this.projectsService.findOne(id, context.userId);
   }
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateProjectDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.projectsService.update(id, dto, context.userId, context.groupIds);
+    return this.projectsService.update(id, dto, context.userId);
   }
 
   @Delete(':id')
   remove(@Param('id') id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.projectsService.remove(id, context.userId, context.groupIds);
+    return this.projectsService.remove(id, context.userId);
   }
 }

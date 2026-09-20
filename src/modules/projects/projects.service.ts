@@ -30,8 +30,8 @@ export class ProjectsService {
     private readonly folderAccessService: FolderAccessService,
   ) {}
 
-  async list(userId: string, groupIds: string[]) {
-    const folderIds = await this.folderAccessService.accessibleFolderIds(userId, groupIds);
+  async list(userId: string) {
+    const folderIds = await this.folderAccessService.accessibleFolderIds(userId);
     if (folderIds.length === 0) {
       return { items: [], nextCursor: null };
     }
@@ -43,17 +43,17 @@ export class ProjectsService {
     return { items, nextCursor: null };
   }
 
-  async findOne(id: string, userId: string, groupIds: string[]) {
+  async findOne(id: string, userId: string) {
     const project = await this.projectRepository.findOne({ where: { id } });
     if (!project) {
       throw new NotFoundException('Project not found');
     }
-    await this.requireFolderAccess(project.folderId, userId, groupIds, 'viewer');
+    await this.requireFolderAccess(project.folderId, userId, 'viewer');
     return project;
   }
 
-  async create(dto: CreateProjectDto, userId: string, groupIds: string[]) {
-    await this.requireFolderAccess(dto.folderId, userId, groupIds, 'editor');
+  async create(dto: CreateProjectDto, userId: string) {
+    await this.requireFolderAccess(dto.folderId, userId, 'editor');
     await this.validateCatalogs(dto.countryId, dto.provinceId, dto.categoryId);
     const project = await this.projectRepository.save(
       this.projectRepository.create({
@@ -86,9 +86,9 @@ export class ProjectsService {
     return project;
   }
 
-  async update(id: string, dto: UpdateProjectDto, userId: string, groupIds: string[]) {
-    const project = await this.findOne(id, userId, groupIds);
-    await this.requireFolderAccess(project.folderId, userId, groupIds, 'editor');
+  async update(id: string, dto: UpdateProjectDto, userId: string) {
+    const project = await this.findOne(id, userId);
+    await this.requireFolderAccess(project.folderId, userId, 'editor');
     await this.validateCatalogs(dto.countryId, dto.provinceId, dto.categoryId);
     Object.assign(project, {
       name: dto.name?.trim() ?? project.name,
@@ -100,9 +100,9 @@ export class ProjectsService {
     return this.projectRepository.save(project);
   }
 
-  async remove(id: string, userId: string, groupIds: string[]) {
-    const project = await this.findOne(id, userId, groupIds);
-    await this.requireFolderAccess(project.folderId, userId, groupIds, 'editor');
+  async remove(id: string, userId: string) {
+    const project = await this.findOne(id, userId);
+    await this.requireFolderAccess(project.folderId, userId, 'editor');
     await this.projectRepository.remove(project);
     return { success: true };
   }
@@ -130,13 +130,8 @@ export class ProjectsService {
     }
   }
 
-  private async requireFolderAccess(
-    folderId: string,
-    userId: string,
-    groupIds: string[],
-    level: 'viewer' | 'editor',
-  ) {
-    const allowed = await this.folderAccessService.canAccess(folderId, userId, groupIds, level);
+  private async requireFolderAccess(folderId: string, userId: string, level: 'viewer' | 'editor') {
+    const allowed = await this.folderAccessService.canAccess(folderId, userId, level);
     if (!allowed) {
       throw new ForbiddenException('Insufficient folder permission');
     }

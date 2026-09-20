@@ -36,9 +36,9 @@ export class MediaService {
     private readonly folderAccessService: FolderAccessService,
   ) {}
 
-  async list(projectId: string, userId: string, groupIds: string[], cursor?: string, limit = 50) {
+  async list(projectId: string, userId: string, cursor?: string, limit = 50) {
     const project = await this.getProject(projectId);
-    await this.requireProjectAccess(project, userId, groupIds, 'viewer');
+    await this.requireProjectAccess(project, userId, 'viewer');
 
     const normalizedLimit = Math.min(Math.max(limit, 1), 100);
     const query = this.projectMediaRepository
@@ -69,9 +69,9 @@ export class MediaService {
     };
   }
 
-  async attach(projectId: string, dto: CreateProjectMediaDto, userId: string, groupIds: string[]) {
+  async attach(projectId: string, dto: CreateProjectMediaDto, userId: string) {
     const project = await this.getProject(projectId);
-    await this.requireProjectAccess(project, userId, groupIds, 'editor');
+    await this.requireProjectAccess(project, userId, 'editor');
 
     return this.dataSource.transaction(async (manager) => {
       let asset: AssetEntity;
@@ -140,10 +140,10 @@ export class MediaService {
     });
   }
 
-  async update(mediaId: string, dto: UpdateProjectMediaDto, userId: string, groupIds: string[]) {
+  async update(mediaId: string, dto: UpdateProjectMediaDto, userId: string) {
     const media = await this.getMedia(mediaId);
     const project = await this.getProject(media.projectId);
-    await this.requireProjectAccess(project, userId, groupIds, 'editor');
+    await this.requireProjectAccess(project, userId, 'editor');
 
     Object.assign(media, {
       sortOrder: dto.sortOrder ?? media.sortOrder,
@@ -152,10 +152,10 @@ export class MediaService {
     return this.projectMediaRepository.save(media);
   }
 
-  async remove(mediaId: string, userId: string, groupIds: string[]): Promise<void> {
+  async remove(mediaId: string, userId: string): Promise<void> {
     const media = await this.getMedia(mediaId);
     const project = await this.getProject(media.projectId);
-    await this.requireProjectAccess(project, userId, groupIds, 'editor');
+    await this.requireProjectAccess(project, userId, 'editor');
 
     await this.dataSource.transaction(async (manager) => {
       if (project.thumbnailProjectMediaId === mediaId) {
@@ -166,14 +166,9 @@ export class MediaService {
     });
   }
 
-  async reorder(
-    projectId: string,
-    dto: ReorderProjectMediaDto,
-    userId: string,
-    groupIds: string[],
-  ): Promise<void> {
+  async reorder(projectId: string, dto: ReorderProjectMediaDto, userId: string): Promise<void> {
     const project = await this.getProject(projectId);
-    await this.requireProjectAccess(project, userId, groupIds, 'editor');
+    await this.requireProjectAccess(project, userId, 'editor');
     if (new Set(dto.mediaIds).size !== dto.mediaIds.length) {
       throw new BadRequestException('mediaIds must be unique');
     }
@@ -192,14 +187,9 @@ export class MediaService {
     });
   }
 
-  async setThumbnail(
-    projectId: string,
-    dto: SetProjectThumbnailDto,
-    userId: string,
-    groupIds: string[],
-  ) {
+  async setThumbnail(projectId: string, dto: SetProjectThumbnailDto, userId: string) {
     const project = await this.getProject(projectId);
-    await this.requireProjectAccess(project, userId, groupIds, 'editor');
+    await this.requireProjectAccess(project, userId, 'editor');
     if (dto.projectMediaId) {
       const media = await this.projectMediaRepository.findOne({
         where: { id: dto.projectMediaId, projectId },
@@ -232,15 +222,9 @@ export class MediaService {
   private async requireProjectAccess(
     project: ProjectEntity,
     userId: string,
-    groupIds: string[],
     minimum: FolderAccessLevel,
   ): Promise<void> {
-    const allowed = await this.folderAccessService.canAccess(
-      project.folderId,
-      userId,
-      groupIds,
-      minimum,
-    );
+    const allowed = await this.folderAccessService.canAccess(project.folderId, userId, minimum);
     if (!allowed) {
       throw new ForbiddenException('Insufficient project permission');
     }

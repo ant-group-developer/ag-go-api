@@ -28,7 +28,7 @@ export class FoldersService {
     private readonly accessService: FolderAccessService,
   ) {}
 
-  async create(dto: CreateFolderDto, userId: string, groupIds: string[]): Promise<FolderEntity> {
+  async create(dto: CreateFolderDto, userId: string): Promise<FolderEntity> {
     return this.dataSource.transaction(async (manager) => {
       const parent = dto.parentId
         ? await manager.findOne(FolderEntity, { where: { id: dto.parentId, isActive: true } })
@@ -37,7 +37,7 @@ export class FoldersService {
         throw new NotFoundException('Parent folder not found');
       }
       if (parent) {
-        const canManage = await this.accessService.canAccess(parent.id, userId, groupIds, 'editor');
+        const canManage = await this.accessService.canAccess(parent.id, userId, 'editor');
         if (!canManage) {
           throw new ForbiddenException('Insufficient folder permission');
         }
@@ -95,8 +95,8 @@ export class FoldersService {
     });
   }
 
-  async tree(userId: string, groupIds: string[]): Promise<FolderEntity[]> {
-    const ids = await this.accessService.accessibleFolderIds(userId, groupIds);
+  async tree(userId: string): Promise<FolderEntity[]> {
+    const ids = await this.accessService.accessibleFolderIds(userId);
     if (ids.length === 0) {
       return [];
     }
@@ -106,13 +106,8 @@ export class FoldersService {
     });
   }
 
-  async update(
-    folderId: string,
-    dto: UpdateFolderDto,
-    userId: string,
-    groupIds: string[],
-  ): Promise<FolderEntity> {
-    await this.requireAccess(folderId, userId, groupIds, 'editor');
+  async update(folderId: string, dto: UpdateFolderDto, userId: string): Promise<FolderEntity> {
+    await this.requireAccess(folderId, userId, 'editor');
     const folder = await this.folderRepository.findOne({ where: { id: folderId, isActive: true } });
     if (!folder) {
       throw new NotFoundException('Folder not found');
@@ -132,8 +127,8 @@ export class FoldersService {
     return this.folderRepository.save(folder);
   }
 
-  async remove(folderId: string, userId: string, groupIds: string[]): Promise<void> {
-    await this.requireAccess(folderId, userId, groupIds, 'manager');
+  async remove(folderId: string, userId: string): Promise<void> {
+    await this.requireAccess(folderId, userId, 'manager');
     const children = await this.folderRepository.count({
       where: { parentId: folderId, isActive: true },
     });
@@ -148,12 +143,8 @@ export class FoldersService {
     await this.folderRepository.save(folder);
   }
 
-  async grants(
-    folderId: string,
-    userId: string,
-    groupIds: string[],
-  ): Promise<FolderAccessGrantEntity[]> {
-    await this.requireAccess(folderId, userId, groupIds, 'manager');
+  async grants(folderId: string, userId: string): Promise<FolderAccessGrantEntity[]> {
+    await this.requireAccess(folderId, userId, 'manager');
     return this.grantRepository.find({
       where: { folderId },
       order: { principalType: 'ASC', principalId: 'ASC' },
@@ -164,15 +155,14 @@ export class FoldersService {
     folderId: string,
     entries: UpsertFolderGrantDto[],
     userId: string,
-    groupIds: string[],
   ): Promise<FolderAccessGrantEntity[]> {
-    await this.requireAccess(folderId, userId, groupIds, 'manager');
+    await this.requireAccess(folderId, userId, 'manager');
     await this.grantRepository.delete({ folderId });
     await this.grantRepository.insert(
       entries.map((entry) => ({
         id: uuidv7(),
         folderId,
-        principalType: entry.principalType,
+        principalType: 'user',
         principalId: entry.principalId,
         accessLevel: entry.accessLevel,
         inheritChildren: entry.inheritChildren,
@@ -188,10 +178,9 @@ export class FoldersService {
   private async requireAccess(
     folderId: string,
     userId: string,
-    groupIds: string[],
     minimum: FolderAccessLevel,
   ): Promise<void> {
-    const allowed = await this.accessService.canAccess(folderId, userId, groupIds, minimum);
+    const allowed = await this.accessService.canAccess(folderId, userId, minimum);
     if (!allowed) {
       throw new ForbiddenException('Insufficient folder permission');
     }

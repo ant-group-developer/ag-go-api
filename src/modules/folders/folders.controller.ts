@@ -19,32 +19,32 @@ export class FoldersController {
   @Get('tree')
   tree(@Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.foldersService.tree(context.userId, context.groupIds);
+    return this.foldersService.tree(context.userId);
   }
 
   @Post()
   create(@Body() dto: CreateFolderDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.foldersService.create(dto, context.userId, context.groupIds);
+    return this.foldersService.create(dto, context.userId);
   }
 
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateFolderDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.foldersService.update(id, dto, context.userId, context.groupIds);
+    return this.foldersService.update(id, dto, context.userId);
   }
 
   @Delete(':id')
   async remove(@Param('id') id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    await this.foldersService.remove(id, context.userId, context.groupIds);
+    await this.foldersService.remove(id, context.userId);
     return { success: true };
   }
 
   @Get(':id/access-grants')
   grants(@Param('id') id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.foldersService.grants(id, context.userId, context.groupIds);
+    return this.foldersService.grants(id, context.userId);
   }
 
   @Put(':id/access-grants')
@@ -54,6 +54,6 @@ export class FoldersController {
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
-    return this.foldersService.replaceGrants(id, entries, context.userId, context.groupIds);
+    return this.foldersService.replaceGrants(id, entries, context.userId);
   }
 }

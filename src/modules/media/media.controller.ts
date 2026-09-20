@@ -29,7 +29,6 @@ export class MediaController {
     return this.mediaService.list(
       projectId,
       context.userId,
-      context.groupIds,
       cursor,
       Number.isFinite(parsedLimit) ? parsedLimit : undefined,
     );
@@ -42,19 +41,19 @@ export class MediaController {
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
-    return this.mediaService.attach(projectId, dto, context.userId, context.groupIds);
+    return this.mediaService.attach(projectId, dto, context.userId);
   }
 
   @Patch('project-media/:id')
   update(@Param('id') id: string, @Body() dto: UpdateProjectMediaDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.mediaService.update(id, dto, context.userId, context.groupIds);
+    return this.mediaService.update(id, dto, context.userId);
   }
 
   @Delete('project-media/:id')
   async remove(@Param('id') id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    await this.mediaService.remove(id, context.userId, context.groupIds);
+    await this.mediaService.remove(id, context.userId);
     return { success: true };
   }
 
@@ -65,7 +64,7 @@ export class MediaController {
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
-    await this.mediaService.reorder(projectId, dto, context.userId, context.groupIds);
+    await this.mediaService.reorder(projectId, dto, context.userId);
     return { success: true };
   }
 
@@ -76,6 +75,6 @@ export class MediaController {
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
-    return this.mediaService.setThumbnail(projectId, dto, context.userId, context.groupIds);
+    return this.mediaService.setThumbnail(projectId, dto, context.userId);
   }
 }

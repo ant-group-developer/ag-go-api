@@ -9,7 +9,7 @@ describe('FolderAccessService', () => {
     closureRows: Array<{ ancestorId: string; descendantId: string; depth: number }>,
     grants: Array<{
       folderId: string;
-      principalType: 'user' | 'group';
+      principalType: 'user';
       principalId: string;
       accessLevel: 'viewer' | 'editor' | 'manager';
       inheritChildren: boolean;
@@ -45,24 +45,7 @@ describe('FolderAccessService', () => {
       ],
     );
 
-    await expect(service.canAccess('child', 'alice', [], 'viewer')).resolves.toBe(true);
-  });
-
-  it('allows a matching group grant', async () => {
-    const service = createService(
-      [{ ancestorId: 'root', descendantId: 'child', depth: 1 }],
-      [
-        {
-          folderId: 'root',
-          principalType: 'group',
-          principalId: 'reviewers',
-          accessLevel: 'editor',
-          inheritChildren: true,
-        },
-      ],
-    );
-
-    await expect(service.canAccess('child', 'bob', ['reviewers'], 'editor')).resolves.toBe(true);
+    await expect(service.canAccess('child', 'alice', 'viewer')).resolves.toBe(true);
   });
 
   it('does not inherit a grant when inherit_children is false', async () => {
@@ -79,6 +62,6 @@ describe('FolderAccessService', () => {
       ],
     );
 
-    await expect(service.canAccess('child', 'alice', [], 'viewer')).resolves.toBe(false);
+    await expect(service.canAccess('child', 'alice', 'viewer')).resolves.toBe(false);
   });
 });

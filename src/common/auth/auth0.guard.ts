@@ -16,6 +16,7 @@ type JwtClaims = {
   sub?: string;
   iss?: string;
   aud?: string | string[];
+  azp?: string;
   exp?: number;
   nbf?: number;
   [key: string]: unknown;
@@ -58,27 +59,23 @@ export class Auth0Guard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<Request>();
-    if (!this.isAuth0Enabled()) {
-      return true;
-    }
-
     const token = this.extractBearerToken(request);
     if (!token) {
       throw new UnauthorizedException('Bearer token is required');
     }
 
     const claims = await this.verifyToken(token);
-    const groupClaim = this.config.get<string>('AUTH0_GROUPS_CLAIM', 'https://ag-go/groups');
-    const groupIds = this.readStringArray(claims[groupClaim] ?? claims.groups);
 
     if (!claims.sub) {
       throw new UnauthorizedException('Token subject is required');
     }
 
-    const authContext: AuthContext = {
-      userId: claims.sub,
-      groupIds,
-    };
+    const userId = this.normalizeUserId(claims.sub);
+    if (!userId) {
+      throw new UnauthorizedException('Token subject is invalid');
+    }
+
+    const authContext: AuthContext = { userId };
     request.authContext = authContext;
     return true;
   }
@@ -106,18 +103,17 @@ export class Auth0Guard implements CanActivate {
         throw new Error('Unsupported JWT header');
       }
 
-      const issuer = this.config.get<string>('AUTH0_ISSUER_URL')?.replace(/\/+$/, '');
-      const audience = this.config.get<string>('AUTH0_AUDIENCE');
-      if (!issuer || !audience) {
-        throw new Error('Auth0 configuration is incomplete');
-      }
+      const issuer = this.config.getOrThrow<string>('AUTH0_ISSUER_URL').replace(/\/+$/, '');
+      const audience = this.config.getOrThrow<string>('AUTH0_AUDIENCE');
+      const clientId = this.config.getOrThrow<string>('AUTH0_CLIENT_ID');
 
       if (
         !claims.iss ||
         claims.iss.replace(/\/+$/, '') !== issuer ||
-        !this.matchesAudience(claims.aud, audience)
+        !this.matchesAudience(claims.aud, audience) ||
+        claims.azp !== clientId
       ) {
-        throw new Error('JWT issuer or audience mismatch');
+        throw new Error('JWT issuer, audience, or client mismatch');
       }
 
       const now = Math.floor(Date.now() / 1000);
@@ -128,7 +124,7 @@ export class Auth0Guard implements CanActivate {
         throw new Error('JWT is not active');
       }
 
-      const key = await this.getJwk(header.kid, issuer);
+      const key = await this.getJwk(header.kid);
       const publicKey = createPublicKey({ key, format: 'jwk' });
       const signingInput = `${encodedHeader}.${encodedClaims}`;
       const signature = Buffer.from(encodedSignature, 'base64url');
@@ -142,11 +138,10 @@ export class Auth0Guard implements CanActivate {
     }
   }
 
-  private async getJwk(kid: string, issuer: string): Promise<JsonWebKey> {
+  private async getJwk(kid: string): Promise<JsonWebKey> {
     const now = Date.now();
     if (!this.jwksCache || this.jwksCache.expiresAt <= now) {
-      const configuredUrl = this.config.get<string>('AUTH0_JWKS_URL');
-      const jwksUrl = configuredUrl || `${issuer}/.well-known/jwks.json`;
+      const jwksUrl = this.config.getOrThrow<string>('AUTH0_JWKS_URL');
       const response = await fetch(jwksUrl, {
         signal: AbortSignal.timeout(5000),
         headers: { Accept: 'application/json' },
@@ -179,15 +174,7 @@ export class Auth0Guard implements CanActivate {
     return Array.isArray(value) ? value.includes(expected) : value === expected;
   }
 
-  private readStringArray(value: unknown): string[] {
-    if (Array.isArray(value)) {
-      return value.filter((item): item is string => typeof item === 'string');
-    }
-    return typeof value === 'string' ? [value] : [];
-  }
-
-  private isAuth0Enabled(): boolean {
-    const mode = this.config.get<string>('AUTH_MODE');
-    return mode ? mode === 'auth0' : this.config.get<string>('NODE_ENV') === 'production';
+  private normalizeUserId(subject: string): string {
+    return subject.startsWith('auth0|') ? subject.slice('auth0|'.length) : subject;
   }
 }

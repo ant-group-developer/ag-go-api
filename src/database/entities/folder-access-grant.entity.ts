@@ -9,7 +9,7 @@ export class FolderAccessGrantEntity {
   folderId!: string;
 
   @Column({ name: 'principal_type', type: 'varchar', length: 20 })
-  principalType!: 'user' | 'group';
+  principalType!: 'user';
 
   @Column({ name: 'principal_id', type: 'varchar', length: 128 })
   principalId!: string;

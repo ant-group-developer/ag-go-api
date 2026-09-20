@@ -1,8 +1,8 @@
 import { IsBoolean, IsIn, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class UpsertFolderGrantDto {
-  @IsIn(['user', 'group'])
-  principalType!: 'user' | 'group';
+  @IsIn(['user'])
+  principalType!: 'user';
 
   @IsString()
   @MaxLength(128)

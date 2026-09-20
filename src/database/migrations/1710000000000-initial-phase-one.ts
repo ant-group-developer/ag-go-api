@@ -46,7 +46,7 @@ export class InitialPhaseOneMigration1710000000000 implements MigrationInterface
       CREATE TABLE folder_access_grants (
         id uuid PRIMARY KEY,
         folder_id uuid NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
-        principal_type varchar(20) NOT NULL CHECK (principal_type IN ('user', 'group')),
+        principal_type varchar(20) NOT NULL CHECK (principal_type = 'user'),
         principal_id varchar(128) NOT NULL,
         access_level varchar(20) NOT NULL CHECK (access_level IN ('viewer', 'editor', 'manager')),
         inherit_children boolean NOT NULL DEFAULT true,
