@@ -1,8 +1,10 @@
 import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
+import { ApiExceptionFilter } from './common/api-exception.filter';
+import { ApiResponseInterceptor } from './common/api-response.interceptor';
 import { Auth0Guard } from './common/auth/auth0.guard';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
@@ -79,8 +81,16 @@ import { TagsModule } from './modules/tags/tags.module';
   controllers: [AppController, HealthController],
   providers: [
     {
+      provide: APP_FILTER,
+      useClass: ApiExceptionFilter,
+    },
+    {
       provide: APP_GUARD,
       useClass: Auth0Guard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ApiResponseInterceptor,
     },
     {
       provide: APP_INTERCEPTOR,

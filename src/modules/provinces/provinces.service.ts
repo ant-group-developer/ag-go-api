@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
+import { ListResponseDto } from '../../common/dto/list-response.dto';
 import { CountryEntity } from '../../database/entities/country.entity';
 import { ProvinceEntity } from '../../database/entities/province.entity';
 import { CreateProvinceDto } from './dto/create-province.dto';
@@ -27,8 +28,9 @@ export class ProvincesService {
     if (query.countryId) {
       builder.andWhere('province.country_id = :countryId', { countryId: query.countryId });
     }
-    if (query.search?.trim()) {
-      const search = `%${query.search.trim().toLowerCase()}%`;
+    const keyword = query.normalizedKeyword ?? query.search?.trim() ?? undefined;
+    if (keyword) {
+      const search = `%${keyword.toLowerCase()}%`;
       builder.andWhere(
         "(LOWER(province.name) LIKE :search OR LOWER(COALESCE(province.code, '')) LIKE :search OR LOWER(country.name) LIKE :search OR LOWER(COALESCE(country.code, '')) LIKE :search)",
         { search },
@@ -39,17 +41,11 @@ export class ProvincesService {
       .orderBy('country.name', 'ASC')
       .addOrderBy('province.sort_order', 'ASC')
       .addOrderBy('province.name', 'ASC')
-      .skip((page - 1) * pageSize)
+      .skip(query.skip)
       .take(pageSize)
       .getManyAndCount();
 
-    return {
-      items,
-      page,
-      pageSize,
-      total,
-      totalPages: Math.ceil(total / pageSize),
-    };
+    return new ListResponseDto(items, page, pageSize, total);
   }
 
   async create(dto: CreateProvinceDto) {

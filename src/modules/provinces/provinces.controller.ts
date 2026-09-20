@@ -12,7 +12,8 @@ export class ProvincesController {
 
   @Get()
   @ApiQuery({ name: 'countryId', required: false, type: String })
-  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({ name: 'keyword', required: false, type: String })
+  @ApiQuery({ name: 'search', required: false, type: String, deprecated: true })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'pageSize', required: false, type: Number, example: 20 })
   list(@Query() query: ListProvincesQueryDto) {
