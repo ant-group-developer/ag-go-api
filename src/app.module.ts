@@ -19,6 +19,7 @@ import { FolderClosureEntity } from './database/entities/folder-closure.entity';
 import { FolderEntity } from './database/entities/folder.entity';
 import { MediaRenderJobEntity } from './database/entities/media-render-job.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
+import { ProjectMediaEvaluationEntity } from './database/entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from './database/entities/project-media.entity';
 import { ProjectEntity } from './database/entities/project.entity';
 import { ProvinceEntity } from './database/entities/province.entity';
@@ -60,6 +61,7 @@ import { TagsModule } from './modules/tags/tags.module';
           ProjectEntity,
           AssetEntity,
           ProjectMediaEntity,
+          ProjectMediaEvaluationEntity,
           ProjectEvaluationSummaryEntity,
           AssetUploadSessionEntity,
           AssetVariantEntity,

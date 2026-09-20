@@ -50,6 +50,12 @@ export class MediaController {
     return this.mediaService.update(id, dto, context.userId);
   }
 
+  @Get('project-media/:id/evaluations')
+  listEvaluationHistory(@Param('id') id: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.mediaService.listEvaluationHistory(id, context.userId);
+  }
+
   @Delete('project-media/:id')
   async remove(@Param('id') id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);

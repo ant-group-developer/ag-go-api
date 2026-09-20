@@ -170,15 +170,38 @@ export class ProjectsService {
       throw new NotFoundException('Project not found');
     }
     await this.requireFolderAccess(project.folderId, userId, 'viewer');
-    const tags = (await this.dataSource.query(
-      `SELECT tag.id, tag.name
-       FROM project_tags project_tag
-       INNER JOIN tags tag ON tag.id = project_tag.tag_id
-       WHERE project_tag.project_id = $1
-       ORDER BY tag.normalized_name ASC`,
-      [project.id],
-    )) as Array<{ id: string; name: string }>;
+    const [folder, country, province, category, tags] = await Promise.all([
+      this.folderRepository.findOne({ where: { id: project.folderId } }),
+      project.countryId
+        ? this.countryRepository.findOne({ where: { id: project.countryId } })
+        : Promise.resolve(null),
+      project.provinceId
+        ? this.provinceRepository.findOne({ where: { id: project.provinceId } })
+        : Promise.resolve(null),
+      project.categoryId
+        ? this.categoryRepository.findOne({ where: { id: project.categoryId } })
+        : Promise.resolve(null),
+      this.dataSource.query(
+        `SELECT tag.id, tag.name
+         FROM project_tags project_tag
+         INNER JOIN tags tag ON tag.id = project_tag.tag_id
+         WHERE project_tag.project_id = $1
+         ORDER BY tag.normalized_name ASC`,
+        [project.id],
+      ) as Promise<Array<{ id: string; name: string }>>,
+    ]);
+    const thumbnailMedia = project.thumbnailProjectMediaId
+      ? await this.dataSource.getRepository(ProjectMediaEntity).findOne({
+          where: { id: project.thumbnailProjectMediaId, projectId: project.id },
+        })
+      : null;
     return Object.assign(project, {
+      folderPath: folder?.pathText ?? '',
+      countryName: country?.name ?? null,
+      countryFlagUrl: country?.flagUrl ?? null,
+      provinceName: province?.name ?? null,
+      categoryName: category?.name ?? null,
+      thumbnailAssetId: thumbnailMedia?.assetId ?? null,
       tagIds: tags.map((tag) => tag.id),
       tags: tags.map((tag) => tag.name),
     });

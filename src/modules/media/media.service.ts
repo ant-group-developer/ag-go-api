@@ -8,8 +8,10 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
+import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-evaluation-summary.entity';
+import { ProjectMediaEvaluationEntity } from '../../database/entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
@@ -63,8 +65,24 @@ export class MediaService {
     const rows = await query.getMany();
     const hasNextPage = rows.length > normalizedLimit;
     const items = hasNextPage ? rows.slice(0, normalizedLimit) : rows;
+    const variants = await this.dataSource.getRepository(AssetVariantEntity).findBy({
+      assetId: In(items.map((item) => item.assetId)),
+    });
+    const previewVariants = new Map(
+      variants
+        .filter((variant) => variant.variantCode === 'preview')
+        .map((variant) => [variant.assetId, variant]),
+    );
     return {
-      items,
+      items: items.map((item) => {
+        const previewVariant = previewVariants.get(item.assetId);
+        const sourceMetadata = item.asset.sourceMetadata ?? {};
+        return Object.assign(item, {
+          durationSeconds: readNumberMetadata(sourceMetadata, ['durationSeconds', 'duration']),
+          width: previewVariant?.width ?? readNumberMetadata(sourceMetadata, ['width']),
+          height: previewVariant?.height ?? readNumberMetadata(sourceMetadata, ['height']),
+        });
+      }),
       nextCursor: hasNextPage ? this.encodeCursor(items[items.length - 1]) : null,
     };
   }
@@ -148,8 +166,36 @@ export class MediaService {
     Object.assign(media, {
       sortOrder: dto.sortOrder ?? media.sortOrder,
       caption: dto.caption === undefined ? media.caption : dto.caption.trim() || null,
+      evaluationStatus: dto.evaluationStatus ?? media.evaluationStatus,
     });
-    return this.projectMediaRepository.save(media);
+    return this.dataSource.transaction(async (manager) => {
+      const updatedMedia = await manager.save(media);
+      if (dto.evaluationStatus !== undefined || dto.comment !== undefined) {
+        await manager.save(
+          manager.create(ProjectMediaEvaluationEntity, {
+            id: uuidv7(),
+            projectMediaId: media.id,
+            evaluationStatus: media.evaluationStatus,
+            comment: dto.comment?.trim() || null,
+            evaluatedBy: userId,
+          }),
+        );
+      }
+      if (dto.evaluationStatus !== undefined) {
+        await this.refreshProjectEvaluation(manager, media.projectId);
+      }
+      return updatedMedia;
+    });
+  }
+
+  async listEvaluationHistory(mediaId: string, userId: string) {
+    const media = await this.getMedia(mediaId);
+    const project = await this.getProject(media.projectId);
+    await this.requireProjectAccess(project, userId, 'viewer');
+    return this.dataSource.getRepository(ProjectMediaEvaluationEntity).find({
+      where: { projectMediaId: mediaId },
+      order: { createdAt: 'DESC' },
+    });
   }
 
   async remove(mediaId: string, userId: string): Promise<void> {
@@ -303,4 +349,58 @@ export class MediaService {
       throw new BadRequestException('Invalid media cursor');
     }
   }
+
+  private async refreshProjectEvaluation(
+    manager: import('typeorm').EntityManager,
+    projectId: string,
+  ): Promise<void> {
+    const counts = await manager
+      .createQueryBuilder(ProjectMediaEntity, 'media')
+      .select('COUNT(*)', 'total')
+      .addSelect("COUNT(*) FILTER (WHERE media.evaluation_status = 'pending')", 'pending')
+      .addSelect("COUNT(*) FILTER (WHERE media.evaluation_status = 'approved')", 'approved')
+      .addSelect("COUNT(*) FILTER (WHERE media.evaluation_status = 'rejected')", 'rejected')
+      .where('media.project_id = :projectId', { projectId })
+      .getRawOne<{ total: string; pending: string; approved: string; rejected: string }>();
+
+    const total = Number(counts?.total ?? 0);
+    const pending = Number(counts?.pending ?? 0);
+    const approved = Number(counts?.approved ?? 0);
+    const rejected = Number(counts?.rejected ?? 0);
+    const evaluationStatus =
+      total === 0
+        ? 'draft'
+        : pending > 0
+          ? 'pending'
+          : approved === total
+            ? 'completed'
+            : rejected === total
+              ? 'failed'
+              : 'partially_completed';
+
+    await manager.update(ProjectEntity, projectId, { evaluationStatus });
+    await manager.save(
+      manager.create(ProjectEvaluationSummaryEntity, {
+        projectId,
+        totalMedia: total,
+        pendingCount: pending,
+        approvedCount: approved,
+        rejectedCount: rejected,
+        evaluationStatus,
+      }),
+    );
+  }
+}
+
+function readNumberMetadata(metadata: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) {
+      return Number(value);
+    }
+  }
+  return null;
 }

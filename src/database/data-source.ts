@@ -12,6 +12,7 @@ import { FolderClosureEntity } from './entities/folder-closure.entity';
 import { FolderEntity } from './entities/folder.entity';
 import { MediaRenderJobEntity } from './entities/media-render-job.entity';
 import { ProjectEvaluationSummaryEntity } from './entities/project-evaluation-summary.entity';
+import { ProjectMediaEvaluationEntity } from './entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from './entities/project-media.entity';
 import { ProjectEntity } from './entities/project.entity';
 import { ProvinceEntity } from './entities/province.entity';
@@ -24,6 +25,8 @@ import { UploadTargetProjectMigration1750000000000 } from './migrations/17500000
 import { R2StorageDefaultsMigration1760000000000 } from './migrations/1760000000000-r2-storage-defaults';
 import { UserOnlyAccessMigration1770000000000 } from './migrations/1770000000000-user-only-access';
 import { AddCountryFlagUrl1780000000000 } from './migrations/1780000000000-add-country-flag-url';
+import { ProjectMediaEvaluation1790000000000 } from './migrations/1790000000000-project-media-evaluation';
+import { ProjectMediaEvaluationHistory1800000000000 } from './migrations/1800000000000-project-media-evaluation-history';
 
 loadEnv();
 
@@ -52,6 +55,7 @@ export const AppDataSource = new DataSource({
     TagEntity,
     ProjectEntity,
     ProjectMediaEntity,
+    ProjectMediaEvaluationEntity,
     ProjectEvaluationSummaryEntity,
     MediaRenderJobEntity,
   ],
@@ -64,6 +68,8 @@ export const AppDataSource = new DataSource({
     R2StorageDefaultsMigration1760000000000,
     UserOnlyAccessMigration1770000000000,
     AddCountryFlagUrl1780000000000,
+    ProjectMediaEvaluation1790000000000,
+    ProjectMediaEvaluationHistory1800000000000,
   ],
   synchronize: false,
 });

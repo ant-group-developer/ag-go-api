@@ -26,6 +26,9 @@ export class ProjectMediaEntity {
   @Column({ name: 'caption', type: 'varchar', length: 500, nullable: true })
   caption!: string | null;
 
+  @Column({ name: 'evaluation_status', type: 'varchar', length: 20, default: 'pending' })
+  evaluationStatus!: 'pending' | 'approved' | 'rejected';
+
   @Column({ name: 'created_by', type: 'varchar', length: 128 })
   createdBy!: string;
 

@@ -1,4 +1,4 @@
-import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 export class UpdateProjectMediaDto {
   @IsOptional()
@@ -10,4 +10,13 @@ export class UpdateProjectMediaDto {
   @IsString()
   @MaxLength(500)
   caption?: string;
+
+  @IsOptional()
+  @IsEnum(['pending', 'approved', 'rejected'])
+  evaluationStatus?: 'pending' | 'approved' | 'rejected';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  comment?: string | null;
 }

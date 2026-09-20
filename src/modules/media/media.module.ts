@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthContextService } from '../../common/auth-context.service';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-evaluation-summary.entity';
+import { ProjectMediaEvaluationEntity } from '../../database/entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { FoldersModule } from '../folders/folders.module';
@@ -17,6 +18,7 @@ import { MediaService } from './media.service';
       ProjectEntity,
       ProjectEvaluationSummaryEntity,
       ProjectMediaEntity,
+      ProjectMediaEvaluationEntity,
     ]),
   ],
   controllers: [MediaController],
