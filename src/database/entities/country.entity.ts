@@ -1,6 +1,7 @@
-import { Column, Entity, PrimaryColumn } from 'typeorm';
+import { Column, Entity, Index, PrimaryColumn } from 'typeorm';
 
 @Entity('countries')
+@Index('uq_countries_code', ['code'], { unique: true })
 export class CountryEntity {
   @PrimaryColumn('uuid')
   id!: string;
