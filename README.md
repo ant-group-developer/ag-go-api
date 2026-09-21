@@ -13,7 +13,52 @@ yarn migration:run
 yarn start:dev
 ```
 
-Local PostgreSQL được publish ở port `55432` qua Docker Compose.
+Chạy toàn bộ backend bằng Docker:
+
+```bash
+cp .env.example .env
+docker compose build
+docker compose run --rm api node node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js
+docker compose up -d
+```
+
+Compose chính chỉ chạy `api` và `worker`, lấy toàn bộ biến runtime trực tiếp từ
+`.env`. API được publish theo biến `PORT`; `DATABASE_URL` và `REDIS_URL` cũng
+được dùng nguyên giá trị trong `.env`, phù hợp với PostgreSQL/Redis đã chạy sẵn
+trên VPS. Khi chạy trên VPS, hai URL này phải trỏ tới hostname/IP mà container
+có thể truy cập, không dùng `localhost` nếu database nằm ngoài container. Nếu
+PostgreSQL/Redis chạy trực tiếp trên cùng VPS, có thể dùng
+`host.docker.internal` (Compose đã ánh xạ hostname này tới host):
+
+```dotenv
+DATABASE_URL=postgres://user:password@host.docker.internal:5432/aggo
+REDIS_URL=redis://:password@host.docker.internal:6379
+```
+
+Nếu cần dựng PostgreSQL và Redis local, dùng Compose override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
+docker compose -f docker-compose.yml -f docker-compose.local.yml run --rm api node node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js
+```
+
+Giới hạn tài nguyên được cấu hình qua `.env`: API/worker mặc định mỗi service
+`2 CPU` và `2 GB RAM`; PostgreSQL local mặc định `1 CPU/1 GB`, Redis local
+`0.5 CPU/256 MB`.
+
+CI/CD nằm trong `.github/workflows`:
+
+- `ci.yml`: kiểm tra format, typecheck, lint, test, build và Docker image cho
+  `main`/`dev`.
+- `deploy.dev.yml`: deploy khi push vào `dev`.
+- `deploy.prod.yml`: deploy khi push vào `main`.
+- `notify.yml`: gửi trạng thái workflow qua Telegram.
+
+Các secret SSH cần khai báo trên GitHub repository: `VPS_SSH_KEY_DEV`,
+`VPS_HOST_DEV`, `VPS_USER_DEV`, tùy chọn `VPS_PORT_DEV` và
+`VPS_APP_PATH_DEV`; production dùng `VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER`,
+`VPS_PORT`, `VPS_APP_PATH`. Notification dùng `TELEGRAM_CHAT_ID` và
+`TELEGRAM_TOKEN`.
 
 Authentication dùng Auth0 JWT bắt buộc ở mọi môi trường. Cần cấu hình
 `AUTH0_ISSUER_URL`, `AUTH0_AUDIENCE`, `AUTH0_CLIENT_ID` và
