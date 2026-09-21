@@ -1,5 +1,17 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+  Query,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { MAX_CSV_FILE_SIZE_BYTES, type CsvUploadFile } from '../../common/csv/csv-import';
 import { CreateProvinceDto } from './dto/create-province.dto';
 import { ListProvincesQueryDto } from './dto/list-provinces-query.dto';
 import { ProvincesService } from './provinces.service';
@@ -18,6 +30,27 @@ export class ProvincesController {
   @ApiQuery({ name: 'pageSize', required: false, type: Number, example: 20 })
   list(@Query() query: ListProvincesQueryDto) {
     return this.provincesService.list(query);
+  }
+
+  @Post('import')
+  @HttpCode(HttpStatus.OK)
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: MAX_CSV_FILE_SIZE_BYTES, files: 1 },
+    }),
+  )
+  importCsv(@UploadedFile() file?: CsvUploadFile) {
+    return this.provincesService.importCsv(file);
   }
 
   @Post()

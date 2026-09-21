@@ -212,6 +212,31 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a5
       tags: *a6
+  /countries/import:
+    post:
+      operationId: CountriesController_importCsv
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a5
+      tags: *a6
   /provinces:
     get:
       operationId: ProvincesController_list
@@ -273,6 +298,31 @@ paths:
               $ref: "#/components/schemas/CreateProvinceDto"
       responses:
         "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a7
+      tags: *a8
+  /provinces/import:
+    post:
+      operationId: ProvincesController_importCsv
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
           description: ""
           content:
             application/json:
@@ -739,7 +789,7 @@ info:
   contact: {}
 tags: []
 servers:
-  - url: http://localhost:3000/api
+  - url: http://localhost:3737/api
 components:
   securitySchemes:
     bearer:

@@ -30,6 +30,7 @@ import { ProjectMediaEvaluation1790000000000 } from './migrations/1790000000000-
 import { ProjectMediaEvaluationHistory1800000000000 } from './migrations/1800000000000-project-media-evaluation-history';
 import { OutboxEvents1810000000000 } from './migrations/1810000000000-outbox-events';
 import { AssetProcessingError1820000000000 } from './migrations/1820000000000-asset-processing-error';
+import { UniqueCountryCode1830000000000 } from './migrations/1830000000000-unique-country-code';
 
 loadEnv();
 
@@ -76,6 +77,7 @@ export const AppDataSource = new DataSource({
     ProjectMediaEvaluationHistory1800000000000,
     OutboxEvents1810000000000,
     AssetProcessingError1820000000000,
+    UniqueCountryCode1830000000000,
   ],
   synchronize: false,
 });
