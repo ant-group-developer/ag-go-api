@@ -46,6 +46,7 @@ if (error) {
 export const AppDataSource = new DataSource({
   type: 'postgres',
   url: validatedEnv.DATABASE_URL,
+  schema: validatedEnv.DATABASE_SCHEMA,
   entities: [
     AssetEntity,
     AssetUploadSessionEntity,

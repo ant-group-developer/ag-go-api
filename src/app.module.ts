@@ -52,6 +52,7 @@ import { TagsModule } from './modules/tags/tags.module';
       useFactory: (config: ConfigService) => ({
         type: 'postgres',
         url: config.getOrThrow<string>('DATABASE_URL'),
+        schema: config.getOrThrow<string>('DATABASE_SCHEMA'),
         entities: [
           FolderEntity,
           FolderClosureEntity,

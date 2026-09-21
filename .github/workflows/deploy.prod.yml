@@ -1,0 +1,46 @@
+name: Deploy production
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ag-go-api-prod-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+      APP_PATH: ${{ secrets.VPS_APP_PATH || '/www/wwwroot/prod/ag-go-v2/ag-go-api' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Deploy via SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -o StrictHostKeyChecking=no -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "
+            set -e
+            sudo git config --global --add safe.directory '$APP_PATH'
+            cd '$APP_PATH'
+            sudo git pull --ff-only origin main
+            TAG=\$(git rev-parse --short HEAD)
+            sudo env TAG=\$TAG docker compose build
+            sudo env TAG=\$TAG docker compose run --rm api node node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js
+            sudo env TAG=\$TAG docker compose up -d --remove-orphans
+          "

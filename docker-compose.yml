@@ -1,21 +1,39 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: aggo
-      POSTGRES_PASSWORD: aggo
-      POSTGRES_DB: aggo
+  api:
+    image: ag-go-api:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     ports:
-      - '55432:5432'
-    volumes:
-      - ag-go-postgres:/var/lib/postgresql/data
-  redis:
-    image: redis:7-alpine
-    ports:
-      - '6379:6379'
-    volumes:
-      - ag-go-redis:/data
+      - '${PORT:-3000}:${PORT:-3000}'
+    mem_limit: ${API_MEMORY_LIMIT:-2g}
+    cpus: ${API_CPUS:-2}
+    deploy:
+      resources:
+        limits:
+          cpus: '${API_CPUS:-2}'
+          memory: ${API_MEMORY_LIMIT:-2g}
+    restart: unless-stopped
 
-volumes:
-  ag-go-postgres:
-  ag-go-redis:
+  worker:
+    image: ag-go-api:${TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ['node', 'dist/workers/worker.js']
+    env_file:
+      - .env
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    mem_limit: ${WORKER_MEMORY_LIMIT:-2g}
+    cpus: ${WORKER_CPUS:-2}
+    deploy:
+      resources:
+        limits:
+          cpus: '${WORKER_CPUS:-2}'
+          memory: ${WORKER_MEMORY_LIMIT:-2g}
+    restart: unless-stopped

@@ -1,0 +1,40 @@
+name: Notify on Workflow Completion
+
+on:
+  workflow_run:
+    workflows:
+      - ag-go-api CI
+      - Deploy development
+      - Deploy production
+    types:
+      - completed
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Calculate duration
+        id: duration
+        shell: bash
+        run: |
+          start_time=$(date -d '${{ github.event.workflow_run.run_started_at }}' +%s)
+          end_time=$(date -d '${{ github.event.workflow_run.updated_at }}' +%s)
+          duration=$((end_time - start_time))
+          if [ "$duration" -lt 0 ]; then duration=0; fi
+          echo "formatted_duration=$((duration / 60))m $((duration % 60))s" >> "$GITHUB_OUTPUT"
+
+      - name: Send Telegram notification
+        uses: appleboy/telegram-action@master
+        with:
+          to: ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_TOKEN }}
+          format: markdown
+          message: |
+            Repository: [${{ github.repository }}](${{ github.server_url }}/${{ github.repository }})
+            Workflow: *${{ github.event.workflow_run.name }}* (#${{ github.event.workflow_run.run_number }})
+            Branch: `${{ github.event.workflow_run.head_branch }}`
+            Commit: `${{ github.event.workflow_run.head_commit.message }}`
+            Status: ${{ github.event.workflow_run.conclusion == 'success' && 'Success' || github.event.workflow_run.conclusion == 'failure' && 'Failure' || github.event.workflow_run.conclusion == 'cancelled' && 'Cancelled' || 'Unknown' }}
+            Time: ${{ steps.duration.outputs.formatted_duration }}
+            [View run](${{ github.event.workflow_run.html_url }})
