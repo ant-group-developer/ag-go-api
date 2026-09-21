@@ -1,15 +1,19 @@
 import { INestApplication } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule, type OpenAPIObject } from '@nestjs/swagger';
 
 export function createOpenApiDocument(app: INestApplication): OpenAPIObject {
+  const runtimeConfig = app.get(ConfigService);
+  const port = runtimeConfig.getOrThrow<number>('PORT');
+  const prefix = runtimeConfig.getOrThrow<string>('API_PREFIX').replace(/^\/+|\/+$/g, '');
   const config = new DocumentBuilder()
     .setTitle('AG Go API')
     .setDescription('AG Go backend API')
     .setVersion('0.1.0')
     .addBearerAuth()
     .build();
-  const document = SwaggerModule.createDocument(app, config);
-  document.servers = [{ url: 'http://localhost:3000/api' }];
+  const document = SwaggerModule.createDocument(app, config, { ignoreGlobalPrefix: true });
+  document.servers = [{ url: `http://localhost:${port}/${prefix}` }];
   document.components ??= {};
   document.components.schemas = {
     ...document.components.schemas,

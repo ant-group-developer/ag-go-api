@@ -25,6 +25,10 @@ export const envValidationSchema = Joi.object({
     .trim()
     .uri({ scheme: ['postgres', 'postgresql'] })
     .required(),
+  DATABASE_SCHEMA: Joi.string()
+    .trim()
+    .pattern(/^[a-zA-Z_][a-zA-Z0-9_$]*$/)
+    .required(),
   REDIS_URL: Joi.string()
     .trim()
     .uri({ scheme: ['redis', 'rediss'] })

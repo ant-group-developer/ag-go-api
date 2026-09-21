@@ -2,9 +2,10 @@ name: ag-go-api CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
-    branches: [main]
+    branches: [main, dev]
+  workflow_dispatch:
 
 jobs:
   verify:
@@ -22,3 +23,9 @@ jobs:
       - run: yarn test --runInBand
       - run: yarn build
       - run: yarn openapi:validate
+      - name: Prepare Compose environment
+        run: cp .env.example .env
+      - name: Validate Docker Compose
+        run: docker compose --env-file .env.example config --quiet
+      - name: Build Docker image
+        run: docker build --tag ag-go-api:ci .
