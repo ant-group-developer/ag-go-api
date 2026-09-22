@@ -3,7 +3,7 @@ name: Notify on Workflow Completion
 on:
   workflow_run:
     workflows:
-      - ag-go-api CI
+      - Continuous Integration
       - Deploy development
       - Deploy production
     types:
@@ -31,10 +31,13 @@ jobs:
           token: ${{ secrets.TELEGRAM_TOKEN }}
           format: markdown
           message: |
-            Repository: [${{ github.repository }}](${{ github.server_url }}/${{ github.repository }})
-            Workflow: *${{ github.event.workflow_run.name }}* (#${{ github.event.workflow_run.run_number }})
-            Branch: `${{ github.event.workflow_run.head_branch }}`
-            Commit: `${{ github.event.workflow_run.head_commit.message }}`
-            Status: ${{ github.event.workflow_run.conclusion == 'success' && 'Success' || github.event.workflow_run.conclusion == 'failure' && 'Failure' || github.event.workflow_run.conclusion == 'cancelled' && 'Cancelled' || 'Unknown' }}
-            Time: ${{ steps.duration.outputs.formatted_duration }}
-            [View run](${{ github.event.workflow_run.html_url }})
+            *Workflow notification*
+
+            *Repository:* [${{ github.repository }}](${{ github.server_url }}/${{ github.repository }})
+            *Workflow:* `${{ github.event.workflow_run.name }}` · Run #${{ github.event.workflow_run.run_number }}
+            *Branch:* `${{ github.event.workflow_run.head_branch }}`
+            *Commit:* `${{ github.event.workflow_run.head_commit.message }}`
+            *Status:* ${{ github.event.workflow_run.conclusion == 'success' && '✅ Success' || github.event.workflow_run.conclusion == 'failure' && '❌ Failure' || github.event.workflow_run.conclusion == 'cancelled' && '⚪ Cancelled' || '❔ Unknown' }}
+            *Duration:* `${{ steps.duration.outputs.formatted_duration }}`
+
+            [View workflow run →](${{ github.event.workflow_run.html_url }})
