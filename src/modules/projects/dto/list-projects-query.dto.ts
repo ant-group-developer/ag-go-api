@@ -9,13 +9,6 @@ export class ListProjectsQueryDto extends BaseKeywordQueryDto {
   @IsUUID()
   folderId?: string;
 
-  @ApiPropertyOptional({ type: [String], description: 'Comma-separated folder IDs; matches any folder and its descendants.' })
-  @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
-  @IsOptional()
-  @IsArray()
-  @IsUUID('all', { each: true })
-  folderIds?: string[];
-
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID()

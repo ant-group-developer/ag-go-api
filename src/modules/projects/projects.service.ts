@@ -34,7 +34,7 @@ export class ProjectsService {
     @InjectRepository(TagEntity)
     private readonly tagRepository: Repository<TagEntity>,
     private readonly folderAccessService: FolderAccessService,
-  ) { }
+  ) {}
 
   async list(query: ListProjectsQueryDto, userId: string) {
     const folderIds = await this.folderAccessService.accessibleFolderIds(userId);
@@ -52,16 +52,7 @@ export class ProjectsService {
         { keyword: `%${query.normalizedKeyword.toLocaleLowerCase('vi-VN')}%` },
       );
     }
-    if (query.folderIds?.length) {
-      projectQuery.andWhere(
-        `project.folderId IN (
-          SELECT folder_closure.descendant_id
-          FROM folder_closure
-          WHERE folder_closure.ancestor_id IN (:...filterFolderIds)
-        )`,
-        { filterFolderIds: query.folderIds },
-      );
-    } else if (query.folderId) {
+    if (query.folderId) {
       projectQuery.andWhere(
         `project.folderId IN (
           SELECT folder_closure.descendant_id
@@ -135,8 +126,8 @@ export class ProjectsService {
     );
     const thumbnailMedia = thumbnailMediaIds.length
       ? await this.dataSource.getRepository(ProjectMediaEntity).findBy({
-        id: In(thumbnailMediaIds),
-      })
+          id: In(thumbnailMediaIds),
+        })
       : [];
     const thumbnailAssetIds = new Map(thumbnailMedia.map((media) => [media.id, media.assetId]));
     const folderById = new Map(folderRecords.map((folder) => [folder.id, folder]));
@@ -201,8 +192,8 @@ export class ProjectsService {
     ]);
     const thumbnailMedia = project.thumbnailProjectMediaId
       ? await this.dataSource.getRepository(ProjectMediaEntity).findOne({
-        where: { id: project.thumbnailProjectMediaId, projectId: project.id },
-      })
+          where: { id: project.thumbnailProjectMediaId, projectId: project.id },
+        })
       : null;
     return Object.assign(project, {
       folderPath: folder?.pathText ?? '',
