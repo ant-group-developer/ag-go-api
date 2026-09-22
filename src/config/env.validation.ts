@@ -69,4 +69,5 @@ export const envValidationSchema = Joi.object({
     .uri({ scheme: ['http', 'https'] })
     .allow('')
     .optional(),
+  ACCOUNT_API_KEY: Joi.string().trim().allow('').optional(),
 }).unknown(true);

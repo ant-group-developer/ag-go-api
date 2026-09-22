@@ -82,3 +82,20 @@ nâng cao sẽ bổ sung sau.
 Upload dùng Cloudflare R2 qua S3-compatible API. Upload flow: tạo session →
 nhận presigned PUT URL → upload trực tiếp lên R2 → complete → worker tạo
 `thumbnail` và `preview` variants.
+## Account API proxy
+
+`GET /api/account/me` yêu cầu Auth0 Bearer token. API lấy `sub` từ token,
+chuẩn hóa tiền tố `auth0|`, rồi gọi `GET /v2/public/users` của
+`ag-account-server` bằng API key ở phía server. Browser không được gửi API key.
+
+Thiết lập trong `.env`:
+
+```dotenv
+ACCOUNT_API_URL=https://api-account-dev-v2.ant-group.net
+ACCOUNT_API_KEY=ak_...
+```
+
+Nếu `ACCOUNT_API_URL` đã bao gồm `/v2` thì proxy không thêm prefix lần nữa.
+Frontend có thể dùng `getCurrentAccountUser()` trong
+`ag-go-web/src/modules/account/api/account.ts`; API client sẽ tự gắn Bearer
+token hiện tại.

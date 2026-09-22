@@ -27,6 +27,7 @@ import { ProvinceEntity } from './database/entities/province.entity';
 import { TagEntity } from './database/entities/tag.entity';
 import { HealthController } from './health/health.controller';
 import { QueueModule } from './infra/queue/queue.module';
+import { AccountModule } from './modules/account/account.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { CountriesModule } from './modules/countries/countries.module';
@@ -84,6 +85,7 @@ import { TagsModule } from './modules/tags/tags.module';
     MediaModule,
     AssetsModule,
     QueueModule,
+    AccountModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
