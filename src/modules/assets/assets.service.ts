@@ -274,15 +274,29 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
 
   async preview(assetId: string, variantCode: string, userId: string, response: Response) {
     await this.requireAssetAccess(assetId, userId, 'viewer');
-    const variant = await this.variantRepository.findOne({
-      where: { assetId, variantCode, status: 'ready' },
-    });
-    if (!variant) {
-      throw new NotFoundException('Ready asset variant not found');
-    }
+    const variant = await this.findReadyVariant(assetId, variantCode);
     response.setHeader('Content-Type', variant.mimeType);
     response.setHeader('Content-Length', variant.fileSizeBytes);
     this.storage.readObject(variant.storageKey).pipe(response);
+  }
+
+  async getPreviewUrl(assetId: string, variantCode: string, userId: string) {
+    await this.requireAssetAccess(assetId, userId, 'viewer');
+    const variant = await this.findReadyVariant(assetId, variantCode);
+    const expiresInSeconds = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
+    const url = await this.storage.getPresignedGetUrl(
+      variant.storageKey,
+      variant.mimeType,
+      expiresInSeconds,
+    );
+
+    return {
+      url,
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+      variantCode: variant.variantCode,
+      mimeType: variant.mimeType,
+      fileSizeBytes: variant.fileSizeBytes,
+    };
   }
 
   async retry(assetId: string, userId: string) {
@@ -359,6 +373,16 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       }
     }
     throw new ForbiddenException('Insufficient asset permission');
+  }
+
+  private async findReadyVariant(assetId: string, variantCode: string) {
+    const variant = await this.variantRepository.findOne({
+      where: { assetId, variantCode, status: 'ready' },
+    });
+    if (!variant) {
+      throw new NotFoundException('Ready asset variant not found');
+    }
+    return variant;
   }
 
   private async getProject(projectId: string) {

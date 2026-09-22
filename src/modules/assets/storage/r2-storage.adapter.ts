@@ -46,6 +46,23 @@ export class R2StorageAdapter implements StorageAdapter {
     );
   }
 
+  async getPresignedGetUrl(
+    storageKey: string,
+    contentType: string,
+    expiresInSeconds: number,
+  ): Promise<string> {
+    return getSignedUrl(
+      this.client,
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: storageKey,
+        ResponseContentType: contentType,
+        ResponseContentDisposition: 'inline',
+      }),
+      { expiresIn: expiresInSeconds },
+    );
+  }
+
   async headObject(storageKey: string): Promise<ObjectHead | null> {
     try {
       const result = await this.client.send(

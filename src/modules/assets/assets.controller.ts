@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Headers, Param, Post, Req, Res } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Headers, Param, Post, Query, Req, Res } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { AssetsService } from './assets.service';
@@ -61,6 +61,17 @@ export class AssetsController {
   ) {
     const context = this.authContext.getContext(request);
     return this.assetsService.preview(assetId, variantCode, context.userId, response);
+  }
+
+  @Get('assets/:assetId/preview-url')
+  @ApiOperation({ summary: 'Tạo presigned URL để tải preview trực tiếp từ R2' })
+  previewUrl(
+    @Param('assetId') assetId: string,
+    @Query('variantCode') variantCode = 'thumbnail',
+    @Req() request: Request,
+  ) {
+    const context = this.authContext.getContext(request);
+    return this.assetsService.getPreviewUrl(assetId, variantCode, context.userId);
   }
 
   @Post('assets/:assetId/retry')

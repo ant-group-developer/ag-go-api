@@ -13,6 +13,11 @@ export interface StorageAdapter {
     contentType: string,
     expiresInSeconds: number,
   ): Promise<string>;
+  getPresignedGetUrl(
+    storageKey: string,
+    contentType: string,
+    expiresInSeconds: number,
+  ): Promise<string>;
   headObject(storageKey: string): Promise<ObjectHead | null>;
   readObject(storageKey: string): Readable;
   putObject(storageKey: string, body: Readable | Buffer, contentType: string): Promise<ObjectHead>;
