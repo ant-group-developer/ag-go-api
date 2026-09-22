@@ -6,7 +6,9 @@ import { AppModule } from './app.module';
 import { createOpenApiDocument } from './openapi';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create(AppModule, {
+    logger: ['error', 'warn'],
+  });
   const config = app.get(ConfigService);
   const prefix = config.getOrThrow<string>('API_PREFIX');
 
