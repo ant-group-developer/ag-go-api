@@ -14,6 +14,7 @@ import { v7 as uuidv7 } from 'uuid';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
+import { RenderBatchEntity } from '../../database/entities/render-batch.entity';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage/storage-adapter';
 
 type MediaMetadata = {
@@ -36,6 +37,8 @@ export class MediaProcessingService {
     private readonly variantRepository: Repository<AssetVariantEntity>,
     @InjectRepository(MediaRenderJobEntity)
     private readonly jobRepository: Repository<MediaRenderJobEntity>,
+    @InjectRepository(RenderBatchEntity)
+    private readonly renderBatchRepository: Repository<RenderBatchEntity>,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     private readonly config: ConfigService,
   ) {}
@@ -113,6 +116,7 @@ export class MediaProcessingService {
           errorCode: null,
           errorMessage: null,
         });
+        await this.refreshRenderBatch(job.renderBatchId);
       } finally {
         await fs.rm(tempPath, { force: true });
       }
@@ -130,8 +134,38 @@ export class MediaProcessingService {
         errorMessage: message.slice(0, 4000),
         finishedAt: new Date(),
       });
+      await this.refreshRenderBatch(job.renderBatchId);
       throw error;
     }
+  }
+
+  private async refreshRenderBatch(batchId: string | null): Promise<void> {
+    if (!batchId) {
+      return;
+    }
+    const jobs = await this.jobRepository.find({ where: { renderBatchId: batchId } });
+    if (jobs.length === 0) {
+      return;
+    }
+    const completed = jobs.filter((item) => item.status === 'completed').length;
+    const failed = jobs.filter((item) => item.status === 'failed').length;
+    const cancelled = jobs.filter((item) => item.status === 'cancelled').length;
+    const terminal = completed + failed + cancelled;
+    const status =
+      terminal < jobs.length
+        ? 'processing'
+        : failed > 0 || cancelled > 0
+          ? completed > 0
+            ? 'partial'
+            : 'failed'
+          : 'completed';
+    await this.renderBatchRepository.update(batchId, {
+      status,
+      totalJobs: jobs.length,
+      completedJobs: completed,
+      failedJobs: failed,
+      progressPercent: Math.round((terminal / jobs.length) * 100),
+    });
   }
 
   private async processImage(asset: AssetEntity, inputPath: string): Promise<MediaMetadata> {
@@ -166,9 +200,14 @@ export class MediaProcessingService {
     maxWidth: number,
     maxHeight: number,
   ): Promise<void> {
-    const output = await sharp(inputPath)
+    const resizedBuffer = await sharp(inputPath)
       .rotate()
       .resize({ width: maxWidth, height: maxHeight, fit: 'inside', withoutEnlargement: true })
+      .png()
+      .toBuffer();
+    const resizedMetadata = await sharp(resizedBuffer).metadata();
+    const output = await sharp(resizedBuffer)
+      .composite([{ input: this.createWatermark(resizedMetadata.width ?? maxWidth) , gravity: 'southeast' }])
       .webp({ quality: variantCode === 'thumbnail' ? 75 : 85 })
       .toBuffer({ resolveWithObject: true });
     const storageKey = `variants/${asset.id}/${variantCode}.webp`;
@@ -181,6 +220,7 @@ export class MediaProcessingService {
       head.sizeBytes,
       output.info.width,
       output.info.height,
+      true,
     );
   }
 
@@ -226,7 +266,17 @@ export class MediaProcessingService {
         `scale='min(${this.config.getOrThrow<number>('MEDIA_THUMBNAIL_MAX_WIDTH')},iw)':-2`,
         posterPath,
       ]);
-      const poster = await fs.readFile(posterPath);
+      const posterBuffer = await fs.readFile(posterPath);
+      const posterMetadata = await sharp(posterBuffer).metadata();
+      const poster = await sharp(posterBuffer)
+        .composite([
+          {
+            input: this.createWatermark(posterMetadata.width ?? 320),
+            gravity: 'southeast',
+          },
+        ])
+        .jpeg({ quality: 82 })
+        .toBuffer();
       const posterKey = `variants/${asset.id}/thumbnail.jpg`;
       const posterHead = await this.storage.putObject(posterKey, poster, 'image/jpeg');
       await this.saveVariant(
@@ -237,13 +287,28 @@ export class MediaProcessingService {
         posterHead.sizeBytes,
         width,
         height,
+        true,
       );
     } finally {
       await fs.rm(posterPath, { force: true });
     }
 
-    const previewKey = `variants/${asset.id}/preview${asset.extension ? `.${asset.extension}` : ''}`;
-    const previewHead = await this.storage.copyObject(asset.originalStorageKey, previewKey);
+    const previewExtension = asset.extension || 'mp4';
+    const previewKey = `variants/${asset.id}/preview.${previewExtension}`;
+    const previewPath = join(tmpdir(), `ag-go-preview-${asset.id}-${Date.now()}.${previewExtension}`);
+    await this.runProcess(ffmpegPath, [
+      '-y',
+      '-i',
+      inputPath,
+      '-vf',
+      "drawtext=text='AG Go Preview':fontcolor=white@0.75:fontsize=24:box=1:boxcolor=black@0.42:boxborderw=12:x=20:y=20",
+      '-c:a',
+      'copy',
+      previewPath,
+    ]);
+    const preview = await fs.readFile(previewPath);
+    const previewHead = await this.storage.putObject(previewKey, preview, asset.mimeType);
+    await fs.rm(previewPath, { force: true });
     await this.saveVariant(
       asset,
       'preview',
@@ -252,6 +317,7 @@ export class MediaProcessingService {
       previewHead.sizeBytes,
       width,
       height,
+      true,
     );
 
     return {
@@ -272,6 +338,7 @@ export class MediaProcessingService {
     sizeBytes: number,
     width?: number,
     height?: number,
+    hasWatermark = true,
   ): Promise<void> {
     const existing = await this.variantRepository.findOne({
       where: { assetId: asset.id, variantCode },
@@ -290,7 +357,7 @@ export class MediaProcessingService {
         fileSizeBytes: String(sizeBytes),
         width: width ?? null,
         height: height ?? null,
-        hasWatermark: false,
+        hasWatermark,
         status: 'ready',
         processingError: null,
       }),
@@ -303,6 +370,21 @@ export class MediaProcessingService {
       return undefined;
     }
     return numerator / denominator;
+  }
+
+  private createWatermark(baseWidth: number): Buffer {
+    const width = Math.max(1, Math.min(baseWidth, 520));
+    const height = Math.max(32, Math.min(90, Math.round(width * 0.17)));
+    const fontSize = Math.max(12, Math.round(height * 0.38));
+    return Buffer.from(`
+      <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+        <rect x="0" y="0" width="${width}" height="${height}" rx="${Math.round(height * 0.12)}" fill="rgba(0,0,0,0.42)"/>
+        <text x="${Math.round(height * 0.26)}" y="${Math.round(height * 0.64)}" fill="white"
+          font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="700">
+          AG Go Preview
+        </text>
+      </svg>
+    `);
   }
 
   private runProcess(

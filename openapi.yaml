@@ -146,6 +146,57 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a1
       tags: *a2
+  /account/me:
+    get:
+      operationId: AccountController_getMe
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a3
+        - bearer: []
+      summary: Lấy thông tin user hiện tại từ Account API
+      tags: &a4
+        - account
+  /account/users:
+    get:
+      operationId: AccountController_getUsers
+      parameters:
+        - name: fields
+          required: false
+          in: query
+          description: Các trường user muốn lấy từ Account API, phân cách bằng dấu phẩy.
+          schema:
+            example: id,name,email,avatar
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      summary: Proxy thông tin user hiện tại từ Account API
+      tags: *a4
+  /account/applications:
+    get:
+      operationId: AccountController_getApplications
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      summary: Lấy danh sách application từ Account API
+      tags: *a4
   /categories:
     get:
       operationId: CategoriesController_list
@@ -157,9 +208,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a3
+      security: &a5
         - bearer: []
-      tags: &a4
+      tags: &a6
         - categories
     post:
       operationId: CategoriesController_create
@@ -177,8 +228,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a3
-      tags: *a4
+      security: *a5
+      tags: *a6
   /countries:
     get:
       operationId: CountriesController_list
@@ -190,9 +241,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a5
+      security: &a7
         - bearer: []
-      tags: &a6
+      tags: &a8
         - countries
     post:
       operationId: CountriesController_create
@@ -210,8 +261,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a5
-      tags: *a6
+      security: *a7
+      tags: *a8
   /countries/import:
     post:
       operationId: CountriesController_importCsv
@@ -235,8 +286,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a5
-      tags: *a6
+      security: *a7
+      tags: *a8
   /provinces:
     get:
       operationId: ProvincesController_list
@@ -283,9 +334,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a7
+      security: &a9
         - bearer: []
-      tags: &a8
+      tags: &a10
         - provinces
     post:
       operationId: ProvincesController_create
@@ -303,8 +354,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a7
-      tags: *a8
+      security: *a9
+      tags: *a10
   /provinces/import:
     post:
       operationId: ProvincesController_importCsv
@@ -328,8 +379,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a7
-      tags: *a8
+      security: *a9
+      tags: *a10
   /tags:
     get:
       operationId: TagsController_list
@@ -341,9 +392,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a9
+      security: &a11
         - bearer: []
-      tags: &a10
+      tags: &a12
         - tags
     post:
       operationId: TagsController_create
@@ -361,8 +412,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a9
-      tags: *a10
+      security: *a11
+      tags: *a12
   /projects:
     get:
       operationId: ProjectsController_list
@@ -428,9 +479,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a11
+      security: &a13
         - bearer: []
-      tags: &a12
+      tags: &a14
         - projects
     post:
       operationId: ProjectsController_create
@@ -448,8 +499,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a11
-      tags: *a12
+      security: *a13
+      tags: *a14
   /projects/{id}:
     get:
       operationId: ProjectsController_findOne
@@ -466,8 +517,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a11
-      tags: *a12
+      security: *a13
+      tags: *a14
     patch:
       operationId: ProjectsController_update
       parameters:
@@ -489,8 +540,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a11
-      tags: *a12
+      security: *a13
+      tags: *a14
     delete:
       operationId: ProjectsController_remove
       parameters:
@@ -506,8 +557,28 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a11
-      tags: *a12
+      security: *a13
+      tags: *a14
+  /audit/project/{projectId}:
+    get:
+      operationId: AuditController_listProject
+      parameters:
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      tags:
+        - audit
   /projects/{projectId}/media:
     get:
       operationId: MediaController_list
@@ -524,9 +595,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a13
+      security: &a15
         - bearer: []
-      tags: &a14
+      tags: &a16
         - project-media
     post:
       operationId: MediaController_attach
@@ -549,8 +620,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a13
-      tags: *a14
+      security: *a15
+      tags: *a16
   /project-media/{id}:
     patch:
       operationId: MediaController_update
@@ -573,8 +644,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a13
-      tags: *a14
+      security: *a15
+      tags: *a16
     delete:
       operationId: MediaController_remove
       parameters:
@@ -590,8 +661,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a13
-      tags: *a14
+      security: *a15
+      tags: *a16
   /project-media/{id}/evaluations:
     get:
       operationId: MediaController_listEvaluationHistory
@@ -608,8 +679,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a13
-      tags: *a14
+      security: *a15
+      tags: *a16
   /projects/{projectId}/reorder-media:
     patch:
       operationId: MediaController_reorder
@@ -632,8 +703,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a13
-      tags: *a14
+      security: *a15
+      tags: *a16
   /projects/{projectId}/thumbnail:
     patch:
       operationId: MediaController_setThumbnail
@@ -656,8 +727,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a13
-      tags: *a14
+      security: *a15
+      tags: *a16
   /assets/upload-session:
     post:
       operationId: AssetsController_createUploadSession
@@ -675,9 +746,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a15
+      security: &a17
         - bearer: []
-      tags: &a16
+      tags: &a18
         - assets
   /assets/{assetId}/complete:
     post:
@@ -701,8 +772,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a15
-      tags: *a16
+      security: *a17
+      tags: *a18
   /assets/{assetId}/abort:
     post:
       operationId: AssetsController_abortUpload
@@ -725,8 +796,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a15
-      tags: *a16
+      security: *a17
+      tags: *a18
   /assets/{assetId}/variants:
     get:
       operationId: AssetsController_listVariants
@@ -743,8 +814,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a15
-      tags: *a16
+      security: *a17
+      tags: *a18
   /assets/{assetId}/preview/{variantCode}:
     get:
       operationId: AssetsController_preview
@@ -762,8 +833,27 @@ paths:
       responses:
         "200":
           description: ""
-      security: *a15
-      tags: *a16
+      security: *a17
+      tags: *a18
+  /assets/{assetId}/preview-url:
+    get:
+      operationId: AssetsController_previewUrl
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a17
+      summary: Tạo presigned URL để tải preview trực tiếp từ R2
+      tags: *a18
   /assets/{assetId}/retry:
     post:
       operationId: AssetsController_retry
@@ -780,8 +870,401 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a15
-      tags: *a16
+      security: *a17
+      tags: *a18
+  /render-profiles:
+    get:
+      operationId: RenderController_listProfiles
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a19
+        - bearer: []
+      tags: &a20
+        - render
+  /render-batches:
+    post:
+      operationId: RenderController_createBatch
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRenderBatchDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
+  /render-batches/{id}:
+    get:
+      operationId: RenderController_getBatch
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
+  /render-batches/{id}/cancel:
+    post:
+      operationId: RenderController_cancelBatch
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
+  /downloads:
+    post:
+      operationId: DownloadsController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDownloadDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a21
+        - bearer: []
+      tags: &a22
+        - downloads
+  /downloads/{id}:
+    get:
+      operationId: DownloadsController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a21
+      tags: *a22
+  /downloads/{id}/cancel:
+    post:
+      operationId: DownloadsController_cancel
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a21
+      tags: *a22
+  /statistics/overview:
+    get:
+      operationId: StatisticsController_overview
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a23
+        - bearer: []
+      tags: &a24
+        - statistics
+  /statistics/rendering:
+    get:
+      operationId: StatisticsController_rendering
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a23
+      tags: *a24
+  /google-drive/connection:
+    get:
+      operationId: GoogleDriveController_connection
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a25
+        - bearer: []
+      tags: &a26
+        - google-drive
+    delete:
+      operationId: GoogleDriveController_disconnect
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /google-drive/connection/start:
+    post:
+      operationId: GoogleDriveController_start
+      parameters:
+        - name: projectId
+          required: true
+          in: query
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /google-drive/connection/callback:
+    get:
+      operationId: GoogleDriveController_callback
+      parameters:
+        - name: code
+          required: true
+          in: query
+          schema:
+            type: string
+        - name: state
+          required: true
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /google-drive/picker-token:
+    get:
+      operationId: GoogleDriveController_pickerToken
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /google-drive/imports:
+    post:
+      operationId: GoogleDriveController_createImport
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateImportDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /google-drive/imports/{batchId}:
+    get:
+      operationId: GoogleDriveController_getImport
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /google-drive/imports/{batchId}/cancel:
+    post:
+      operationId: GoogleDriveController_cancel
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /google-drive/imports/{batchId}/items:
+    get:
+      operationId: GoogleDriveController_items
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /google-drive/imports/{batchId}/items/{itemId}/retry:
+    post:
+      operationId: GoogleDriveController_retry
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: itemId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /settings/public:
+    get:
+      operationId: SettingsController_getPublic
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      tags: &a27
+        - settings
+  /settings:
+    get:
+      operationId: SettingsController_get
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      tags: *a27
+    patch:
+      operationId: SettingsController_update
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSettingsDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      tags: *a27
+  /logs:
+    get:
+      operationId: LogsController_list
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      tags:
+        - logs
 info:
   title: AG Go API
   description: AG Go backend API
@@ -1013,6 +1496,18 @@ components:
           format: uuid
       required:
         - uploadSessionId
+    CreateRenderBatchDto:
+      type: object
+      properties: {}
+    CreateDownloadDto:
+      type: object
+      properties: {}
+    CreateImportDto:
+      type: object
+      properties: {}
+    UpdateSettingsDto:
+      type: object
+      properties: {}
     ApiError:
       type: object
       required:

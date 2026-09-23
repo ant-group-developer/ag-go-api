@@ -11,6 +11,9 @@ export class MediaRenderJobEntity {
   @Column({ name: 'render_profile_id', type: 'uuid', nullable: true })
   renderProfileId!: string | null;
 
+  @Column({ name: 'render_batch_id', type: 'uuid', nullable: true })
+  renderBatchId!: string | null;
+
   @Column({ name: 'render_version', type: 'integer', default: 1 })
   renderVersion!: number;
 
