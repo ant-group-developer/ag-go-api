@@ -21,6 +21,7 @@ import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
+import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
 import { deriveProjectEvaluationStatus } from '../media/evaluation-status';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
@@ -43,6 +44,8 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     private readonly projectMediaRepository: Repository<ProjectMediaEntity>,
     @InjectRepository(ProjectEntity)
     private readonly projectRepository: Repository<ProjectEntity>,
+    @InjectRepository(RenderProfileEntity)
+    private readonly renderProfileRepository: Repository<RenderProfileEntity>,
     private readonly folderAccessService: FolderAccessService,
     private readonly config: ConfigService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
@@ -157,6 +160,10 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     if (!session) {
       throw new NotFoundException('Upload session not found');
     }
+    const profile = await this.renderProfileRepository.findOne({
+      where: { code: 'default', isActive: true },
+      order: { profileVersion: 'DESC' },
+    });
     if (session.assetId !== assetId) {
       throw new BadRequestException('Upload session does not belong to this asset');
     }
@@ -204,7 +211,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
           await this.refreshProjectCounters(manager, session.targetProjectId);
         }
       }
-      const dedupeKey = `${session.assetId}:system:1`;
+      const dedupeKey = `${session.assetId}:system:${profile?.id ?? 'legacy'}:${profile?.profileVersion ?? 1}`;
       const activeJob = await manager
         .createQueryBuilder(MediaRenderJobEntity, 'job')
         .where('job.dedupe_key = :dedupeKey', { dedupeKey })
@@ -216,8 +223,8 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
           manager.create(MediaRenderJobEntity, {
             id: uuidv7(),
             assetId: session.assetId,
-            renderProfileId: null,
-            renderVersion: 1,
+            renderProfileId: profile?.id ?? null,
+            renderVersion: profile?.profileVersion ?? 1,
             queueJobId: null,
             dedupeKey,
             status: 'queued',
@@ -332,15 +339,19 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
 
   async retry(assetId: string, userId: string, userType?: 'ADMIN' | 'USER') {
     await this.requireAssetAccess(assetId, userId, 'editor', userType);
+    const profile = await this.renderProfileRepository.findOne({
+      where: { code: 'default', isActive: true },
+      order: { profileVersion: 'DESC' },
+    });
     return this.dataSource.transaction(async (manager) => {
       const job = await manager.save(
         manager.create(MediaRenderJobEntity, {
           id: uuidv7(),
           assetId,
-          renderProfileId: null,
-          renderVersion: 1,
+          renderProfileId: profile?.id ?? null,
+          renderVersion: profile?.profileVersion ?? 1,
           queueJobId: null,
-          dedupeKey: `${assetId}:retry:${uuidv7()}`,
+          dedupeKey: `${assetId}:retry:${profile?.id ?? 'legacy'}:${profile?.profileVersion ?? 1}:${uuidv7()}`,
           status: 'queued',
           progressPercent: 0,
           progressMessage: 'Queued for media processing retry',

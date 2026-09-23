@@ -12,6 +12,7 @@ import { GoogleDriveConnectionEntity } from '../../database/entities/google-driv
 import { ImportBatchEntity } from '../../database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
+import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import type { ImportQueueJobData } from '../../infra/queue/import-queue.service';
 import { MediaQueueService } from '../../infra/queue/media-queue.service';
 import { IMPORT_JOB, IMPORT_QUEUE } from '../../infra/queue/queue.constants';
@@ -41,6 +42,8 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     private readonly itemRepository: Repository<AssetImportEntity>,
     @InjectRepository(GoogleDriveConnectionEntity)
     private readonly connectionRepository: Repository<GoogleDriveConnectionEntity>,
+    @InjectRepository(RenderProfileEntity)
+    private readonly renderProfileRepository: Repository<RenderProfileEntity>,
     private readonly googleDrive: GoogleDriveService,
     private readonly mediaQueue: MediaQueueService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
@@ -158,6 +161,9 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     if (file.mimeType === 'application/vnd.google-apps.folder') {
       throw new Error('Folder discovery must be completed before importing this item');
     }
+    if (!this.isSupportedMedia(file.mimeType)) {
+      throw new Error('Only image and video files can be imported from Google Drive');
+    }
     const response = await fetch(
       `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`,
       {
@@ -168,6 +174,17 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     if (!response.ok || !response.body) {
       throw new Error(`Google Drive download failed with ${response.status}`);
     }
+    const headerContentLength = Number(response.headers.get('content-length'));
+    const metadataContentLength = Number(file.size);
+    const contentLength =
+      Number.isSafeInteger(metadataContentLength) && metadataContentLength > 0
+        ? metadataContentLength
+        : Number.isSafeInteger(headerContentLength) && headerContentLength > 0
+          ? headerContentLength
+          : undefined;
+    if (contentLength === undefined) {
+      throw new Error('Google Drive response did not include a valid file size');
+    }
 
     const assetId = uuidv7();
     const storageKey = `imports/${userId}/${assetId}/${this.safeName(file.name)}`;
@@ -175,9 +192,14 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       storageKey,
       Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
       file.mimeType,
+      contentLength,
     );
     const assetType = file.mimeType.startsWith('video/') ? 'video' : 'image';
     const renderJobId = uuidv7();
+    const profile = await this.renderProfileRepository.findOne({
+      where: { code: 'default', isActive: true },
+      order: { profileVersion: 'DESC' },
+    });
 
     await this.dataSource.transaction(async (manager) => {
       await manager.insert(AssetEntity, {
@@ -187,7 +209,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         extension: file.name.split('.').pop()?.slice(0, 20) ?? null,
         mimeType: file.mimeType,
         checksumSha256: null,
-        fileSizeBytes: file.size ?? '0',
+        fileSizeBytes: String(contentLength),
         storageProvider: 'r2',
         originalBucket: this.config.getOrThrow<string>('R2_BUCKET'),
         originalStorageKey: storageKey,
@@ -208,11 +230,11 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       await manager.insert(MediaRenderJobEntity, {
         id: renderJobId,
         assetId,
-        renderProfileId: null,
+        renderProfileId: profile?.id ?? null,
         renderBatchId: null,
-        renderVersion: 1,
+        renderVersion: profile?.profileVersion ?? 1,
         queueJobId: null,
-        dedupeKey: `${assetId}:import:1`,
+        dedupeKey: `${assetId}:import:${profile?.id ?? 'legacy'}:${profile?.profileVersion ?? 1}`,
         status: 'queued',
         progressPercent: 0,
         progressMessage: 'Queued after Drive import',
@@ -274,6 +296,9 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       for (const file of files) {
         if (file.mimeType === 'application/vnd.google-apps.folder') {
           pending.push(file.id);
+          continue;
+        }
+        if (!this.isSupportedMedia(file.mimeType)) {
           continue;
         }
         if (!discovered.has(file.id)) {
@@ -367,5 +392,9 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
 
   private safeName(value: string): string {
     return value.replace(/[^\w.\-]/g, '_').slice(0, 180) || 'file';
+  }
+
+  private isSupportedMedia(mimeType: string): boolean {
+    return mimeType.startsWith('image/') || mimeType.startsWith('video/');
   }
 }

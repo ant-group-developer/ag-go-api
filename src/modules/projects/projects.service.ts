@@ -203,16 +203,22 @@ export class ProjectsService {
           where: { id: project.thumbnailProjectMediaId, projectId: project.id },
         })
       : null;
-    return Object.assign(project, {
-      folderPath: folder?.pathText ?? '',
-      countryName: country?.name ?? null,
-      countryFlagUrl: country?.flagUrl ?? null,
-      provinceName: province?.name ?? null,
-      categoryName: category?.name ?? null,
-      thumbnailAssetId: thumbnailMedia?.assetId ?? null,
-      tagIds: tags.map((tag) => tag.id),
-      tags: tags.map((tag) => tag.name),
-    });
+    const [enrichedProject] = await this.actorEnrichment.enrich(
+      [
+        Object.assign(project, {
+          folderPath: folder?.pathText ?? '',
+          countryName: country?.name ?? null,
+          countryFlagUrl: country?.flagUrl ?? null,
+          provinceName: province?.name ?? null,
+          categoryName: category?.name ?? null,
+          thumbnailAssetId: thumbnailMedia?.assetId ?? null,
+          tagIds: tags.map((tag) => tag.id),
+          tags: tags.map((tag) => tag.name),
+        }) as unknown as Record<string, unknown>,
+      ],
+      [{ id: 'ownerUserId', target: 'ownerUser' }],
+    );
+    return enrichedProject as unknown as ProjectEntity;
   }
 
   async create(dto: CreateProjectDto, userId: string, userType?: 'ADMIN' | 'USER') {

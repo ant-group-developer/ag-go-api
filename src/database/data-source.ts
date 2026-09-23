@@ -44,6 +44,7 @@ import { AssetProcessingError1820000000000 } from './migrations/1820000000000-as
 import { UniqueCountryCode1830000000000 } from './migrations/1830000000000-unique-country-code';
 import { MissingModules1840000000000 } from './migrations/1840000000000-missing-modules';
 import { SettingsLogs1850000000000 } from './migrations/1850000000000-settings-logs';
+import { LegacyWatermarkProfileMigration1860000000000 } from './migrations/1860000000000-legacy-watermark-profile';
 
 loadEnv();
 
@@ -105,6 +106,7 @@ export const AppDataSource = new DataSource({
     UniqueCountryCode1830000000000,
     MissingModules1840000000000,
     SettingsLogs1850000000000,
+    LegacyWatermarkProfileMigration1860000000000,
   ],
   synchronize: false,
 });

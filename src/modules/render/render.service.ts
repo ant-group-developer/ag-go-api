@@ -9,6 +9,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
+import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
@@ -18,6 +19,12 @@ import { MediaQueueService } from '../../infra/queue/media-queue.service';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateRenderBatchDto } from './dto/create-render-batch.dto';
 import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
+import { normalizeWatermarkConfig } from './watermark-config';
+import {
+  RerenderMediaType,
+  RerenderWatermarkDto,
+  RerenderWatermarkScope,
+} from './dto/rerender-watermark.dto';
 
 @Injectable()
 export class RenderService {
@@ -33,6 +40,8 @@ export class RenderService {
     private readonly projectRepository: Repository<ProjectEntity>,
     @InjectRepository(ProjectMediaEntity)
     private readonly mediaRepository: Repository<ProjectMediaEntity>,
+    @InjectRepository(AssetEntity)
+    private readonly assetRepository: Repository<AssetEntity>,
     private readonly folderAccess: FolderAccessService,
     private readonly mediaQueue: MediaQueueService,
     private readonly actorEnrichment: ActorEnrichmentService,
@@ -53,6 +62,14 @@ export class RenderService {
     const current = await this.profileRepository.findOne({ where: { id, isActive: true } });
     if (!current) {
       throw new NotFoundException('Active render profile not found');
+    }
+    if (dto.watermarkConfig?.logoAssetId) {
+      const logo = await this.assetRepository.findOne({
+        where: { id: dto.watermarkConfig.logoAssetId, assetType: 'image' },
+      });
+      if (!logo) {
+        throw new BadRequestException('Watermark logo asset must be an image');
+      }
     }
 
     return this.dataSource.transaction(async (manager) => {
@@ -83,7 +100,13 @@ export class RenderService {
           videoBitrateBps:
             dto.videoBitrateBps === undefined ? latest.videoBitrateBps : dto.videoBitrateBps,
           watermarkEnabled: dto.watermarkEnabled ?? latest.watermarkEnabled,
-          watermarkConfig: dto.watermarkConfig ?? latest.watermarkConfig,
+          watermarkConfig:
+            dto.watermarkConfig === undefined
+              ? latest.watermarkConfig
+              : normalizeWatermarkConfig({
+                  ...(latest.watermarkConfig ?? {}),
+                  ...(dto.watermarkConfig as Record<string, unknown>),
+                }),
           isActive: true,
           createdBy: userId,
         }),
@@ -194,6 +217,66 @@ export class RenderService {
       [{ id: 'createdBy', target: 'createdByUser' }],
     );
     return enrichedBatch as unknown as RenderBatchEntity;
+  }
+
+  async rerenderWatermark(
+    dto: RerenderWatermarkDto,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ) {
+    const mediaQuery = this.mediaRepository
+      .createQueryBuilder('media')
+      .innerJoin(AssetEntity, 'asset', 'asset.id = media.asset_id')
+      .innerJoin(ProjectEntity, 'project', 'project.id = media.project_id');
+
+    if (dto.scope === RerenderWatermarkScope.PROJECT) {
+      if (!dto.projectIds?.length) {
+        throw new BadRequestException('projectIds is required for PROJECT scope');
+      }
+      mediaQuery.andWhere('media.project_id IN (:...projectIds)', {
+        projectIds: [...new Set(dto.projectIds)],
+      });
+    }
+    if (dto.scope === RerenderWatermarkScope.FILTER) {
+      if (dto.dateFrom) mediaQuery.andWhere('project.created_at >= :dateFrom', { dateFrom: dto.dateFrom });
+      if (dto.dateTo) mediaQuery.andWhere('project.created_at <= :dateTo', { dateTo: dto.dateTo });
+      if (dto.categoryIds?.length) {
+        mediaQuery.andWhere('project.category_id IN (:...categoryIds)', {
+          categoryIds: [...new Set(dto.categoryIds)],
+        });
+      }
+    }
+    if (dto.scope === RerenderWatermarkScope.NOT_WATERMARKED) {
+      mediaQuery.andWhere(
+        `NOT EXISTS (
+          SELECT 1 FROM asset_variants av
+          WHERE av.asset_id = media.asset_id
+            AND av.status = 'ready'
+            AND av.has_watermark = true
+        )`,
+      );
+    }
+    if (dto.mediaType === RerenderMediaType.IMAGE) {
+      mediaQuery.andWhere('asset.asset_type = :assetType', { assetType: 'image' });
+    } else if (dto.mediaType === RerenderMediaType.VIDEO) {
+      mediaQuery.andWhere('asset.asset_type = :assetType', { assetType: 'video' });
+    }
+
+    const media = await mediaQuery.select('media.id', 'id').getRawMany<{ id: string }>();
+    if (media.length === 0) {
+      return { scope: dto.scope, matchedMedia: 0, enqueuedJobs: 0, batchId: null };
+    }
+    const batch = await this.createBatch(
+      { projectMediaIds: media.map((item) => item.id) },
+      userId,
+      userType,
+    );
+    return {
+      scope: dto.scope,
+      matchedMedia: media.length,
+      enqueuedJobs: batch.totalJobs,
+      batchId: batch.id,
+    };
   }
 
   async getBatch(

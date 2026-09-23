@@ -110,14 +110,17 @@ export class R2StorageAdapter implements StorageAdapter {
     storageKey: string,
     body: Readable | Buffer,
     contentType: string,
+    contentLength?: number,
   ): Promise<ObjectHead> {
+    const commandInput = {
+      Bucket: this.bucket,
+      Key: storageKey,
+      Body: body,
+      ContentType: contentType,
+      ...(contentLength !== undefined ? { ContentLength: contentLength } : {}),
+    };
     await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucket,
-        Key: storageKey,
-        Body: body,
-        ContentType: contentType,
-      }),
+      new PutObjectCommand(commandInput),
     );
     const result = await this.headObject(storageKey);
     if (!result) {

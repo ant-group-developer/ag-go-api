@@ -14,6 +14,11 @@ import { v7 as uuidv7 } from 'uuid';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
+import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
+import {
+  normalizeWatermarkConfig,
+  type WatermarkConfig,
+} from '../render/watermark-config';
 import { RenderBatchEntity } from '../../database/entities/render-batch.entity';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage/storage-adapter';
 
@@ -37,6 +42,8 @@ export class MediaProcessingService {
     private readonly variantRepository: Repository<AssetVariantEntity>,
     @InjectRepository(MediaRenderJobEntity)
     private readonly jobRepository: Repository<MediaRenderJobEntity>,
+    @InjectRepository(RenderProfileEntity)
+    private readonly renderProfileRepository: Repository<RenderProfileEntity>,
     @InjectRepository(RenderBatchEntity)
     private readonly renderBatchRepository: Repository<RenderBatchEntity>,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
@@ -82,6 +89,12 @@ export class MediaProcessingService {
       if (!original) {
         throw new Error('Original object not found');
       }
+      const profile = job.renderProfileId
+        ? await this.renderProfileRepository.findOne({ where: { id: job.renderProfileId } })
+        : await this.renderProfileRepository.findOne({
+            where: { code: 'default', isActive: true },
+            order: { profileVersion: 'DESC' },
+          });
 
       const tempPath = join(tmpdir(), `ag-go-${asset.id}-${Date.now()}`);
       try {
@@ -100,8 +113,8 @@ export class MediaProcessingService {
 
         const metadata =
           asset.assetType === 'image'
-            ? await this.processImage(asset, tempPath)
-            : await this.processVideo(asset, tempPath);
+            ? await this.processImage(asset, tempPath, profile)
+            : await this.processVideo(asset, tempPath, profile);
 
         await this.assetRepository.update(asset.id, {
           processingStatus: 'ready',
@@ -168,7 +181,11 @@ export class MediaProcessingService {
     });
   }
 
-  private async processImage(asset: AssetEntity, inputPath: string): Promise<MediaMetadata> {
+  private async processImage(
+    asset: AssetEntity,
+    inputPath: string,
+    profile: RenderProfileEntity | null,
+  ): Promise<MediaMetadata> {
     const metadata = await sharp(inputPath, { failOn: 'error' }).metadata();
 
     await this.createImageVariant(
@@ -177,6 +194,7 @@ export class MediaProcessingService {
       'preview',
       this.config.getOrThrow<number>('MEDIA_PREVIEW_MAX_WIDTH'),
       this.config.getOrThrow<number>('MEDIA_PREVIEW_MAX_HEIGHT'),
+      profile,
     );
     await this.createImageVariant(
       asset,
@@ -184,6 +202,7 @@ export class MediaProcessingService {
       'thumbnail',
       this.config.getOrThrow<number>('MEDIA_THUMBNAIL_MAX_WIDTH'),
       this.config.getOrThrow<number>('MEDIA_THUMBNAIL_MAX_HEIGHT'),
+      profile,
     );
 
     return {
@@ -199,15 +218,37 @@ export class MediaProcessingService {
     variantCode: 'thumbnail' | 'preview',
     maxWidth: number,
     maxHeight: number,
+    profile: RenderProfileEntity | null,
   ): Promise<void> {
+    const config = normalizeWatermarkConfig(profile?.watermarkConfig);
+    const configuredMaxWidth = config.maxWidth ?? maxWidth;
     const resizedBuffer = await sharp(inputPath)
       .rotate()
-      .resize({ width: maxWidth, height: maxHeight, fit: 'inside', withoutEnlargement: true })
+      .resize({
+        width: Math.min(maxWidth, configuredMaxWidth),
+        height: maxHeight,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
       .png()
       .toBuffer();
     const resizedMetadata = await sharp(resizedBuffer).metadata();
-    const output = await sharp(resizedBuffer)
-      .composite([{ input: this.createWatermark(resizedMetadata.width ?? maxWidth) , gravity: 'southeast' }])
+    const watermark = await this.createWatermark(
+      resizedMetadata.width ?? maxWidth,
+      resizedMetadata.height ?? maxHeight,
+      profile,
+    );
+    const image = sharp(resizedBuffer);
+    if (watermark) {
+      image.composite([
+        {
+          input: watermark.buffer,
+          top: watermark.top,
+          left: watermark.left,
+        },
+      ]);
+    }
+    const output = await image
       .webp({ quality: variantCode === 'thumbnail' ? 75 : 85 })
       .toBuffer({ resolveWithObject: true });
     const storageKey = `variants/${asset.id}/${variantCode}.webp`;
@@ -220,11 +261,17 @@ export class MediaProcessingService {
       head.sizeBytes,
       output.info.width,
       output.info.height,
-      true,
+      Boolean(watermark),
+      profile,
     );
   }
 
-  private async processVideo(asset: AssetEntity, inputPath: string): Promise<MediaMetadata> {
+  private async processVideo(
+    asset: AssetEntity,
+    inputPath: string,
+    profile: RenderProfileEntity | null,
+  ): Promise<MediaMetadata> {
+    const watermarkConfig = normalizeWatermarkConfig(profile?.watermarkConfig);
     const probe = await this.runProcess(ffprobePath, [
       '-v',
       'quiet',
@@ -255,6 +302,15 @@ export class MediaProcessingService {
       : undefined;
 
     const posterPath = join(tmpdir(), `ag-go-poster-${asset.id}-${Date.now()}.jpg`);
+    const renderWidth = Math.min(width ?? 320, watermarkConfig.maxWidth ?? width ?? 320);
+    const renderHeight =
+      width && height && renderWidth !== width
+        ? Math.max(2, Math.round((height * renderWidth) / width))
+        : height ?? 180;
+    const watermark = await this.createWatermark(renderWidth, renderHeight, profile);
+    const watermarkPath = watermark
+      ? join(tmpdir(), `ag-go-watermark-${asset.id}-${Date.now()}.png`)
+      : undefined;
     try {
       await this.runProcess(ffmpegPath, [
         '-y',
@@ -268,15 +324,20 @@ export class MediaProcessingService {
       ]);
       const posterBuffer = await fs.readFile(posterPath);
       const posterMetadata = await sharp(posterBuffer).metadata();
-      const poster = await sharp(posterBuffer)
-        .composite([
-          {
-            input: this.createWatermark(posterMetadata.width ?? 320),
-            gravity: 'southeast',
-          },
-        ])
-        .jpeg({ quality: 82 })
-        .toBuffer();
+      const posterImage = sharp(posterBuffer);
+      if (watermark) {
+        const posterPosition = this.getOverlayPosition(
+          posterMetadata.width ?? 320,
+          posterMetadata.height ?? 180,
+          watermark.width,
+          watermark.height,
+          watermarkConfig,
+        );
+        posterImage.composite([
+          { input: watermark.buffer, top: posterPosition.top, left: posterPosition.left },
+        ]);
+      }
+      const poster = await posterImage.jpeg({ quality: 82 }).toBuffer();
       const posterKey = `variants/${asset.id}/thumbnail.jpg`;
       const posterHead = await this.storage.putObject(posterKey, poster, 'image/jpeg');
       await this.saveVariant(
@@ -287,7 +348,8 @@ export class MediaProcessingService {
         posterHead.sizeBytes,
         width,
         height,
-        true,
+        Boolean(watermark),
+        profile,
       );
     } finally {
       await fs.rm(posterPath, { force: true });
@@ -296,19 +358,36 @@ export class MediaProcessingService {
     const previewExtension = asset.extension || 'mp4';
     const previewKey = `variants/${asset.id}/preview.${previewExtension}`;
     const previewPath = join(tmpdir(), `ag-go-preview-${asset.id}-${Date.now()}.${previewExtension}`);
-    await this.runProcess(ffmpegPath, [
-      '-y',
-      '-i',
-      inputPath,
-      '-vf',
-      "drawtext=text='AG Go Preview':fontcolor=white@0.75:fontsize=24:box=1:boxcolor=black@0.42:boxborderw=12:x=20:y=20",
-      '-c:a',
-      'copy',
-      previewPath,
-    ]);
+    if (watermark && watermarkPath) {
+      await fs.writeFile(watermarkPath, watermark.buffer);
+      const filter = this.getVideoOverlayFilter(
+        watermarkConfig,
+      );
+      await this.runProcess(ffmpegPath, [
+        '-y',
+        '-i',
+        inputPath,
+        '-i',
+        watermarkPath,
+        '-filter_complex',
+        `[0:v]scale=${renderWidth}:${renderHeight}[base];[base][1:v]${filter}[v]`,
+        '-map',
+        '[v]',
+        '-map',
+        '0:a?',
+        '-c:a',
+        'copy',
+        previewPath,
+      ]);
+    } else {
+      await this.runProcess(ffmpegPath, ['-y', '-i', inputPath, '-c', 'copy', previewPath]);
+    }
     const preview = await fs.readFile(previewPath);
     const previewHead = await this.storage.putObject(previewKey, preview, asset.mimeType);
     await fs.rm(previewPath, { force: true });
+    if (watermarkPath) {
+      await fs.rm(watermarkPath, { force: true });
+    }
     await this.saveVariant(
       asset,
       'preview',
@@ -317,7 +396,8 @@ export class MediaProcessingService {
       previewHead.sizeBytes,
       width,
       height,
-      true,
+      Boolean(watermark),
+      profile,
     );
 
     return {
@@ -339,6 +419,7 @@ export class MediaProcessingService {
     width?: number,
     height?: number,
     hasWatermark = true,
+    profile?: RenderProfileEntity | null,
   ): Promise<void> {
     const existing = await this.variantRepository.findOne({
       where: { assetId: asset.id, variantCode },
@@ -347,14 +428,14 @@ export class MediaProcessingService {
       this.variantRepository.create({
         id: existing?.id ?? uuidv7(),
         assetId: asset.id,
-        renderProfileId: null,
         variantCode,
-        renderVersion: 1,
         storageProvider: asset.storageProvider,
         bucketName: asset.originalBucket,
         storageKey,
         mimeType,
         fileSizeBytes: String(sizeBytes),
+        renderProfileId: profile?.id ?? null,
+        renderVersion: profile?.profileVersion ?? 1,
         width: width ?? null,
         height: height ?? null,
         hasWatermark,
@@ -372,19 +453,165 @@ export class MediaProcessingService {
     return numerator / denominator;
   }
 
-  private createWatermark(baseWidth: number): Buffer {
-    const width = Math.max(1, Math.min(baseWidth, 520));
-    const height = Math.max(32, Math.min(90, Math.round(width * 0.17)));
-    const fontSize = Math.max(12, Math.round(height * 0.38));
-    return Buffer.from(`
-      <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
-        <rect x="0" y="0" width="${width}" height="${height}" rx="${Math.round(height * 0.12)}" fill="rgba(0,0,0,0.42)"/>
-        <text x="${Math.round(height * 0.26)}" y="${Math.round(height * 0.64)}" fill="white"
-          font-family="Arial, sans-serif" font-size="${fontSize}" font-weight="700">
-          AG Go Preview
-        </text>
-      </svg>
-    `);
+  private async createWatermark(
+    baseWidth: number,
+    baseHeight: number,
+    profile: RenderProfileEntity | null,
+  ): Promise<{ buffer: Buffer; width: number; height: number; top: number; left: number } | null> {
+    if (!profile?.watermarkEnabled) {
+      return null;
+    }
+    const config = normalizeWatermarkConfig(profile.watermarkConfig);
+    if (!config.text && !config.logoAssetId) {
+      return null;
+    }
+    const logo = config.logoAssetId
+      ? await this.assetRepository.findOne({ where: { id: config.logoAssetId } })
+      : null;
+    const logoData = logo
+      ? await this.readLogoData(logo.originalStorageKey, logo.mimeType)
+      : undefined;
+    const safeText = this.escapeXml(config.text.slice(0, 120));
+    const textWidth = Math.max(1, safeText.length * config.fontSize * 0.68 + config.fontSize);
+    const logoWidth = logoData ? Math.max(16, Math.round(config.fontSize * 1.6)) : 0;
+    const textGap = logoWidth ? Math.round(logoWidth * 0.3) : 0;
+    const tileWidth = Math.max(
+      config.fontSize,
+      Math.ceil((logoWidth ? logoWidth + textGap : 0) + textWidth),
+    );
+    const tileHeight = Math.max(
+      config.fontSize * 1.5,
+      logoWidth || 0,
+      config.fontSize * 1.4,
+    );
+    const logoSvg = logoData
+      ? `<image href="data:${logoData.mimeType};base64,${logoData.buffer.toString('base64')}" x="0" y="${Math.max(
+          0,
+          Math.round((tileHeight - logoWidth) / 2),
+        )}" width="${logoWidth}" height="${logoWidth}" preserveAspectRatio="xMidYMid meet"/>`
+      : '';
+    const textSvg = safeText
+      ? `<text x="${logoWidth ? logoWidth + textGap : 0}" y="${Math.round(tileHeight / 2 + config.fontSize * 0.35)}" fill="${this.escapeXml(
+          config.color,
+        )}" fill-opacity="${config.opacity}" font-family="${this.escapeXml(
+          config.fontFamily,
+        )}" font-size="${config.fontSize}">${safeText}</text>`
+      : '';
+    const rotatedTile = await sharp(
+      Buffer.from(
+        `<svg width="${tileWidth}" height="${Math.ceil(tileHeight)}" xmlns="http://www.w3.org/2000/svg">${logoSvg}${textSvg}</svg>`,
+      ),
+    )
+      .rotate(config.rotate, { background: { r: 0, g: 0, b: 0, alpha: 0 } })
+      .png()
+      .toBuffer();
+    const rotatedMeta = await sharp(rotatedTile).metadata();
+    const tileW = Math.max(1, rotatedMeta.width ?? tileWidth);
+    const tileH = Math.max(1, rotatedMeta.height ?? Math.ceil(tileHeight));
+
+    if (config.repeat) {
+      const columns = Math.ceil(baseWidth / (tileW + config.gapX)) + 2;
+      const rows = Math.ceil(baseHeight / (tileH + config.gapY)) + 2;
+      const items: string[] = [];
+      const href = `data:image/png;base64,${rotatedTile.toString('base64')}`;
+      for (let y = -tileH; y < baseHeight + tileH && items.length < columns * rows; y += tileH + config.gapY) {
+        for (let x = -tileW; x < baseWidth + tileW; x += tileW + config.gapX) {
+          items.push(`<image href="${href}" x="${x}" y="${y}" width="${tileW}" height="${tileH}"/>`);
+        }
+      }
+      const repeated = Buffer.from(
+        `<svg width="${baseWidth}" height="${baseHeight}" xmlns="http://www.w3.org/2000/svg">${items.join('')}</svg>`,
+      );
+      return {
+        buffer: await sharp(repeated).png().toBuffer(),
+        width: baseWidth,
+        height: baseHeight,
+        top: 0,
+        left: 0,
+      };
+    }
+
+    const width = Math.min(baseWidth, Math.max(1, Math.round(tileW * Math.min(1, config.scale / 0.28))));
+    const height = Math.min(baseHeight, Math.max(1, Math.round(tileH * (width / tileW))));
+    const compact = await sharp(rotatedTile)
+      .resize({ width, height, fit: 'inside' })
+      .png()
+      .toBuffer();
+    const position = this.getOverlayPosition(
+      baseWidth,
+      baseHeight,
+      width,
+      height,
+      config,
+    );
+    return { buffer: compact, width, height, ...position };
+  }
+
+  private async readLogoData(storageKey: string, mimeType: string) {
+    const chunks: Buffer[] = [];
+    for await (const chunk of this.storage.readObject(storageKey)) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    return { buffer: Buffer.concat(chunks), mimeType };
+  }
+
+  private getOverlayPosition(
+    baseWidth: number,
+    baseHeight: number,
+    overlayWidth: number,
+    overlayHeight: number,
+    config: WatermarkConfig,
+  ) {
+    const margin = config.margin;
+    switch (config.position) {
+      case 'top-left':
+        return { top: margin, left: margin };
+      case 'top-right':
+        return { top: margin, left: Math.max(0, baseWidth - overlayWidth - margin) };
+      case 'bottom-left':
+        return { top: Math.max(0, baseHeight - overlayHeight - margin), left: margin };
+      case 'center':
+        return {
+          top: Math.max(0, Math.round((baseHeight - overlayHeight) / 2)),
+          left: Math.max(0, Math.round((baseWidth - overlayWidth) / 2)),
+        };
+      case 'bottom-right':
+      default:
+        return {
+          top: Math.max(0, baseHeight - overlayHeight - margin),
+          left: Math.max(0, baseWidth - overlayWidth - margin),
+        };
+    }
+  }
+
+  private getVideoOverlayFilter(config: WatermarkConfig): string {
+    const margin = config.margin;
+    switch (config.position) {
+      case 'top-left':
+        return `overlay=${margin}:${margin}:format=auto`;
+      case 'top-right':
+        return `overlay=main_w-overlay_w-${margin}:${margin}:format=auto`;
+      case 'bottom-left':
+        return `overlay=${margin}:main_h-overlay_h-${margin}:format=auto`;
+      case 'center':
+        return 'overlay=(main_w-overlay_w)/2:(main_h-overlay_h)/2:format=auto';
+      case 'bottom-right':
+      default:
+        return `overlay=main_w-overlay_w-${margin}:main_h-overlay_h-${margin}:format=auto`;
+    }
+  }
+
+  private escapeXml(value: string): string {
+    return value.replace(/[<>&'"]/g, (character) => {
+      const entities: Record<string, string> = {
+        '<': '&lt;',
+        '>': '&gt;',
+        '&': '&amp;',
+        "'": '&apos;',
+        '"': '&quot;',
+      };
+      return entities[character] ?? character;
+    });
   }
 
   private runProcess(
