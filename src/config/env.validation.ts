@@ -69,4 +69,21 @@ export const envValidationSchema = Joi.object({
     .uri({ scheme: ['http', 'https'] })
     .allow('')
     .optional(),
+  ACCOUNT_API_KEY: Joi.string().trim().allow('').optional(),
+
+  // Google Drive OAuth
+  GOOGLE_CLIENT_ID: Joi.string().trim().allow('').optional(),
+  GOOGLE_CLIENT_SECRET: Joi.string().trim().allow('').optional(),
+  GOOGLE_REDIRECT_URI: Joi.string()
+    .trim()
+    .uri({ scheme: ['http', 'https'] })
+    .allow('')
+    .optional(),
+  GOOGLE_FRONTEND_CALLBACK_URL: Joi.string()
+    .trim()
+    .uri({ scheme: ['http', 'https'] })
+    .allow('')
+    .optional(),
+  GOOGLE_SCOPES: Joi.string().trim().allow('').optional(),
+  GOOGLE_TOKEN_ENCRYPTION_KEY: Joi.string().trim().allow('').optional(),
 }).unknown(true);

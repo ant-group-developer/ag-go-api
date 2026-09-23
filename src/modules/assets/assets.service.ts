@@ -13,6 +13,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import type { Response } from 'express';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
+import { isAdminUserType } from '../../common/auth/user-type';
 import { OutboxService } from '../../common/outbox.service';
 import { AssetUploadSessionEntity } from '../../database/entities/asset-upload-session.entity';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
@@ -62,14 +63,19 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  async createUploadSession(dto: CreateUploadSessionDto, userId: string, idempotencyKey?: string) {
+  async createUploadSession(
+    dto: CreateUploadSessionDto,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    idempotencyKey?: string,
+  ) {
     const maxUploadBytes = this.config.getOrThrow<number>('MAX_UPLOAD_SIZE_BYTES');
     if (dto.fileSizeBytes > maxUploadBytes) {
       throw new BadRequestException(`File exceeds the ${maxUploadBytes} byte upload limit`);
     }
     if (dto.targetProjectId) {
       const project = await this.getProject(dto.targetProjectId);
-      await this.requireProjectAccess(project, userId, 'editor');
+      await this.requireProjectAccess(project, userId, 'editor', userType);
     }
 
     const normalizedIdempotencyKey = idempotencyKey?.trim().slice(0, 255);
@@ -137,9 +143,16 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     return this.toUploadSessionResponse(session, dto.mimeType);
   }
 
-  async completeUpload(assetId: string, dto: CompleteUploadDto, userId: string) {
+  async completeUpload(
+    assetId: string,
+    dto: CompleteUploadDto,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ) {
     const session = await this.sessionRepository.findOne({
-      where: { id: dto.uploadSessionId, createdBy: userId },
+      where: isAdminUserType(userType)
+        ? { id: dto.uploadSessionId }
+        : { id: dto.uploadSessionId, createdBy: userId },
     });
     if (!session) {
       throw new NotFoundException('Upload session not found');
@@ -242,9 +255,16 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async abortUpload(assetId: string, uploadSessionId: string, userId: string) {
+  async abortUpload(
+    assetId: string,
+    uploadSessionId: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ) {
     const session = await this.sessionRepository.findOne({
-      where: { id: uploadSessionId, createdBy: userId },
+      where: isAdminUserType(userType)
+        ? { id: uploadSessionId }
+        : { id: uploadSessionId, createdBy: userId },
     });
     if (!session) {
       throw new NotFoundException('Upload session not found');
@@ -264,29 +284,54 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     return { success: true };
   }
 
-  async listVariants(assetId: string, userId: string) {
-    await this.requireAssetAccess(assetId, userId, 'viewer');
+  async listVariants(assetId: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    await this.requireAssetAccess(assetId, userId, 'viewer', userType);
     return this.variantRepository.find({
       where: { assetId },
       order: { variantCode: 'ASC' },
     });
   }
 
-  async preview(assetId: string, variantCode: string, userId: string, response: Response) {
-    await this.requireAssetAccess(assetId, userId, 'viewer');
-    const variant = await this.variantRepository.findOne({
-      where: { assetId, variantCode, status: 'ready' },
-    });
-    if (!variant) {
-      throw new NotFoundException('Ready asset variant not found');
-    }
+  async preview(
+    assetId: string,
+    variantCode: string,
+    userId: string,
+    userType: 'ADMIN' | 'USER' | undefined,
+    response: Response,
+  ) {
+    await this.requireAssetAccess(assetId, userId, 'viewer', userType);
+    const variant = await this.findReadyVariant(assetId, variantCode);
     response.setHeader('Content-Type', variant.mimeType);
     response.setHeader('Content-Length', variant.fileSizeBytes);
     this.storage.readObject(variant.storageKey).pipe(response);
   }
 
-  async retry(assetId: string, userId: string) {
-    await this.requireAssetAccess(assetId, userId, 'editor');
+  async getPreviewUrl(
+    assetId: string,
+    variantCode: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ) {
+    await this.requireAssetAccess(assetId, userId, 'viewer', userType);
+    const variant = await this.findReadyVariant(assetId, variantCode);
+    const expiresInSeconds = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
+    const url = await this.storage.getPresignedGetUrl(
+      variant.storageKey,
+      variant.mimeType,
+      expiresInSeconds,
+    );
+
+    return {
+      url,
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+      variantCode: variant.variantCode,
+      mimeType: variant.mimeType,
+      fileSizeBytes: variant.fileSizeBytes,
+    };
+  }
+
+  async retry(assetId: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    await this.requireAssetAccess(assetId, userId, 'editor', userType);
     return this.dataSource.transaction(async (manager) => {
       const job = await manager.save(
         manager.create(MediaRenderJobEntity, {
@@ -343,9 +388,14 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     return asset;
   }
 
-  private async requireAssetAccess(assetId: string, userId: string, minimum: FolderAccessLevel) {
+  private async requireAssetAccess(
+    assetId: string,
+    userId: string,
+    minimum: FolderAccessLevel,
+    userType?: 'ADMIN' | 'USER',
+  ) {
     const asset = await this.getAsset(assetId);
-    if (asset.createdBy === userId) {
+    if (isAdminUserType(userType) || asset.createdBy === userId) {
       return asset;
     }
     const projects = await this.projectRepository
@@ -354,11 +404,21 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       .where('media.asset_id = :assetId', { assetId })
       .getMany();
     for (const project of projects) {
-      if (await this.folderAccessService.canAccess(project.folderId, userId, minimum)) {
+      if (await this.folderAccessService.canAccess(project.folderId, userId, minimum, userType)) {
         return asset;
       }
     }
     throw new ForbiddenException('Insufficient asset permission');
+  }
+
+  private async findReadyVariant(assetId: string, variantCode: string) {
+    const variant = await this.variantRepository.findOne({
+      where: { assetId, variantCode, status: 'ready' },
+    });
+    if (!variant || !variant.hasWatermark) {
+      throw new NotFoundException('Ready watermarked asset variant not found');
+    }
+    return variant;
   }
 
   private async getProject(projectId: string) {
@@ -373,8 +433,14 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     project: ProjectEntity,
     userId: string,
     minimum: FolderAccessLevel,
+    userType?: 'ADMIN' | 'USER',
   ) {
-    const allowed = await this.folderAccessService.canAccess(project.folderId, userId, minimum);
+    const allowed = await this.folderAccessService.canAccess(
+      project.folderId,
+      userId,
+      minimum,
+      userType,
+    );
     if (!allowed) {
       throw new ForbiddenException('Insufficient project permission');
     }

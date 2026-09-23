@@ -90,6 +90,7 @@ describe('Auth0Guard', () => {
     await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
     expect(request.authContext).toEqual({
       userId: 'user-1',
+      accessToken: token,
     });
 
     fetchSpy.mockRestore();

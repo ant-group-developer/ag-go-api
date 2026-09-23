@@ -2,6 +2,8 @@ import { Body, Controller, Get, Post, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
+import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
+import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CreateTagDto } from './dto/create-tag.dto';
 import { TagsService } from './tags.service';
 
@@ -20,6 +22,7 @@ export class TagsController {
   }
 
   @Post()
+  @RequirePermissions(GO_PERMISSIONS.CATALOG_MANAGE)
   create(@Body() dto: CreateTagDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.tagsService.create(dto, context.userId);

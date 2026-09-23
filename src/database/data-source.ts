@@ -2,22 +2,33 @@ import { config as loadEnv } from 'dotenv';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { envValidationSchema } from '../config/env.validation';
+import { AssetImportEntity } from './entities/asset-import.entity';
 import { AssetUploadSessionEntity } from './entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './entities/asset-variant.entity';
 import { AssetEntity } from './entities/asset.entity';
 import { CategoryEntity } from './entities/category.entity';
 import { CountryEntity } from './entities/country.entity';
+import { DownloadJobItemEntity } from './entities/download-job-item.entity';
+import { DownloadJobEntity } from './entities/download-job.entity';
+import { DownloadLogEntity } from './entities/download-log.entity';
 import { FolderAccessGrantEntity } from './entities/folder-access-grant.entity';
 import { FolderClosureEntity } from './entities/folder-closure.entity';
 import { FolderEntity } from './entities/folder.entity';
+import { GoogleDriveConnectionEntity } from './entities/google-drive-connection.entity';
+import { ImportBatchEntity } from './entities/import-batch.entity';
 import { MediaRenderJobEntity } from './entities/media-render-job.entity';
 import { OutboxEventEntity } from './entities/outbox-event.entity';
+import { ProjectAuditLogEntity } from './entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from './entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from './entities/project-media.entity';
 import { ProjectEntity } from './entities/project.entity';
 import { ProvinceEntity } from './entities/province.entity';
+import { RenderBatchEntity } from './entities/render-batch.entity';
+import { RenderProfileEntity } from './entities/render-profile.entity';
 import { TagEntity } from './entities/tag.entity';
+import { SystemLogEntity } from './entities/system-log.entity';
+import { SystemSettingEntity } from './entities/system-setting.entity';
 import { InitialPhaseOneMigration1710000000000 } from './migrations/1710000000000-initial-phase-one';
 import { ProjectMediaMigration1720000000000 } from './migrations/1720000000000-project-media';
 import { BackfillProjectSummariesMigration1730000000000 } from './migrations/1730000000000-backfill-project-summaries';
@@ -31,6 +42,8 @@ import { ProjectMediaEvaluationHistory1800000000000 } from './migrations/1800000
 import { OutboxEvents1810000000000 } from './migrations/1810000000000-outbox-events';
 import { AssetProcessingError1820000000000 } from './migrations/1820000000000-asset-processing-error';
 import { UniqueCountryCode1830000000000 } from './migrations/1830000000000-unique-country-code';
+import { MissingModules1840000000000 } from './migrations/1840000000000-missing-modules';
+import { SettingsLogs1850000000000 } from './migrations/1850000000000-settings-logs';
 
 loadEnv();
 
@@ -63,7 +76,18 @@ export const AppDataSource = new DataSource({
     ProjectMediaEvaluationEntity,
     ProjectEvaluationSummaryEntity,
     MediaRenderJobEntity,
+    RenderProfileEntity,
+    RenderBatchEntity,
+    GoogleDriveConnectionEntity,
+    ImportBatchEntity,
+    AssetImportEntity,
+    DownloadJobEntity,
+    DownloadJobItemEntity,
+    DownloadLogEntity,
+    ProjectAuditLogEntity,
     OutboxEventEntity,
+    SystemSettingEntity,
+    SystemLogEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -79,6 +103,8 @@ export const AppDataSource = new DataSource({
     OutboxEvents1810000000000,
     AssetProcessingError1820000000000,
     UniqueCountryCode1830000000000,
+    MissingModules1840000000000,
+    SettingsLogs1850000000000,
   ],
   synchronize: false,
 });

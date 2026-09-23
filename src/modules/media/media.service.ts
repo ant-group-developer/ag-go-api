@@ -5,15 +5,21 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Inject } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
+import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
+import { isAdminUserType } from '../../common/auth/user-type';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from '../../database/entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
+import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
+import { AuditService } from '../audit/audit.service';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
 import { CreateProjectMediaDto } from './dto/create-project-media.dto';
 import { ReorderProjectMediaDto } from './dto/reorder-project-media.dto';
@@ -37,11 +43,21 @@ export class MediaService {
     @InjectRepository(ProjectMediaEntity)
     private readonly projectMediaRepository: Repository<ProjectMediaEntity>,
     private readonly folderAccessService: FolderAccessService,
+    private readonly actorEnrichment: ActorEnrichmentService,
+    private readonly auditService: AuditService,
+    private readonly config: ConfigService,
+    @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
   ) {}
 
-  async list(projectId: string, userId: string, cursor?: string, limit = 50) {
+  async list(
+    projectId: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    cursor?: string,
+    limit = 50,
+  ) {
     const project = await this.getProject(projectId);
-    await this.requireProjectAccess(project, userId, 'viewer');
+    await this.requireProjectAccess(project, userId, 'viewer', userType);
 
     const normalizedLimit = Math.min(Math.max(limit, 1), 100);
     const query = this.projectMediaRepository
@@ -71,28 +87,50 @@ export class MediaService {
     });
     const previewVariants = new Map(
       variants
-        .filter((variant) => variant.variantCode === 'preview')
+        .filter((variant) => variant.variantCode === 'preview' && variant.hasWatermark)
         .map((variant) => [variant.assetId, variant]),
     );
+    const enrichedItems = await this.actorEnrichment.enrich(
+      (await Promise.all(
+        items.map(async (item) => {
+          const previewVariant = previewVariants.get(item.assetId);
+          const sourceMetadata = item.asset.sourceMetadata ?? {};
+          const previewUrl =
+            previewVariant?.status === 'ready'
+              ? await this.storage.getPresignedGetUrl(
+                  previewVariant.storageKey,
+                  previewVariant.mimeType,
+                  this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS'),
+                )
+              : null;
+          return Object.assign(item, {
+            durationSeconds: readNumberMetadata(sourceMetadata, ['durationSeconds', 'duration']),
+            width: previewVariant?.width ?? readNumberMetadata(sourceMetadata, ['width']),
+            height: previewVariant?.height ?? readNumberMetadata(sourceMetadata, ['height']),
+            previewUrl,
+            previewVariantCode: previewVariant?.variantCode ?? null,
+            watermarkVariant: previewVariant?.hasWatermark ? previewVariant.variantCode : null,
+          });
+        }),
+      )) as unknown as Array<Record<string, unknown>>,
+      [{ id: 'createdBy', target: 'createdByUser' }],
+    );
     return {
-      items: items.map((item) => {
-        const previewVariant = previewVariants.get(item.assetId);
-        const sourceMetadata = item.asset.sourceMetadata ?? {};
-        return Object.assign(item, {
-          durationSeconds: readNumberMetadata(sourceMetadata, ['durationSeconds', 'duration']),
-          width: previewVariant?.width ?? readNumberMetadata(sourceMetadata, ['width']),
-          height: previewVariant?.height ?? readNumberMetadata(sourceMetadata, ['height']),
-        });
-      }),
+      items: enrichedItems,
       nextCursor: hasNextPage ? this.encodeCursor(items[items.length - 1]) : null,
     };
   }
 
-  async attach(projectId: string, dto: CreateProjectMediaDto, userId: string) {
+  async attach(
+    projectId: string,
+    dto: CreateProjectMediaDto,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ) {
     const project = await this.getProject(projectId);
-    await this.requireProjectAccess(project, userId, 'editor');
+    await this.requireProjectAccess(project, userId, 'editor', userType);
 
-    return this.dataSource.transaction(async (manager) => {
+    const created = await this.dataSource.transaction(async (manager) => {
       let asset: AssetEntity;
       if (dto.assetId) {
         const existingAsset = await manager.findOne(AssetEntity, {
@@ -156,12 +194,42 @@ export class MediaService {
         }),
       );
       await this.refreshProjectCounters(manager, projectId);
-      return this.findMedia(media.id, manager);
+      const created = await this.findMedia(media.id, manager);
+      return created;
     });
+    await this.auditService.record({
+      projectId,
+      projectMediaId: created.id,
+      actorUserId: userId,
+      action: 'media_attached',
+      afterData: { assetId: created.assetId },
+    });
+    return created;
   }
 
-  async update(mediaId: string, dto: UpdateProjectMediaDto, userId: string) {
-    return this.dataSource.transaction(async (manager) => {
+  async update(
+    mediaId: string,
+    dto: UpdateProjectMediaDto,
+    userId: string,
+    permissions: string[],
+    userType: 'ADMIN' | 'USER' | undefined,
+  ) {
+    const evaluationMutation = dto.evaluationStatus !== undefined || dto.comment !== undefined;
+    const contentMutation = dto.sortOrder !== undefined || dto.caption !== undefined;
+    if (
+      evaluationMutation &&
+      !isAdminUserType(userType) &&
+      !permissions.includes('go.project.evaluate')
+    ) {
+      throw new ForbiddenException('Missing evaluation permission');
+    }
+    if (contentMutation && !isAdminUserType(userType) && !permissions.includes('go.project.edit')) {
+      throw new ForbiddenException('Missing project edit permission');
+    }
+    let projectId = '';
+    let projectMediaId = '';
+    let previousEvaluationStatus = '';
+    const updated = await this.dataSource.transaction(async (manager) => {
       const media = await manager
         .createQueryBuilder(ProjectMediaEntity, 'media')
         .leftJoinAndSelect('media.asset', 'asset')
@@ -177,7 +245,10 @@ export class MediaService {
       if (!project) {
         throw new NotFoundException('Project not found');
       }
-      await this.requireProjectAccess(project, userId, 'editor');
+      await this.requireProjectAccess(project, userId, 'editor', userType);
+      projectId = project.id;
+      projectMediaId = media.id;
+      previousEvaluationStatus = media.evaluationStatus;
 
       Object.assign(media, {
         sortOrder: dto.sortOrder ?? media.sortOrder,
@@ -201,22 +272,45 @@ export class MediaService {
       }
       return this.findMedia(updatedMedia.id, manager);
     });
+    await this.auditService.record({
+      projectId,
+      projectMediaId,
+      actorUserId: userId,
+      action:
+        dto.evaluationStatus !== undefined || dto.comment !== undefined
+          ? 'evaluation_changed'
+          : 'media_updated',
+      afterData: {
+        previousEvaluationStatus,
+        evaluationStatus: dto.evaluationStatus ?? previousEvaluationStatus,
+        comment: dto.comment ?? null,
+      },
+    });
+    return updated;
   }
 
-  async listEvaluationHistory(mediaId: string, userId: string) {
+  async listEvaluationHistory(mediaId: string, userId: string, userType?: 'ADMIN' | 'USER') {
     const media = await this.getMedia(mediaId);
     const project = await this.getProject(media.projectId);
-    await this.requireProjectAccess(project, userId, 'viewer');
-    return this.dataSource.getRepository(ProjectMediaEvaluationEntity).find({
+    await this.requireProjectAccess(project, userId, 'viewer', userType);
+    const evaluations = await this.dataSource.getRepository(ProjectMediaEvaluationEntity).find({
       where: { projectMediaId: mediaId },
       order: { createdAt: 'DESC' },
     });
+    const enriched = await this.actorEnrichment.enrich(
+      evaluations as unknown as Array<Record<string, unknown>>,
+      [{ id: 'evaluatedBy', target: 'evaluatedByUser' }],
+    );
+    return enriched.map((evaluation) => ({
+      ...evaluation,
+      commentedByUser: evaluation.evaluatedByUser ?? null,
+    }));
   }
 
-  async remove(mediaId: string, userId: string): Promise<void> {
+  async remove(mediaId: string, userId: string, userType?: 'ADMIN' | 'USER'): Promise<void> {
     const media = await this.getMedia(mediaId);
     const project = await this.getProject(media.projectId);
-    await this.requireProjectAccess(project, userId, 'editor');
+    await this.requireProjectAccess(project, userId, 'editor', userType);
 
     await this.dataSource.transaction(async (manager) => {
       if (project.thumbnailProjectMediaId === mediaId) {
@@ -225,11 +319,23 @@ export class MediaService {
       await manager.delete(ProjectMediaEntity, mediaId);
       await this.refreshProjectCounters(manager, project.id);
     });
+    await this.auditService.record({
+      projectId: project.id,
+      projectMediaId: mediaId,
+      actorUserId: userId,
+      action: 'media_deleted',
+      beforeData: { assetId: media.assetId },
+    });
   }
 
-  async reorder(projectId: string, dto: ReorderProjectMediaDto, userId: string): Promise<void> {
+  async reorder(
+    projectId: string,
+    dto: ReorderProjectMediaDto,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<void> {
     const project = await this.getProject(projectId);
-    await this.requireProjectAccess(project, userId, 'editor');
+    await this.requireProjectAccess(project, userId, 'editor', userType);
     if (new Set(dto.mediaIds).size !== dto.mediaIds.length) {
       throw new BadRequestException('mediaIds must be unique');
     }
@@ -248,9 +354,14 @@ export class MediaService {
     });
   }
 
-  async setThumbnail(projectId: string, dto: SetProjectThumbnailDto, userId: string) {
+  async setThumbnail(
+    projectId: string,
+    dto: SetProjectThumbnailDto,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ) {
     const project = await this.getProject(projectId);
-    await this.requireProjectAccess(project, userId, 'editor');
+    await this.requireProjectAccess(project, userId, 'editor', userType);
     if (dto.projectMediaId) {
       const media = await this.projectMediaRepository.findOne({
         where: { id: dto.projectMediaId, projectId },
@@ -284,8 +395,14 @@ export class MediaService {
     project: ProjectEntity,
     userId: string,
     minimum: FolderAccessLevel,
+    userType?: 'ADMIN' | 'USER',
   ): Promise<void> {
-    const allowed = await this.folderAccessService.canAccess(project.folderId, userId, minimum);
+    const allowed = await this.folderAccessService.canAccess(
+      project.folderId,
+      userId,
+      minimum,
+      userType,
+    );
     if (!allowed) {
       throw new ForbiddenException('Insufficient project permission');
     }

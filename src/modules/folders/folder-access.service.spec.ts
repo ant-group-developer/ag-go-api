@@ -28,6 +28,9 @@ describe('FolderAccessService', () => {
       {
         find: jest.fn().mockResolvedValue(closureRows),
       } as never,
+      {
+        find: jest.fn().mockResolvedValue([]),
+      } as never,
     );
   }
 
