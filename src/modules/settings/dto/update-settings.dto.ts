@@ -6,6 +6,11 @@ export class UpdateSettingsDto {
   siteName!: string;
 
   @IsOptional()
+  @IsString()
+  @MaxLength(300)
+  siteDescription?: string | null;
+
+  @IsOptional()
   @IsUrl()
   logoUrl?: string | null;
 

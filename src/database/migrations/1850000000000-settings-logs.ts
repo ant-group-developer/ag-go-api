@@ -16,7 +16,7 @@ export class SettingsLogs1850000000000 implements MigrationInterface {
     await queryRunner.query(`
       INSERT INTO system_settings (key, value)
       VALUES
-        ('web', '{"siteName":"AG Go","logoUrl":null,"faviconUrl":null,"supportEmail":null,"supportUrl":null,"primaryColor":null}'::jsonb),
+        ('web', '{"siteName":"AG Go","siteDescription":"AG Go internal media workspace","logoUrl":null,"faviconUrl":null,"supportEmail":null,"supportUrl":null,"primaryColor":null}'::jsonb),
         ('render', '{"profilesEnabled":true}'::jsonb)
       ON CONFLICT (key) DO NOTHING
     `);

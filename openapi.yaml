@@ -887,6 +887,30 @@ paths:
         - bearer: []
       tags: &a20
         - render
+  /render-profiles/{id}:
+    patch:
+      operationId: RenderController_updateProfile
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRenderProfileDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
   /render-batches:
     post:
       operationId: RenderController_createBatch
@@ -1496,6 +1520,9 @@ components:
           format: uuid
       required:
         - uploadSessionId
+    UpdateRenderProfileDto:
+      type: object
+      properties: {}
     CreateRenderBatchDto:
       type: object
       properties: {}

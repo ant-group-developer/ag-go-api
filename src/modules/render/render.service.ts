@@ -17,6 +17,7 @@ import { RenderProfileEntity } from '../../database/entities/render-profile.enti
 import { MediaQueueService } from '../../infra/queue/media-queue.service';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateRenderBatchDto } from './dto/create-render-batch.dto';
+import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
 
 @Injectable()
 export class RenderService {
@@ -41,6 +42,52 @@ export class RenderService {
     return this.profileRepository.find({
       where: { isActive: true },
       order: { code: 'ASC', profileVersion: 'DESC' },
+    });
+  }
+
+  async updateProfile(
+    id: string,
+    dto: UpdateRenderProfileDto,
+    userId: string,
+  ): Promise<RenderProfileEntity> {
+    const current = await this.profileRepository.findOne({ where: { id, isActive: true } });
+    if (!current) {
+      throw new NotFoundException('Active render profile not found');
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const latest = await manager.findOne(RenderProfileEntity, {
+        where: { code: current.code },
+        order: { profileVersion: 'DESC' },
+      });
+      if (!latest) {
+        throw new NotFoundException('Render profile not found');
+      }
+
+      await manager.update(
+        RenderProfileEntity,
+        { code: latest.code, isActive: true },
+        { isActive: false },
+      );
+
+      return manager.save(
+        manager.create(RenderProfileEntity, {
+          id: uuidv7(),
+          name: dto.name ?? latest.name,
+          code: latest.code,
+          profileVersion: latest.profileVersion + 1,
+          outputFormat: dto.outputFormat ?? latest.outputFormat,
+          maxWidth: dto.maxWidth === undefined ? latest.maxWidth : dto.maxWidth,
+          maxHeight: dto.maxHeight === undefined ? latest.maxHeight : dto.maxHeight,
+          imageQuality: dto.imageQuality ?? latest.imageQuality,
+          videoBitrateBps:
+            dto.videoBitrateBps === undefined ? latest.videoBitrateBps : dto.videoBitrateBps,
+          watermarkEnabled: dto.watermarkEnabled ?? latest.watermarkEnabled,
+          watermarkConfig: dto.watermarkConfig ?? latest.watermarkConfig,
+          isActive: true,
+          createdBy: userId,
+        }),
+      );
     });
   }
 

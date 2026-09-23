@@ -11,14 +11,24 @@ export class SettingsService {
     private readonly repository: Repository<SystemSettingEntity>,
   ) {}
 
+  private readonly defaultWebSettings = {
+    siteName: 'AG Go',
+    siteDescription: 'AG Go internal media workspace',
+    logoUrl: null,
+    faviconUrl: null,
+    supportEmail: null,
+    supportUrl: null,
+    primaryColor: null,
+  };
+
   async getPublic() {
     const setting = await this.repository.findOne({ where: { key: 'web' } });
-    return setting?.value ?? { siteName: 'AG Go' };
+    return { ...this.defaultWebSettings, ...(setting?.value ?? {}) };
   }
 
   async get() {
     const setting = await this.repository.findOne({ where: { key: 'web' } });
-    return setting?.value ?? { siteName: 'AG Go' };
+    return { ...this.defaultWebSettings, ...(setting?.value ?? {}) };
   }
 
   async update(dto: UpdateSettingsDto, userId: string) {
