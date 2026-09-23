@@ -325,16 +325,25 @@ export class MediaProcessingService {
       const posterBuffer = await fs.readFile(posterPath);
       const posterMetadata = await sharp(posterBuffer).metadata();
       const posterImage = sharp(posterBuffer);
-      if (watermark) {
+      const posterWatermark = await this.createWatermark(
+        posterMetadata.width ?? 320,
+        posterMetadata.height ?? 180,
+        profile,
+      );
+      if (posterWatermark) {
         const posterPosition = this.getOverlayPosition(
           posterMetadata.width ?? 320,
           posterMetadata.height ?? 180,
-          watermark.width,
-          watermark.height,
+          posterWatermark.width,
+          posterWatermark.height,
           watermarkConfig,
         );
         posterImage.composite([
-          { input: watermark.buffer, top: posterPosition.top, left: posterPosition.left },
+          {
+            input: posterWatermark.buffer,
+            top: posterPosition.top,
+            left: posterPosition.left,
+          },
         ]);
       }
       const poster = await posterImage.jpeg({ quality: 82 }).toBuffer();
