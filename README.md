@@ -1,19 +1,73 @@
-# ag-go-api
+# AG Go API
 
-Backend/API repository của AG Go.
+Backend API của AG Go, xây dựng bằng NestJS, PostgreSQL, Redis/BullMQ và
+Cloudflare R2. Repository này là một Git repository độc lập.
 
-Xem tài liệu triển khai tại `../docs/07-backend-plan.md` và contract chung tại
-`../docs/05-api-contract.md`.
+## Chức năng hiện có
 
-Package manager: Yarn `1.22.22`.
+- Xác thực Auth0 JWT, RBAC và proxy Account API.
+- Quản lý project, folder/ACL, category, country, province và tag.
+- Media của project: attach metadata, sắp xếp, chọn thumbnail, upload trực tiếp
+  lên R2 và tạo preview/thumbnail qua worker.
+- Google Drive OAuth, import snapshot và hàng đợi import.
+- Render profile/batch, download job, audit log, thống kê và system settings.
+- OpenAPI/Swagger, request ID, JSON structured log và transactional outbox.
+
+API contract tĩnh được lưu tại [`openapi.yaml`](openapi.yaml).
+
+## Yêu cầu
+
+- Node.js 22
+- Yarn 1.22.22
+- PostgreSQL và Redis có thể truy cập từ tiến trình API
+- Cloudflare R2 và Auth0 đã được cấu hình
+
+Toàn bộ biến môi trường runtime được kiểm tra khi khởi động. Sao chép
+`.env.example` thành `.env` và điền các giá trị bắt buộc trước khi chạy.
 
 ```bash
+cp .env.example .env
 yarn install
 yarn migration:run
 yarn start:dev
 ```
 
-Chạy toàn bộ backend bằng Docker:
+API mặc định chạy tại `http://localhost:3000/api`.
+
+- Health check: `GET /api/health`
+- Swagger UI: `http://localhost:3000/api/docs`
+- OpenAPI JSON: `http://localhost:3000/api/openapi.json`
+
+PostgreSQL local trong `.env.example` dùng port `55432` để tránh xung đột với
+PostgreSQL trên máy phát triển. Redis, PostgreSQL, R2 và Auth0 không được tạo
+bởi Docker Compose chính của repository; hãy cung cấp các dịch vụ này trước
+khi chạy API.
+
+## Cấu hình môi trường
+
+| Nhóm | Biến chính | Ghi chú |
+|---|---|---|
+| Runtime | `PORT`, `API_PREFIX`, `FRONTEND_ORIGIN` | Origin phải khớp URL frontend để CORS hoạt động. |
+| Database/queue | `DATABASE_URL`, `DATABASE_SCHEMA`, `REDIS_URL` | Bắt buộc cho API, worker và migration. |
+| Auth | `AUTH0_ISSUER_URL`, `AUTH0_AUDIENCE`, `AUTH0_CLIENT_ID`, `AUTH0_JWKS_URL` | Auth0 JWT là bắt buộc ở mọi môi trường. |
+| Storage | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT` | Dùng cho upload và preview media. |
+| Account API | `ACCOUNT_API_URL`, `ACCOUNT_API_KEY` | Tùy chọn; API key chỉ nằm ở backend, không gửi ra browser. |
+| Google Drive | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `GOOGLE_FRONTEND_CALLBACK_URL`, `GOOGLE_TOKEN_ENCRYPTION_KEY` | Cần khi bật kết nối và import Google Drive. |
+
+Khi API chạy trong container còn PostgreSQL hoặc Redis chạy trực tiếp trên cùng
+máy chủ, dùng hostname `host.docker.internal` trong URL. Compose đã ánh xạ
+hostname này tới host:
+
+```dotenv
+DATABASE_URL=postgres://user:password@host.docker.internal:5432/aggo
+REDIS_URL=redis://:password@host.docker.internal:6379
+```
+
+## Docker
+
+Compose chạy hai service `api` và `worker`, cùng đọc biến runtime từ `.env`.
+Sau khi chuẩn bị các dịch vụ phụ thuộc và `.env`, build image, chạy migration
+rồi khởi động các service:
 
 ```bash
 cp .env.example .env
@@ -22,80 +76,46 @@ docker compose run --rm api node node_modules/typeorm/cli.js migration:run -d di
 docker compose up -d
 ```
 
-Compose chính chỉ chạy `api` và `worker`, lấy toàn bộ biến runtime trực tiếp từ
-`.env`. API được publish theo biến `PORT`; `DATABASE_URL` và `REDIS_URL` cũng
-được dùng nguyên giá trị trong `.env`, phù hợp với PostgreSQL/Redis đã chạy sẵn
-trên VPS. Khi chạy trên VPS, hai URL này phải trỏ tới hostname/IP mà container
-có thể truy cập, không dùng `localhost` nếu database nằm ngoài container. Nếu
-PostgreSQL/Redis chạy trực tiếp trên cùng VPS, có thể dùng
-`host.docker.internal` (Compose đã ánh xạ hostname này tới host):
-
-```dotenv
-DATABASE_URL=postgres://user:password@host.docker.internal:5432/aggo
-REDIS_URL=redis://:password@host.docker.internal:6379
-```
-
-Nếu cần dựng PostgreSQL và Redis local, dùng Compose override:
+Xem log hoặc dừng service:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.local.yml up --build -d
-docker compose -f docker-compose.yml -f docker-compose.local.yml run --rm api node node_modules/typeorm/cli.js migration:run -d dist/database/data-source.js
+docker compose logs -f api worker
+docker compose down
 ```
 
-Giới hạn tài nguyên được cấu hình qua `.env`: API/worker mặc định mỗi service
-`2 CPU` và `2 GB RAM`; PostgreSQL local mặc định `1 CPU/1 GB`, Redis local
-`0.5 CPU/256 MB`.
+Giới hạn tài nguyên được cấu hình qua `.env`: `API_MEMORY_LIMIT`, `API_CPUS`,
+`WORKER_MEMORY_LIMIT` và `WORKER_CPUS`.
 
-CI/CD nằm trong `.github/workflows`:
+## Lệnh thường dùng
 
-- `ci.yml`: kiểm tra format, typecheck, lint, test, build và Docker image cho
-  `main`/`dev`.
-- `deploy.dev.yml`: deploy khi push vào `dev`.
-- `deploy.prod.yml`: deploy khi push vào `main`.
-- `notify.yml`: gửi trạng thái workflow qua Telegram.
+```bash
+yarn build
+yarn typecheck
+yarn lint
+yarn format:check
+yarn test
+yarn openapi:generate
+yarn openapi:validate
+yarn migration:run
+yarn migration:revert
+```
 
-Các secret SSH cần khai báo trên GitHub repository: `VPS_SSH_KEY_DEV`,
-`VPS_HOST_DEV`, `VPS_USER_DEV`, tùy chọn `VPS_PORT_DEV` và
-`VPS_APP_PATH_DEV`; production dùng `VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER`,
-`VPS_PORT`, `VPS_APP_PATH`. Notification dùng `TELEGRAM_CHAT_ID` và
+Worker development có thể chạy độc lập:
+
+```bash
+yarn worker
+yarn worker:outbox
+yarn worker:media
+```
+
+## CI/CD
+
+Các workflow trong `.github/workflows` kiểm tra format, typecheck, lint, test,
+build, OpenAPI và Docker image cho nhánh `main` và `dev`. Push vào `dev` kích
+hoạt deploy development; push vào `main` kích hoạt deploy production.
+
+Deploy dùng các secret `VPS_SSH_KEY_DEV`, `VPS_HOST_DEV`, `VPS_USER_DEV`
+(tùy chọn `VPS_PORT_DEV`, `VPS_APP_PATH_DEV`) cho development và
+`VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER` (tùy chọn `VPS_PORT`, `VPS_APP_PATH`)
+cho production. Thông báo Telegram dùng `TELEGRAM_CHAT_ID` và
 `TELEGRAM_TOKEN`.
-
-Authentication dùng Auth0 JWT bắt buộc ở mọi môi trường. Cần cấu hình
-`AUTH0_ISSUER_URL`, `AUTH0_AUDIENCE`, `AUTH0_CLIENT_ID` và
-`AUTH0_JWKS_URL`. API dùng `sub` của token làm user ID sau khi bỏ tiền tố
-`auth0|` để khớp với Account API.
-
-Cloudflare R2 bắt buộc các biến `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
-`R2_SECRET_ACCESS_KEY`, `R2_BUCKET` và `R2_ENDPOINT`.
-
-Các biến môi trường được validate bằng Joi ngay khi ứng dụng khởi động. Không
-có giá trị fallback trong code; hãy copy `.env.example` thành `.env` và điền
-đầy đủ các giá trị bắt buộc trước khi chạy API hoặc migration.
-
-Mọi response đều có `x-request-id`; request được ghi dưới dạng JSON structured
-log để liên kết với hệ thống observability.
-
-Project media hiện hỗ trợ metadata attach/list/update/remove/reorder và thumbnail
-selection. Binary upload và processing chạy qua Cloudflare R2; multipart upload
-nâng cao sẽ bổ sung sau.
-
-Upload dùng Cloudflare R2 qua S3-compatible API. Upload flow: tạo session →
-nhận presigned PUT URL → upload trực tiếp lên R2 → complete → worker tạo
-`thumbnail` và `preview` variants.
-## Account API proxy
-
-`GET /api/account/me` yêu cầu Auth0 Bearer token. API lấy `sub` từ token,
-chuẩn hóa tiền tố `auth0|`, rồi gọi `GET /v2/public/users` của
-`ag-account-server` bằng API key ở phía server. Browser không được gửi API key.
-
-Thiết lập trong `.env`:
-
-```dotenv
-ACCOUNT_API_URL=https://api-account-dev-v2.ant-group.net
-ACCOUNT_API_KEY=ak_...
-```
-
-Nếu `ACCOUNT_API_URL` đã bao gồm `/v2` thì proxy không thêm prefix lần nữa.
-Frontend có thể dùng `getCurrentAccountUser()` trong
-`ag-go-web/src/modules/account/api/account.ts`; API client sẽ tự gắn Bearer
-token hiện tại.
