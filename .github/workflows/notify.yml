@@ -33,11 +33,11 @@ jobs:
           message: |
             *Workflow notification*
 
-            *Repository:* [${{ github.repository }}](${{ github.server_url }}/${{ github.repository }})
-            *Workflow:* `${{ github.event.workflow_run.name }}` · Run #${{ github.event.workflow_run.run_number }}
-            *Branch:* `${{ github.event.workflow_run.head_branch }}`
-            *Commit:* `${{ github.event.workflow_run.head_commit.message }}`
-            *Status:* ${{ github.event.workflow_run.conclusion == 'success' && '✅ Success' || github.event.workflow_run.conclusion == 'failure' && '❌ Failure' || github.event.workflow_run.conclusion == 'cancelled' && '⚪ Cancelled' || '❔ Unknown' }}
-            *Duration:* `${{ steps.duration.outputs.formatted_duration }}`
+            - *Repository:* [${{ github.repository }}](${{ github.server_url }}/${{ github.repository }})
+            - *Workflow:* `${{ github.event.workflow_run.name }}` · Run #${{ github.event.workflow_run.run_number }}
+            - *Branch:* `${{ github.event.workflow_run.head_branch }}`
+            - *Commit:* `${{ github.event.workflow_run.head_commit.message }}`
+            - *Status:* ${{ github.event.workflow_run.conclusion == 'success' && '✅ Success' || github.event.workflow_run.conclusion == 'failure' && '❌ Failure' || github.event.workflow_run.conclusion == 'cancelled' && '⚪ Cancelled' || '❔ Unknown' }}
+            - *Duration:* `${{ steps.duration.outputs.formatted_duration }}`
 
             [View workflow run →](${{ github.event.workflow_run.html_url }})
