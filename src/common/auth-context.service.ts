@@ -1,8 +1,12 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import type { Request } from 'express';
+import type { UserType } from './auth/user-type';
 
 export type AuthContext = {
   userId: string;
+  accessToken: string;
+  userType?: UserType;
+  permissions?: string[];
 };
 
 @Injectable()

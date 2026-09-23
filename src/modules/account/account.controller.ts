@@ -16,9 +16,9 @@ export class AccountController {
 
   @Get('me')
   @ApiOperation({ summary: 'Lấy thông tin user hiện tại từ Account API' })
-  getMe(@Req() request: Request, @Query() query: AccountUserQueryDto) {
-    const { userId } = this.authContext.getContext(request);
-    return this.accountApi.getUserById(userId, query);
+  getMe(@Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.accountApi.getCurrentUser(context.accessToken);
   }
 
   @Get('users')

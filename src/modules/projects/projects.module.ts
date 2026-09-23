@@ -8,12 +8,16 @@ import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ProvinceEntity } from '../../database/entities/province.entity';
 import { TagEntity } from '../../database/entities/tag.entity';
+import { AccountModule } from '../account/account.module';
+import { AuditModule } from '../audit/audit.module';
 import { FoldersModule } from '../folders/folders.module';
 import { ProjectsController } from './projects.controller';
 import { ProjectsService } from './projects.service';
 
 @Module({
   imports: [
+    AccountModule,
+    AuditModule,
     FoldersModule,
     TypeOrmModule.forFeature([
       ProjectEntity,

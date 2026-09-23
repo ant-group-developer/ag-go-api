@@ -7,6 +7,7 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
+import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
@@ -26,9 +27,14 @@ export class FoldersService {
     @InjectRepository(FolderAccessGrantEntity)
     private readonly grantRepository: Repository<FolderAccessGrantEntity>,
     private readonly accessService: FolderAccessService,
+    private readonly actorEnrichment: ActorEnrichmentService,
   ) {}
 
-  async create(dto: CreateFolderDto, userId: string): Promise<FolderEntity> {
+  async create(
+    dto: CreateFolderDto,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<FolderEntity> {
     return this.dataSource.transaction(async (manager) => {
       const parent = dto.parentId
         ? await manager.findOne(FolderEntity, { where: { id: dto.parentId, isActive: true } })
@@ -37,7 +43,7 @@ export class FoldersService {
         throw new NotFoundException('Parent folder not found');
       }
       if (parent) {
-        const canManage = await this.accessService.canAccess(parent.id, userId, 'editor');
+        const canManage = await this.accessService.canAccess(parent.id, userId, 'editor', userType);
         if (!canManage) {
           throw new ForbiddenException('Insufficient folder permission');
         }
@@ -95,19 +101,28 @@ export class FoldersService {
     });
   }
 
-  async tree(userId: string): Promise<FolderEntity[]> {
-    const ids = await this.accessService.accessibleFolderIds(userId);
+  async tree(userId: string, userType?: 'ADMIN' | 'USER'): Promise<FolderEntity[]> {
+    const ids = await this.accessService.accessibleFolderIds(userId, userType);
     if (ids.length === 0) {
       return [];
     }
-    return this.folderRepository.find({
+    const folders = await this.folderRepository.find({
       where: { id: In(ids), isActive: true },
       order: { depth: 'ASC', sortOrder: 'ASC', name: 'ASC' },
     });
+    return (await this.actorEnrichment.enrich(
+      folders as unknown as Array<Record<string, unknown>>,
+      [{ id: 'createdBy', target: 'createdByUser' }],
+    )) as unknown as FolderEntity[];
   }
 
-  async update(folderId: string, dto: UpdateFolderDto, userId: string): Promise<FolderEntity> {
-    await this.requireAccess(folderId, userId, 'editor');
+  async update(
+    folderId: string,
+    dto: UpdateFolderDto,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<FolderEntity> {
+    await this.requireAccess(folderId, userId, 'editor', userType);
     const folder = await this.folderRepository.findOne({ where: { id: folderId, isActive: true } });
     if (!folder) {
       throw new NotFoundException('Folder not found');
@@ -127,8 +142,8 @@ export class FoldersService {
     return this.folderRepository.save(folder);
   }
 
-  async remove(folderId: string, userId: string): Promise<void> {
-    await this.requireAccess(folderId, userId, 'manager');
+  async remove(folderId: string, userId: string, userType?: 'ADMIN' | 'USER'): Promise<void> {
+    await this.requireAccess(folderId, userId, 'manager', userType);
     const children = await this.folderRepository.count({
       where: { parentId: folderId, isActive: true },
     });
@@ -143,20 +158,28 @@ export class FoldersService {
     await this.folderRepository.save(folder);
   }
 
-  async grants(folderId: string, userId: string): Promise<FolderAccessGrantEntity[]> {
-    await this.requireAccess(folderId, userId, 'manager');
-    return this.grantRepository.find({
+  async grants(
+    folderId: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<FolderAccessGrantEntity[]> {
+    await this.requireAccess(folderId, userId, 'manager', userType);
+    const grants = await this.grantRepository.find({
       where: { folderId },
       order: { principalType: 'ASC', principalId: 'ASC' },
     });
+    return (await this.actorEnrichment.enrich(grants as unknown as Array<Record<string, unknown>>, [
+      { id: 'grantedBy', target: 'grantedByUser' },
+    ])) as unknown as FolderAccessGrantEntity[];
   }
 
   async replaceGrants(
     folderId: string,
     entries: UpsertFolderGrantDto[],
     userId: string,
+    userType?: 'ADMIN' | 'USER',
   ): Promise<FolderAccessGrantEntity[]> {
-    await this.requireAccess(folderId, userId, 'manager');
+    await this.requireAccess(folderId, userId, 'manager', userType);
     await this.grantRepository.delete({ folderId });
     await this.grantRepository.insert(
       entries.map((entry) => ({
@@ -169,18 +192,22 @@ export class FoldersService {
         grantedBy: userId,
       })),
     );
-    return this.grantRepository.find({
+    const grants = await this.grantRepository.find({
       where: { folderId },
       order: { principalType: 'ASC', principalId: 'ASC' },
     });
+    return (await this.actorEnrichment.enrich(grants as unknown as Array<Record<string, unknown>>, [
+      { id: 'grantedBy', target: 'grantedByUser' },
+    ])) as unknown as FolderAccessGrantEntity[];
   }
 
   private async requireAccess(
     folderId: string,
     userId: string,
     minimum: FolderAccessLevel,
+    userType?: 'ADMIN' | 'USER',
   ): Promise<void> {
-    const allowed = await this.accessService.canAccess(folderId, userId, minimum);
+    const allowed = await this.accessService.canAccess(folderId, userId, minimum, userType);
     if (!allowed) {
       throw new ForbiddenException('Insufficient folder permission');
     }

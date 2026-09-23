@@ -1,6 +1,13 @@
+import type { UserType } from '../../common/auth/user-type';
+
 export type AccountUser = {
   id: string;
   [key: string]: unknown;
+};
+
+export type AccountCurrentUser = AccountUser & {
+  user_type: UserType;
+  permissions: string[];
 };
 
 export type AccountUsersResponse = {

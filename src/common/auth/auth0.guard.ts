@@ -75,7 +75,10 @@ export class Auth0Guard implements CanActivate {
       throw new UnauthorizedException('Token subject is invalid');
     }
 
-    const authContext: AuthContext = { userId };
+    const authContext: AuthContext = {
+      userId,
+      accessToken: token,
+    };
     request.authContext = authContext;
     return true;
   }

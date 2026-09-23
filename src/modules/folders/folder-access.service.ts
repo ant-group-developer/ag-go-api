@@ -1,8 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { isAdminUserType } from '../../common/auth/user-type';
 import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
+import { FolderEntity } from '../../database/entities/folder.entity';
 
 const accessRank = {
   viewer: 1,
@@ -19,9 +21,19 @@ export class FolderAccessService {
     private readonly grantRepository: Repository<FolderAccessGrantEntity>,
     @InjectRepository(FolderClosureEntity)
     private readonly closureRepository: Repository<FolderClosureEntity>,
+    @InjectRepository(FolderEntity)
+    private readonly folderRepository: Repository<FolderEntity>,
   ) {}
 
-  async canAccess(folderId: string, userId: string, minimum: FolderAccessLevel): Promise<boolean> {
+  async canAccess(
+    folderId: string,
+    userId: string,
+    minimum: FolderAccessLevel,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<boolean> {
+    if (isAdminUserType(userType)) {
+      return true;
+    }
     const closure = await this.closureRepository.find({
       where: { descendantId: folderId },
     });
@@ -46,7 +58,11 @@ export class FolderAccessService {
     });
   }
 
-  async accessibleFolderIds(userId: string): Promise<string[]> {
+  async accessibleFolderIds(userId: string, userType?: 'ADMIN' | 'USER'): Promise<string[]> {
+    if (isAdminUserType(userType)) {
+      const folders = await this.folderRepository.find({ select: { id: true } });
+      return folders.map((folder) => folder.id);
+    }
     const closure = await this.closureRepository.find();
     const grants = await this.grantRepository
       .createQueryBuilder('grant')

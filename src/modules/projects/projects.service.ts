@@ -2,6 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
+import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { ListResponseDto } from '../../common/dto/list-response.dto';
 import { CategoryEntity } from '../../database/entities/category.entity';
 import { CountryEntity } from '../../database/entities/country.entity';
@@ -11,6 +12,7 @@ import { ProjectMediaEntity } from '../../database/entities/project-media.entity
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ProvinceEntity } from '../../database/entities/province.entity';
 import { TagEntity } from '../../database/entities/tag.entity';
+import { AuditService } from '../audit/audit.service';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ListProjectsQueryDto } from './dto/list-projects-query.dto';
@@ -34,10 +36,12 @@ export class ProjectsService {
     @InjectRepository(TagEntity)
     private readonly tagRepository: Repository<TagEntity>,
     private readonly folderAccessService: FolderAccessService,
+    private readonly actorEnrichment: ActorEnrichmentService,
+    private readonly auditService: AuditService,
   ) {}
 
-  async list(query: ListProjectsQueryDto, userId: string) {
-    const folderIds = await this.folderAccessService.accessibleFolderIds(userId);
+  async list(query: ListProjectsQueryDto, userId: string, userType?: 'ADMIN' | 'USER') {
+    const folderIds = await this.folderAccessService.accessibleFolderIds(userId, userType);
     if (folderIds.length === 0) {
       return new ListResponseDto([], query.page, query.pageSize, 0);
     }
@@ -161,15 +165,19 @@ export class ProjectsService {
       });
     });
 
-    return new ListResponseDto(items, query.page, query.pageSize, total);
+    const enrichedItems = await this.actorEnrichment.enrich(
+      items as unknown as Array<Record<string, unknown>>,
+      [{ id: 'ownerUserId', target: 'ownerUser' }],
+    );
+    return new ListResponseDto(enrichedItems, query.page, query.pageSize, total);
   }
 
-  async findOne(id: string, userId: string) {
+  async findOne(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
     const project = await this.projectRepository.findOne({ where: { id } });
     if (!project) {
       throw new NotFoundException('Project not found');
     }
-    await this.requireFolderAccess(project.folderId, userId, 'viewer');
+    await this.requireFolderAccess(project.folderId, userId, 'viewer', userType);
     const [folder, country, province, category, tags] = await Promise.all([
       this.folderRepository.findOne({ where: { id: project.folderId } }),
       project.countryId
@@ -207,8 +215,8 @@ export class ProjectsService {
     });
   }
 
-  async create(dto: CreateProjectDto, userId: string) {
-    await this.requireFolderAccess(dto.folderId, userId, 'editor');
+  async create(dto: CreateProjectDto, userId: string, userType?: 'ADMIN' | 'USER') {
+    await this.requireFolderAccess(dto.folderId, userId, 'editor', userType);
     await this.validateCatalogs(dto.countryId, dto.provinceId, dto.categoryId);
     const requestedTagIds = [...new Set(dto.tagIds ?? [])];
     if (requestedTagIds.length > 0) {
@@ -218,7 +226,7 @@ export class ProjectsService {
       }
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    const created = await this.dataSource.transaction(async (manager) => {
       const tagIds = [
         ...new Set([
           ...requestedTagIds,
@@ -261,14 +269,21 @@ export class ProjectsService {
       }
       return project;
     });
+    await this.auditService.record({
+      projectId: created.id,
+      actorUserId: userId,
+      action: 'project_created',
+      afterData: { name: created.name, folderId: created.folderId },
+    });
+    return created;
   }
 
-  async update(id: string, dto: UpdateProjectDto, userId: string) {
-    const project = await this.findOne(id, userId);
-    await this.requireFolderAccess(project.folderId, userId, 'editor');
+  async update(id: string, dto: UpdateProjectDto, userId: string, userType?: 'ADMIN' | 'USER') {
+    const project = await this.findOne(id, userId, userType);
+    await this.requireFolderAccess(project.folderId, userId, 'editor', userType);
     const folderId = dto.folderId ?? project.folderId;
     if (folderId !== project.folderId) {
-      await this.requireFolderAccess(folderId, userId, 'editor');
+      await this.requireFolderAccess(folderId, userId, 'editor', userType);
     }
 
     const countryChanged = dto.countryId !== undefined && dto.countryId !== project.countryId;
@@ -305,13 +320,30 @@ export class ProjectsService {
         }
       }
     });
-    return this.findOne(id, userId);
+    const updated = await this.findOne(id, userId, userType);
+    await this.auditService.record({
+      projectId: id,
+      actorUserId: userId,
+      action: 'project_updated',
+      afterData: {
+        name: updated.name,
+        folderId: updated.folderId,
+        description: updated.description,
+      },
+    });
+    return updated;
   }
 
-  async remove(id: string, userId: string) {
-    const project = await this.findOne(id, userId);
-    await this.requireFolderAccess(project.folderId, userId, 'editor');
+  async remove(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    const project = await this.findOne(id, userId, userType);
+    await this.requireFolderAccess(project.folderId, userId, 'editor', userType);
     await this.projectRepository.remove(project);
+    await this.auditService.record({
+      projectId: id,
+      actorUserId: userId,
+      action: 'project_deleted',
+      beforeData: { name: project.name, folderId: project.folderId },
+    });
     return { success: true };
   }
 
@@ -371,8 +403,13 @@ export class ProjectsService {
     return tagIds;
   }
 
-  private async requireFolderAccess(folderId: string, userId: string, level: 'viewer' | 'editor') {
-    const allowed = await this.folderAccessService.canAccess(folderId, userId, level);
+  private async requireFolderAccess(
+    folderId: string,
+    userId: string,
+    level: 'viewer' | 'editor',
+    userType?: 'ADMIN' | 'USER',
+  ) {
+    const allowed = await this.folderAccessService.canAccess(folderId, userId, level, userType);
     if (!allowed) {
       throw new ForbiddenException('Insufficient folder permission');
     }

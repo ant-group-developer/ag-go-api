@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
+import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { MAX_CSV_FILE_SIZE_BYTES, type CsvUploadFile } from '../../common/csv/csv-import';
 import { CreateProvinceDto } from './dto/create-province.dto';
 import { ListProvincesQueryDto } from './dto/list-provinces-query.dto';
@@ -33,6 +35,7 @@ export class ProvincesController {
   }
 
   @Post('import')
+  @RequirePermissions(GO_PERMISSIONS.CATALOG_MANAGE)
   @HttpCode(HttpStatus.OK)
   @ApiConsumes('multipart/form-data')
   @ApiBody({
@@ -54,6 +57,7 @@ export class ProvincesController {
   }
 
   @Post()
+  @RequirePermissions(GO_PERMISSIONS.CATALOG_MANAGE)
   create(@Body() dto: CreateProvinceDto) {
     return this.provincesService.create(dto);
   }
