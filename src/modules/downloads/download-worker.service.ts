@@ -98,7 +98,9 @@ export class DownloadWorkerService implements OnModuleDestroy {
         await this.jobRepository.increment({ id: download.id }, 'completedItems', 1);
       }
       const zip = createStoredZip(entries);
-      const storageKey = `downloads/${download.externalUserId}/${download.id}.zip`;
+      const storageKey = download.projectId
+        ? `projects/${download.projectId}/downloads/${download.externalUserId}/${download.id}.zip`
+        : `downloads/${download.externalUserId}/${download.id}.zip`;
       const head = await this.storage.putObject(storageKey, zip, 'application/zip');
       await this.jobRepository.update(download.id, {
         status: 'completed',

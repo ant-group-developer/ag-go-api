@@ -303,7 +303,7 @@ export class ProjectsService {
       categoryId ?? undefined,
     );
 
-    Object.assign(project, {
+    const updatePayload = {
       folderId,
       name: dto.name?.trim() ?? project.name,
       description:
@@ -311,10 +311,10 @@ export class ProjectsService {
       categoryId,
       countryId,
       provinceId,
-    });
+    };
 
     await this.dataSource.transaction(async (manager) => {
-      await manager.save(project);
+      await manager.update(ProjectEntity, id, updatePayload);
       if (dto.tags !== undefined) {
         const tagIds = await this.upsertTagNames(manager, dto.tags ?? [], userId);
         await manager.query('DELETE FROM project_tags WHERE project_id = $1', [project.id]);

@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleDestroy,
   ServiceUnavailableException,
@@ -16,8 +17,10 @@ import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
 import { AssetImportEntity } from '../../database/entities/asset-import.entity';
+import { AssetEntity } from '../../database/entities/asset.entity';
 import { GoogleDriveConnectionEntity } from '../../database/entities/google-drive-connection.entity';
 import { ImportBatchEntity } from '../../database/entities/import-batch.entity';
+import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ImportQueueService } from '../../infra/queue/import-queue.service';
 import { FolderAccessService } from '../folders/folder-access.service';
@@ -44,11 +47,15 @@ type DriveSummaryFile = {
   name: string;
   mimeType: string;
   size?: string;
+  fileExtension?: string;
+  fullFileExtension?: string;
   modifiedTime?: string;
+  headRevisionId?: string;
 };
 
 @Injectable()
 export class GoogleDriveService implements OnModuleDestroy {
+  private readonly logger = new Logger(GoogleDriveService.name);
   private stateStore?: Redis;
 
   constructor(
@@ -176,9 +183,7 @@ export class GoogleDriveService implements OnModuleDestroy {
     }
     const encryptedRefreshToken = this.encrypt(tokens.refresh_token);
     const scopes = (tokens.scope ?? this.getScopes().join(' ')).split(' ').filter(Boolean);
-    const expiresAt = tokens.expires_in
-      ? new Date(Date.now() + tokens.expires_in * 1000)
-      : null;
+    const expiresAt = tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null;
     const existingConnection = await this.connectionRepository.findOne({
       where: { externalUserId: userId, googleSubject: profile.sub },
     });
@@ -237,7 +242,11 @@ export class GoogleDriveService implements OnModuleDestroy {
     return { success: true };
   }
 
-  async summarizeSources(sources: SummarizeSourceDto[], userId: string) {
+  async summarizeSources(sources: SummarizeSourceDto[], projectId: string, userId: string) {
+    const project = await this.projectRepository.findOne({ where: { id: projectId } });
+    if (!project || !(await this.folderAccess.canAccess(project.folderId, userId, 'viewer'))) {
+      throw new ForbiddenException('Insufficient project permission');
+    }
     const connection = await this.connectionRepository.findOne({
       where: { externalUserId: userId, status: 'active' },
       order: { updatedAt: 'DESC' },
@@ -257,12 +266,7 @@ export class GoogleDriveService implements OnModuleDestroy {
       const root = await this.getDriveFile(accessToken, source.fileId);
       if (root.mimeType === 'application/vnd.google-apps.folder') {
         folderCount += 1;
-        await this.collectDriveFolder(
-          accessToken,
-          root.id,
-          source.driveId ?? null,
-          discovered,
-        );
+        await this.collectDriveFolder(accessToken, root.id, source.driveId ?? null, discovered);
       } else {
         discovered.set(root.id, root);
       }
@@ -271,21 +275,28 @@ export class GoogleDriveService implements OnModuleDestroy {
     let imageCount = 0;
     let videoCount = 0;
     let unsupportedCount = 0;
+    let totalBytes = 0n;
     for (const file of discovered.values()) {
       if (file.mimeType.startsWith('image/')) {
         imageCount += 1;
+        totalBytes += BigInt(file.size ?? 0);
       } else if (file.mimeType.startsWith('video/')) {
         videoCount += 1;
+        totalBytes += BigInt(file.size ?? 0);
       } else {
         unsupportedCount += 1;
       }
     }
+    const duplicates = await this.findProjectDuplicates(projectId, [...discovered.keys()]);
     return {
       imageCount,
       videoCount,
       fileCount: imageCount + videoCount,
       folderCount,
       unsupportedCount,
+      totalBytes: totalBytes.toString(),
+      duplicateCount: duplicates.length,
+      duplicates,
     };
   }
 
@@ -303,11 +314,12 @@ export class GoogleDriveService implements OnModuleDestroy {
     if (!connection) {
       throw new ConflictException('Google Drive is not connected');
     }
-    const sources = (dto.sources?.length
-      ? dto.sources
-      : dto.sourceRootId
-        ? [{ fileId: dto.sourceRootId, driveId: dto.sourceDriveId }]
-        : []
+    const sources = (
+      dto.sources?.length
+        ? dto.sources
+        : dto.sourceRootId
+          ? [{ fileId: dto.sourceRootId, driveId: dto.sourceDriveId }]
+          : []
     ).slice(0, 100);
     if (sources.length === 0) {
       throw new BadRequestException('At least one Google Drive source is required');
@@ -318,6 +330,11 @@ export class GoogleDriveService implements OnModuleDestroy {
         where: { createdBy: userId, idempotencyKey: key },
       });
       if (existing) {
+        if (existing.status === 'queued' && !existing.queueJobId) {
+          const queueJobId = await this.importQueue.addJob({ batchId: existing.id, userId });
+          await this.batchRepository.update(existing.id, { queueJobId });
+          existing.queueJobId = queueJobId;
+        }
         return existing;
       }
     }
@@ -330,6 +347,7 @@ export class GoogleDriveService implements OnModuleDestroy {
           sourceType: 'google_drive',
           sourceDriveId: dto.sourceDriveId ?? null,
           sourceRootId: dto.sourceRootId,
+          duplicatePolicy: dto.duplicatePolicy ?? 'reuse_existing',
           status: 'queued',
           totalItems: 0,
           completedItems: 0,
@@ -356,6 +374,7 @@ export class GoogleDriveService implements OnModuleDestroy {
           sourceName: source.name ?? source.fileId,
           sourceMimeType: source.mimeType ?? null,
           sourceSizeBytes: null,
+          resolution: null,
           status: 'queued' as const,
           attemptCount: 0,
           errorCode: null,
@@ -367,7 +386,8 @@ export class GoogleDriveService implements OnModuleDestroy {
       );
       return batch;
     });
-    await this.importQueue.addJob({ batchId: batch.id, userId });
+    const queueJobId = await this.importQueue.addJob({ batchId: batch.id, userId });
+    await this.batchRepository.update(batch.id, { queueJobId });
     return batch;
   }
 
@@ -439,6 +459,21 @@ export class GoogleDriveService implements OnModuleDestroy {
     return { ...enrichedBatch, items };
   }
 
+  async listImports(projectId: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    const project = await this.projectRepository.findOne({ where: { id: projectId } });
+    if (
+      !project ||
+      !(await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))
+    ) {
+      throw new ForbiddenException('Insufficient project permission');
+    }
+    return this.batchRepository.find({
+      where: { projectId },
+      order: { createdAt: 'DESC' },
+      take: 50,
+    });
+  }
+
   async listItems(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
     await this.assertBatchOwner(id, userId, userType);
     return this.itemRepository.find({
@@ -463,13 +498,55 @@ export class GoogleDriveService implements OnModuleDestroy {
       throw new NotFoundException('Import item not found');
     }
     item.status = 'queued';
+    item.resolution = null;
     item.errorCode = null;
     item.errorMessage = null;
-    item.attemptCount += 1;
     await this.itemRepository.save(item);
     await this.batchRepository.update(id, { status: 'processing' });
-    await this.importQueue.addJob({ batchId: batch.id, userId });
+    const queueJobId = await this.importQueue.addJob({ batchId: batch.id, userId });
+    await this.batchRepository.update(id, { queueJobId });
     return item;
+  }
+
+  private async findProjectDuplicates(projectId: string, fileIds: string[]) {
+    if (fileIds.length === 0) {
+      return [];
+    }
+    const rows = await this.dataSource
+      .createQueryBuilder()
+      .select('asset.google_drive_file_id', 'fileId')
+      .addSelect('asset.id', 'assetId')
+      .addSelect('media.id', 'projectMediaId')
+      .addSelect('asset.original_filename', 'name')
+      .addSelect('media.created_at', 'createdAt')
+      .from(ProjectMediaEntity, 'media')
+      .innerJoin(AssetEntity, 'asset', 'asset.id = media.asset_id')
+      .where('media.project_id = :projectId', { projectId })
+      .andWhere('asset.google_drive_file_id IN (:...fileIds)', { fileIds })
+      .orderBy('media.created_at', 'DESC')
+      .getRawMany<{
+        fileId: string;
+        assetId: string;
+        projectMediaId: string;
+        name: string;
+        createdAt: Date;
+      }>();
+    const seen = new Set<string>();
+    return rows
+      .filter((row) => {
+        if (seen.has(row.fileId)) {
+          return false;
+        }
+        seen.add(row.fileId);
+        return true;
+      })
+      .map((row) => ({
+        fileId: row.fileId,
+        name: row.name,
+        existingAssetId: row.assetId,
+        existingProjectMediaId: row.projectMediaId,
+        createdAt: row.createdAt,
+      }));
   }
 
   private async assertBatchOwner(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
@@ -498,7 +575,7 @@ export class GoogleDriveService implements OnModuleDestroy {
 
   private async getDriveFile(accessToken: string, fileId: string): Promise<DriveSummaryFile> {
     const params = new URLSearchParams({
-      fields: 'id,name,mimeType,size,modifiedTime',
+      fields: 'id,name,mimeType,size,fileExtension,fullFileExtension,modifiedTime,headRevisionId',
       supportsAllDrives: 'true',
     });
     const response = await fetch(
@@ -511,7 +588,21 @@ export class GoogleDriveService implements OnModuleDestroy {
     if (!response.ok) {
       throw new BadRequestException(`Google Drive file lookup failed with ${response.status}`);
     }
-    return (await response.json()) as DriveSummaryFile;
+    const payload = (await response.json()) as DriveSummaryFile;
+    this.logger.log(
+      `[Google Drive API] file metadata: ${JSON.stringify({
+        fileId,
+        id: payload.id,
+        name: payload.name,
+        mimeType: payload.mimeType,
+        size: payload.size,
+        fileExtension: payload.fileExtension,
+        fullFileExtension: payload.fullFileExtension,
+        modifiedTime: payload.modifiedTime,
+        headRevisionId: payload.headRevisionId,
+      })}`,
+    );
+    return payload;
   }
 
   private async collectDriveFolder(
@@ -531,7 +622,8 @@ export class GoogleDriveService implements OnModuleDestroy {
       do {
         const params = new URLSearchParams({
           q: `'${parentId.replaceAll("'", "\\'")}' in parents and trashed = false`,
-          fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime)',
+          fields:
+            'nextPageToken,files(id,name,mimeType,size,fileExtension,fullFileExtension,modifiedTime)',
           pageSize: '1000',
           includeItemsFromAllDrives: 'true',
           supportsAllDrives: 'true',
@@ -559,6 +651,22 @@ export class GoogleDriveService implements OnModuleDestroy {
           nextPageToken?: string;
           files?: DriveSummaryFile[];
         };
+        this.logger.log(
+          `[Google Drive API] folder page: ${JSON.stringify({
+            parentId,
+            driveId,
+            fileCount: page.files?.length ?? 0,
+            files: (page.files ?? []).map((file) => ({
+              id: file.id,
+              name: file.name,
+              mimeType: file.mimeType,
+              size: file.size,
+              fileExtension: file.fileExtension,
+              fullFileExtension: file.fullFileExtension,
+              modifiedTime: file.modifiedTime,
+            })),
+          })}`,
+        );
         for (const file of page.files ?? []) {
           if (file.mimeType === 'application/vnd.google-apps.folder') {
             pending.push(file.id);
@@ -566,9 +674,7 @@ export class GoogleDriveService implements OnModuleDestroy {
             discovered.set(file.id, file);
           }
           if (discovered.size > maxFiles) {
-            throw new BadRequestException(
-              `Google Drive folder exceeds the ${maxFiles} file limit`,
-            );
+            throw new BadRequestException(`Google Drive folder exceeds the ${maxFiles} file limit`);
           }
         }
         pageToken = page.nextPageToken;
@@ -584,7 +690,11 @@ export class GoogleDriveService implements OnModuleDestroy {
       const frontendOrigin =
         this.config.get<string>('FRONTEND_ORIGIN')?.trim() || 'http://localhost:5173';
       const parsed = new URL(value, frontendOrigin);
-      if (parsed.origin !== frontendOrigin || !parsed.pathname.startsWith('/') || parsed.pathname.startsWith('//')) {
+      if (
+        parsed.origin !== frontendOrigin ||
+        !parsed.pathname.startsWith('/') ||
+        parsed.pathname.startsWith('//')
+      ) {
         throw new Error('Invalid frontend return URL');
       }
       return `${parsed.pathname}${parsed.search}${parsed.hash}`;

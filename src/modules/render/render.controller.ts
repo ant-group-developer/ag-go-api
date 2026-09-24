@@ -8,8 +8,8 @@ import { AssetsService } from '../assets/assets.service';
 import { CompleteUploadDto } from '../assets/dto/complete-upload.dto';
 import { CreateUploadSessionDto } from '../assets/dto/create-upload-session.dto';
 import { CreateRenderBatchDto } from './dto/create-render-batch.dto';
-import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
 import { RerenderWatermarkDto } from './dto/rerender-watermark.dto';
+import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
 import { RenderService } from './render.service';
 
 @ApiTags('render')
@@ -41,10 +41,7 @@ export class RenderController {
 
   @Post('render-watermark/upload-session')
   @RequirePermissions(GO_PERMISSIONS.SETTINGS_MANAGE)
-  createWatermarkUploadSession(
-    @Body() dto: CreateUploadSessionDto,
-    @Req() request: Request,
-  ) {
+  createWatermarkUploadSession(@Body() dto: CreateUploadSessionDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.assetsService.createUploadSession(dto, context.userId, context.userType);
   }
@@ -81,6 +78,34 @@ export class RenderController {
   createBatch(@Body() dto: CreateRenderBatchDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.renderService.createBatch(dto, context.userId, context.userType);
+  }
+
+  @Get('render-batches')
+  @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
+  listAllBatches(@Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.renderService.listAllBatches(context.userId, context.userType);
+  }
+
+  @Get('projects/:projectId/render-batches')
+  @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
+  listBatches(@Param('projectId') projectId: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.renderService.listBatches(projectId, context.userId, context.userType);
+  }
+
+  @Get('render-batches/:id/jobs')
+  @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
+  listJobs(@Param('id') id: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.renderService.listJobs(id, context.userId, context.userType);
+  }
+
+  @Post('render-jobs/:id/retry')
+  @RequirePermissions(GO_PERMISSIONS.RENDER_BATCH)
+  retryJob(@Param('id') id: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.renderService.retryJob(id, context.userId, context.userType);
   }
 
   @Post('render-watermark/rerender')
