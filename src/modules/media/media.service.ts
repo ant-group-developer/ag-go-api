@@ -87,7 +87,7 @@ export class MediaService {
     });
     const previewVariants = new Map(
       variants
-        .filter((variant) => variant.variantCode === 'preview' && variant.hasWatermark)
+        .filter((variant) => variant.variantCode === 'preview')
         .map((variant) => [variant.assetId, variant]),
     );
     const enrichedItems = await this.actorEnrichment.enrich(

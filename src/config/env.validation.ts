@@ -79,11 +79,6 @@ export const envValidationSchema = Joi.object({
     .uri({ scheme: ['http', 'https'] })
     .allow('')
     .optional(),
-  GOOGLE_FRONTEND_CALLBACK_URL: Joi.string()
-    .trim()
-    .uri({ scheme: ['http', 'https'] })
-    .allow('')
-    .optional(),
   GOOGLE_SCOPES: Joi.string().trim().allow('').optional(),
   GOOGLE_TOKEN_ENCRYPTION_KEY: Joi.string().trim().allow('').optional(),
 }).unknown(true);

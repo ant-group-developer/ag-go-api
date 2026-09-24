@@ -22,11 +22,13 @@ import { ProjectEntity } from '../../database/entities/project.entity';
 import { ImportQueueService } from '../../infra/queue/import-queue.service';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateImportDto } from './dto/create-import.dto';
+import type { SummarizeSourceDto } from './dto/summarize-sources.dto';
 
 type OAuthState = {
   verifier: string;
   userId: string;
   projectId?: string;
+  returnUrl?: string;
 };
 
 type GoogleTokenResponse = {
@@ -35,6 +37,14 @@ type GoogleTokenResponse = {
   expires_in?: number;
   scope?: string;
   id_token?: string;
+};
+
+type DriveSummaryFile = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: string;
+  modifiedTime?: string;
 };
 
 @Injectable()
@@ -76,17 +86,18 @@ export class GoogleDriveService implements OnModuleDestroy {
     };
   }
 
-  async startConnection(userId: string, projectId?: string) {
+  async startConnection(userId: string, projectId?: string, returnUrl?: string) {
     const clientId = this.config.get<string>('GOOGLE_CLIENT_ID')?.trim();
     const redirectUri = this.config.get<string>('GOOGLE_REDIRECT_URI')?.trim();
     if (!clientId || !redirectUri) {
       throw new ServiceUnavailableException('Google Drive OAuth is not configured');
     }
+    const normalizedReturnUrl = this.normalizeReturnUrl(returnUrl);
     const state = randomBytes(24).toString('base64url');
     const verifier = randomBytes(48).toString('base64url');
     await this.getStateStore().set(
       this.stateKey(state),
-      JSON.stringify({ verifier, userId, projectId }),
+      JSON.stringify({ verifier, userId, projectId, returnUrl: normalizedReturnUrl }),
       'EX',
       10 * 60,
       'NX',
@@ -164,20 +175,40 @@ export class GoogleDriveService implements OnModuleDestroy {
       throw new BadRequestException('Google user subject is missing');
     }
     const encryptedRefreshToken = this.encrypt(tokens.refresh_token);
+    const scopes = (tokens.scope ?? this.getScopes().join(' ')).split(' ').filter(Boolean);
+    const expiresAt = tokens.expires_in
+      ? new Date(Date.now() + tokens.expires_in * 1000)
+      : null;
+    const existingConnection = await this.connectionRepository.findOne({
+      where: { externalUserId: userId, googleSubject: profile.sub },
+    });
     const connection = await this.connectionRepository.save(
-      this.connectionRepository.create({
-        id: uuidv7(),
-        externalUserId: userId,
-        googleSubject: profile.sub,
-        encryptedRefreshToken,
-        scopes: (tokens.scope ?? this.getScopes().join(' ')).split(' ').filter(Boolean),
-        expiresAt: tokens.expires_in ? new Date(Date.now() + tokens.expires_in * 1000) : null,
-        status: 'active',
-        lastError: null,
-        revokedAt: null,
-      }),
+      existingConnection
+        ? Object.assign(existingConnection, {
+            encryptedRefreshToken,
+            scopes,
+            expiresAt,
+            status: 'active' as const,
+            lastError: null,
+            revokedAt: null,
+          })
+        : this.connectionRepository.create({
+            id: uuidv7(),
+            externalUserId: userId,
+            googleSubject: profile.sub,
+            encryptedRefreshToken,
+            scopes,
+            expiresAt,
+            status: 'active',
+            lastError: null,
+            revokedAt: null,
+          }),
     );
-    return { ...this.getSafeConnection(connection), projectId: stored.projectId };
+    return {
+      ...this.getSafeConnection(connection),
+      projectId: stored.projectId,
+      returnUrl: stored.returnUrl,
+    };
   }
 
   async getPickerAccessToken(userId: string): Promise<{ accessToken: string; expiresAt: string }> {
@@ -204,6 +235,58 @@ export class GoogleDriveService implements OnModuleDestroy {
     connection.encryptedRefreshToken = '';
     await this.connectionRepository.save(connection);
     return { success: true };
+  }
+
+  async summarizeSources(sources: SummarizeSourceDto[], userId: string) {
+    const connection = await this.connectionRepository.findOne({
+      where: { externalUserId: userId, status: 'active' },
+      order: { updatedAt: 'DESC' },
+    });
+    if (!connection) {
+      throw new ConflictException('Google Drive is not connected');
+    }
+    const accessToken = await this.getDriveAccessToken(connection.id, userId);
+    const discovered = new Map<string, DriveSummaryFile>();
+    let folderCount = 0;
+    const roots = [...new Map(sources.map((source) => [source.fileId, source])).values()].slice(
+      0,
+      100,
+    );
+
+    for (const source of roots) {
+      const root = await this.getDriveFile(accessToken, source.fileId);
+      if (root.mimeType === 'application/vnd.google-apps.folder') {
+        folderCount += 1;
+        await this.collectDriveFolder(
+          accessToken,
+          root.id,
+          source.driveId ?? null,
+          discovered,
+        );
+      } else {
+        discovered.set(root.id, root);
+      }
+    }
+
+    let imageCount = 0;
+    let videoCount = 0;
+    let unsupportedCount = 0;
+    for (const file of discovered.values()) {
+      if (file.mimeType.startsWith('image/')) {
+        imageCount += 1;
+      } else if (file.mimeType.startsWith('video/')) {
+        videoCount += 1;
+      } else {
+        unsupportedCount += 1;
+      }
+    }
+    return {
+      imageCount,
+      videoCount,
+      fileCount: imageCount + videoCount,
+      folderCount,
+      unsupportedCount,
+    };
   }
 
   async createImport(dto: CreateImportDto, userId: string, userType?: 'ADMIN' | 'USER') {
@@ -400,13 +483,114 @@ export class GoogleDriveService implements OnModuleDestroy {
   }
 
   private getScopes(): string[] {
-    return (
+    const scopes = (
       this.config.get<string>('GOOGLE_SCOPES') ??
       'openid profile email https://www.googleapis.com/auth/drive.readonly'
     )
       .split(/[,\s]+/)
       .map((value) => value.trim())
       .filter(Boolean);
+    if (!scopes.includes('https://www.googleapis.com/auth/drive.readonly')) {
+      scopes.push('https://www.googleapis.com/auth/drive.readonly');
+    }
+    return [...new Set(scopes)];
+  }
+
+  private async getDriveFile(accessToken: string, fileId: string): Promise<DriveSummaryFile> {
+    const params = new URLSearchParams({
+      fields: 'id,name,mimeType,size,modifiedTime',
+      supportsAllDrives: 'true',
+    });
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?${params.toString()}`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new BadRequestException(`Google Drive file lookup failed with ${response.status}`);
+    }
+    return (await response.json()) as DriveSummaryFile;
+  }
+
+  private async collectDriveFolder(
+    accessToken: string,
+    rootId: string,
+    driveId: string | null,
+    discovered: Map<string, DriveSummaryFile>,
+  ): Promise<void> {
+    const pending = [rootId];
+    const maxFiles = 10_000;
+    while (pending.length > 0) {
+      const parentId = pending.shift();
+      if (!parentId) {
+        continue;
+      }
+      let pageToken: string | undefined;
+      do {
+        const params = new URLSearchParams({
+          q: `'${parentId.replaceAll("'", "\\'")}' in parents and trashed = false`,
+          fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime)',
+          pageSize: '1000',
+          includeItemsFromAllDrives: 'true',
+          supportsAllDrives: 'true',
+        });
+        if (driveId) {
+          params.set('corpora', 'drive');
+          params.set('driveId', driveId);
+        }
+        if (pageToken) {
+          params.set('pageToken', pageToken);
+        }
+        const response = await fetch(
+          `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+          {
+            headers: { Authorization: `Bearer ${accessToken}` },
+            signal: AbortSignal.timeout(30_000),
+          },
+        );
+        if (!response.ok) {
+          throw new BadRequestException(
+            `Google Drive folder lookup failed with ${response.status}`,
+          );
+        }
+        const page = (await response.json()) as {
+          nextPageToken?: string;
+          files?: DriveSummaryFile[];
+        };
+        for (const file of page.files ?? []) {
+          if (file.mimeType === 'application/vnd.google-apps.folder') {
+            pending.push(file.id);
+          } else {
+            discovered.set(file.id, file);
+          }
+          if (discovered.size > maxFiles) {
+            throw new BadRequestException(
+              `Google Drive folder exceeds the ${maxFiles} file limit`,
+            );
+          }
+        }
+        pageToken = page.nextPageToken;
+      } while (pageToken);
+    }
+  }
+
+  private normalizeReturnUrl(value?: string): string | undefined {
+    if (!value?.trim()) {
+      return undefined;
+    }
+    try {
+      const frontendOrigin =
+        this.config.get<string>('FRONTEND_ORIGIN')?.trim() || 'http://localhost:5173';
+      const parsed = new URL(value, frontendOrigin);
+      if (parsed.origin !== frontendOrigin || !parsed.pathname.startsWith('/') || parsed.pathname.startsWith('//')) {
+        throw new Error('Invalid frontend return URL');
+      }
+      return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    } catch {
+      throw new BadRequestException('Invalid frontend return URL');
+    }
   }
 
   async onModuleDestroy(): Promise<void> {

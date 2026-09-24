@@ -5,6 +5,7 @@ import { AssetImportEntity } from '../../database/entities/asset-import.entity';
 import { GoogleDriveConnectionEntity } from '../../database/entities/google-drive-connection.entity';
 import { ImportBatchEntity } from '../../database/entities/import-batch.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
+import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { QueueModule } from '../../infra/queue/queue.module';
 import { AccountModule } from '../account/account.module';
 import { StorageModule } from '../assets/storage/storage.module';
@@ -24,6 +25,7 @@ import { GoogleDriveService } from './google-drive.service';
       ImportBatchEntity,
       AssetImportEntity,
       ProjectEntity,
+      RenderProfileEntity,
     ]),
   ],
   controllers: [GoogleDriveController],
