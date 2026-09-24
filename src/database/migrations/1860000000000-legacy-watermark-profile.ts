@@ -26,8 +26,7 @@ export class LegacyWatermarkProfileMigration1860000000000 implements MigrationIn
       text: typeof legacy.text === 'string' ? legacy.text.slice(0, 120) : 'AG Go Preview',
       logoAssetId,
       color: typeof legacy.color === 'string' ? legacy.color : '#FFFFFF',
-      fontFamily:
-        typeof legacy.font_family === 'string' ? legacy.font_family : 'Arial',
+      fontFamily: typeof legacy.font_family === 'string' ? legacy.font_family : 'Arial',
       fontSize: typeof legacy.font_size === 'number' ? legacy.font_size : 24,
       repeat: typeof legacy.repeat === 'boolean' ? legacy.repeat : true,
       gapX: typeof legacy.gap_x === 'number' ? legacy.gap_x : 220,

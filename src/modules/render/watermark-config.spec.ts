@@ -1,7 +1,4 @@
-import {
-  DEFAULT_WATERMARK_CONFIG,
-  normalizeWatermarkConfig,
-} from './watermark-config';
+import { DEFAULT_WATERMARK_CONFIG, normalizeWatermarkConfig } from './watermark-config';
 
 describe('normalizeWatermarkConfig', () => {
   it('fills defaults for legacy or empty configurations', () => {
