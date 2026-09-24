@@ -1,4 +1,4 @@
-import { BadGatewayException, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AccountApiService } from './account-api.service';
 
@@ -109,6 +109,65 @@ describe('AccountApiService', () => {
     expect(fetchMock.mock.calls[0]?.[1]).not.toMatchObject({
       headers: { 'x-api-key': expect.any(String) },
     });
+  });
+
+  it('searches users with the bearer token only and keeps the summary fields', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [
+            {
+              id: 'user-1',
+              name: ' TRẦN MỸ HẠNH',
+              email: 'hanh@test.dev',
+              avatar: 'https://avatar.test/1.png',
+              department: 'MKT',
+              last_ip: '127.0.0.1',
+              group_memberships: [],
+            },
+          ],
+          meta: {
+            total: 329,
+            page: 1,
+            limit: 20,
+            totalPages: 17,
+            hasNextPage: true,
+            hasPreviousPage: false,
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const result = await new AccountApiService(config).searchUsers('token-1', {
+      keyword: ' hanh ',
+    });
+
+    expect(result).toEqual({
+      data: [
+        {
+          id: 'user-1',
+          name: 'TRẦN MỸ HẠNH',
+          email: 'hanh@test.dev',
+          avatar: 'https://avatar.test/1.png',
+        },
+      ],
+      meta: { total: 329, page: 1, limit: 20, totalPages: 17, hasNextPage: true },
+    });
+    const [url, init] = fetchMock.mock.calls[0] ?? [];
+    expect(url).toBe(
+      'http://account.test/v2/users?page=1&limit=20&is_active=true&sort_by=name&sort_order=asc&keyword=hanh',
+    );
+    expect(init).toMatchObject({ headers: { authorization: 'Bearer token-1' } });
+    expect(init).not.toMatchObject({ headers: { 'x-api-key': expect.any(String) } });
+  });
+
+  it('forwards an Account API denial on user search as forbidden', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response('denied', { status: 403 }));
+
+    await expect(new AccountApiService(config).searchUsers('token-1', {})).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
   });
 
   it('maps upstream failures to a gateway error', async () => {
