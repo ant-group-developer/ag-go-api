@@ -26,9 +26,9 @@ import { ProjectEntity } from './entities/project.entity';
 import { ProvinceEntity } from './entities/province.entity';
 import { RenderBatchEntity } from './entities/render-batch.entity';
 import { RenderProfileEntity } from './entities/render-profile.entity';
-import { TagEntity } from './entities/tag.entity';
 import { SystemLogEntity } from './entities/system-log.entity';
 import { SystemSettingEntity } from './entities/system-setting.entity';
+import { TagEntity } from './entities/tag.entity';
 import { InitialPhaseOneMigration1710000000000 } from './migrations/1710000000000-initial-phase-one';
 import { ProjectMediaMigration1720000000000 } from './migrations/1720000000000-project-media';
 import { BackfillProjectSummariesMigration1730000000000 } from './migrations/1730000000000-backfill-project-summaries';
@@ -46,6 +46,8 @@ import { MissingModules1840000000000 } from './migrations/1840000000000-missing-
 import { SettingsLogs1850000000000 } from './migrations/1850000000000-settings-logs';
 import { LegacyWatermarkProfileMigration1860000000000 } from './migrations/1860000000000-legacy-watermark-profile';
 import { ImportSourceMetadataMigration1870000000000 } from './migrations/1870000000000-import-source-metadata';
+import { GoogleDriveImportDeduplicationMigration1880000000000 } from './migrations/1880000000000-google-drive-import-deduplication';
+import { GoogleDriveImportDefaultPolicyMigration1890000000000 } from './migrations/1890000000000-google-drive-import-default-policy';
 
 loadEnv();
 
@@ -109,6 +111,8 @@ export const AppDataSource = new DataSource({
     SettingsLogs1850000000000,
     LegacyWatermarkProfileMigration1860000000000,
     ImportSourceMetadataMigration1870000000000,
+    GoogleDriveImportDeduplicationMigration1880000000000,
+    GoogleDriveImportDefaultPolicyMigration1890000000000,
   ],
   synchronize: false,
 });

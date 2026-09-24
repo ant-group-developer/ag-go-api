@@ -76,6 +76,7 @@ export class GoogleDriveController {
   summarizeSources(@Req() request: Request, @Body() dto: SummarizeSourcesDto) {
     return this.googleDrive.summarizeSources(
       dto.sources,
+      dto.projectId,
       this.authContext.getContext(request).userId,
     );
   }

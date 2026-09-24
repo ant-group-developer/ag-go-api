@@ -997,6 +997,72 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a19
       tags: *a20
+    get:
+      operationId: RenderController_listAllBatches
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
+  /projects/{projectId}/render-batches:
+    get:
+      operationId: RenderController_listBatches
+      parameters:
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
+  /render-batches/{id}/jobs:
+    get:
+      operationId: RenderController_listJobs
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
+  /render-jobs/{id}/retry:
+    post:
+      operationId: RenderController_retryJob
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
   /render-watermark/rerender:
     post:
       operationId: RenderController_rerenderWatermark
@@ -1254,6 +1320,23 @@ paths:
               $ref: "#/components/schemas/CreateImportDto"
       responses:
         "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+    get:
+      operationId: GoogleDriveController_listImports
+      parameters:
+        - name: projectId
+          required: true
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
           description: ""
           content:
             application/json:
@@ -1644,12 +1727,66 @@ components:
     CreateDownloadDto:
       type: object
       properties: {}
+    SummarizeSourceDto:
+      type: object
+      properties:
+        fileId:
+          type: string
+        driveId:
+          type: string
+      required:
+        - fileId
     SummarizeSourcesDto:
       type: object
-      properties: {}
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/SummarizeSourceDto"
+      required:
+        - projectId
+        - sources
+    GoogleDriveImportSourceDto:
+      type: object
+      properties:
+        fileId:
+          type: string
+        driveId:
+          type: string
+        name:
+          type: string
+        mimeType:
+          type: string
+      required:
+        - fileId
     CreateImportDto:
       type: object
-      properties: {}
+      properties:
+        projectId:
+          type: string
+          format: uuid
+        sourceRootId:
+          type: string
+        sources:
+          type: array
+          items:
+            $ref: "#/components/schemas/GoogleDriveImportSourceDto"
+        sourceDriveId:
+          type: string
+        idempotencyKey:
+          type: string
+        duplicatePolicy:
+          type: string
+          enum:
+            - create_new
+            - reuse_existing
+            - overwrite_existing
+          default: reuse_existing
+      required:
+        - projectId
     UpdateSettingsDto:
       type: object
       properties: {}

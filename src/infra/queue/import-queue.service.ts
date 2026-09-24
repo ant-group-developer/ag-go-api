@@ -2,6 +2,7 @@ import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
+import { v7 as uuidv7 } from 'uuid';
 import { IMPORT_JOB, IMPORT_QUEUE } from './queue.constants';
 
 export type ImportQueueJobData = {
@@ -16,14 +17,16 @@ export class ImportQueueService implements OnModuleDestroy {
 
   constructor(private readonly config: ConfigService) {}
 
-  async addJob(data: ImportQueueJobData): Promise<void> {
+  async addJob(data: ImportQueueJobData): Promise<string> {
+    const jobId = `${data.batchId}-${uuidv7()}`;
     await this.getQueue().add(IMPORT_JOB, data, {
-      jobId: data.batchId,
+      jobId,
       attempts: 3,
       backoff: { type: 'exponential', delay: 5_000 },
       removeOnComplete: 1000,
       removeOnFail: false,
     });
+    return jobId;
   }
 
   async onModuleDestroy(): Promise<void> {

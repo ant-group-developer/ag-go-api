@@ -17,8 +17,10 @@ import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
 import { AssetImportEntity } from '../../database/entities/asset-import.entity';
+import { AssetEntity } from '../../database/entities/asset.entity';
 import { GoogleDriveConnectionEntity } from '../../database/entities/google-drive-connection.entity';
 import { ImportBatchEntity } from '../../database/entities/import-batch.entity';
+import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ImportQueueService } from '../../infra/queue/import-queue.service';
 import { FolderAccessService } from '../folders/folder-access.service';
@@ -48,6 +50,7 @@ type DriveSummaryFile = {
   fileExtension?: string;
   fullFileExtension?: string;
   modifiedTime?: string;
+  headRevisionId?: string;
 };
 
 @Injectable()
@@ -239,7 +242,11 @@ export class GoogleDriveService implements OnModuleDestroy {
     return { success: true };
   }
 
-  async summarizeSources(sources: SummarizeSourceDto[], userId: string) {
+  async summarizeSources(sources: SummarizeSourceDto[], projectId: string, userId: string) {
+    const project = await this.projectRepository.findOne({ where: { id: projectId } });
+    if (!project || !(await this.folderAccess.canAccess(project.folderId, userId, 'viewer'))) {
+      throw new ForbiddenException('Insufficient project permission');
+    }
     const connection = await this.connectionRepository.findOne({
       where: { externalUserId: userId, status: 'active' },
       order: { updatedAt: 'DESC' },
@@ -280,6 +287,7 @@ export class GoogleDriveService implements OnModuleDestroy {
         unsupportedCount += 1;
       }
     }
+    const duplicates = await this.findProjectDuplicates(projectId, [...discovered.keys()]);
     return {
       imageCount,
       videoCount,
@@ -287,6 +295,8 @@ export class GoogleDriveService implements OnModuleDestroy {
       folderCount,
       unsupportedCount,
       totalBytes: totalBytes.toString(),
+      duplicateCount: duplicates.length,
+      duplicates,
     };
   }
 
@@ -320,6 +330,11 @@ export class GoogleDriveService implements OnModuleDestroy {
         where: { createdBy: userId, idempotencyKey: key },
       });
       if (existing) {
+        if (existing.status === 'queued' && !existing.queueJobId) {
+          const queueJobId = await this.importQueue.addJob({ batchId: existing.id, userId });
+          await this.batchRepository.update(existing.id, { queueJobId });
+          existing.queueJobId = queueJobId;
+        }
         return existing;
       }
     }
@@ -332,6 +347,7 @@ export class GoogleDriveService implements OnModuleDestroy {
           sourceType: 'google_drive',
           sourceDriveId: dto.sourceDriveId ?? null,
           sourceRootId: dto.sourceRootId,
+          duplicatePolicy: dto.duplicatePolicy ?? 'reuse_existing',
           status: 'queued',
           totalItems: 0,
           completedItems: 0,
@@ -358,6 +374,7 @@ export class GoogleDriveService implements OnModuleDestroy {
           sourceName: source.name ?? source.fileId,
           sourceMimeType: source.mimeType ?? null,
           sourceSizeBytes: null,
+          resolution: null,
           status: 'queued' as const,
           attemptCount: 0,
           errorCode: null,
@@ -369,7 +386,8 @@ export class GoogleDriveService implements OnModuleDestroy {
       );
       return batch;
     });
-    await this.importQueue.addJob({ batchId: batch.id, userId });
+    const queueJobId = await this.importQueue.addJob({ batchId: batch.id, userId });
+    await this.batchRepository.update(batch.id, { queueJobId });
     return batch;
   }
 
@@ -480,13 +498,55 @@ export class GoogleDriveService implements OnModuleDestroy {
       throw new NotFoundException('Import item not found');
     }
     item.status = 'queued';
+    item.resolution = null;
     item.errorCode = null;
     item.errorMessage = null;
-    item.attemptCount += 1;
     await this.itemRepository.save(item);
     await this.batchRepository.update(id, { status: 'processing' });
-    await this.importQueue.addJob({ batchId: batch.id, userId });
+    const queueJobId = await this.importQueue.addJob({ batchId: batch.id, userId });
+    await this.batchRepository.update(id, { queueJobId });
     return item;
+  }
+
+  private async findProjectDuplicates(projectId: string, fileIds: string[]) {
+    if (fileIds.length === 0) {
+      return [];
+    }
+    const rows = await this.dataSource
+      .createQueryBuilder()
+      .select('asset.google_drive_file_id', 'fileId')
+      .addSelect('asset.id', 'assetId')
+      .addSelect('media.id', 'projectMediaId')
+      .addSelect('asset.original_filename', 'name')
+      .addSelect('media.created_at', 'createdAt')
+      .from(ProjectMediaEntity, 'media')
+      .innerJoin(AssetEntity, 'asset', 'asset.id = media.asset_id')
+      .where('media.project_id = :projectId', { projectId })
+      .andWhere('asset.google_drive_file_id IN (:...fileIds)', { fileIds })
+      .orderBy('media.created_at', 'DESC')
+      .getRawMany<{
+        fileId: string;
+        assetId: string;
+        projectMediaId: string;
+        name: string;
+        createdAt: Date;
+      }>();
+    const seen = new Set<string>();
+    return rows
+      .filter((row) => {
+        if (seen.has(row.fileId)) {
+          return false;
+        }
+        seen.add(row.fileId);
+        return true;
+      })
+      .map((row) => ({
+        fileId: row.fileId,
+        name: row.name,
+        existingAssetId: row.assetId,
+        existingProjectMediaId: row.projectMediaId,
+        createdAt: row.createdAt,
+      }));
   }
 
   private async assertBatchOwner(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
@@ -515,7 +575,7 @@ export class GoogleDriveService implements OnModuleDestroy {
 
   private async getDriveFile(accessToken: string, fileId: string): Promise<DriveSummaryFile> {
     const params = new URLSearchParams({
-      fields: 'id,name,mimeType,size,fileExtension,fullFileExtension,modifiedTime',
+      fields: 'id,name,mimeType,size,fileExtension,fullFileExtension,modifiedTime,headRevisionId',
       supportsAllDrives: 'true',
     });
     const response = await fetch(
@@ -539,6 +599,7 @@ export class GoogleDriveService implements OnModuleDestroy {
         fileExtension: payload.fileExtension,
         fullFileExtension: payload.fullFileExtension,
         modifiedTime: payload.modifiedTime,
+        headRevisionId: payload.headRevisionId,
       })}`,
     );
     return payload;

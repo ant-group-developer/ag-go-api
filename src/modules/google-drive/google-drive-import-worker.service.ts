@@ -28,6 +28,7 @@ type DriveFile = {
   fileExtension?: string;
   fullFileExtension?: string;
   modifiedTime?: string;
+  headRevisionId?: string;
   imageMediaMetadata?: { width?: number; height?: number };
   videoMediaMetadata?: {
     width?: number;
@@ -94,7 +95,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     const batch = await this.batchRepository.findOne({
       where: { id: job.data.batchId, createdBy: job.data.userId },
     });
-    if (!batch || ['completed', 'failed', 'cancelled'].includes(batch.status)) {
+    if (!batch || ['completed', 'cancelled'].includes(batch.status)) {
       return;
     }
     await this.batchRepository.update(batch.id, { status: 'processing' });
@@ -121,18 +122,15 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         }
       }
       const items = await this.itemRepository.find({
-        where: { batchId: batch.id, status: 'queued' },
+        where: { batchId: batch.id },
         order: { createdAt: 'ASC' },
       });
-      await this.batchRepository.update(batch.id, { totalItems: items.length });
-      let completed = 0;
-      let failed = 0;
-      for (const item of items) {
+      const mediaItems = items.filter((item) => !this.isFolderMimeType(item.sourceMimeType));
+      await this.batchRepository.update(batch.id, { totalItems: mediaItems.length });
+      for (const item of mediaItems.filter((candidate) => candidate.status === 'queued')) {
         try {
           await this.importItem(batch, item, accessToken, job.data.userId);
-          completed += 1;
         } catch (error) {
-          failed += 1;
           await this.itemRepository.update(item.id, {
             status: 'failed',
             errorCode: 'IMPORT_FAILED',
@@ -140,24 +138,41 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
             finishedAt: new Date(),
           });
         }
-        await this.batchRepository.update(batch.id, {
-          completedItems: completed,
-          failedItems: failed,
-          progressPercent: items.length
-            ? Math.round(((completed + failed) / items.length) * 100)
-            : 100,
-        });
+        await this.refreshBatchProgress(batch.id);
       }
-      await this.batchRepository.update(batch.id, {
-        status: failed === 0 ? 'completed' : completed > 0 ? 'partial' : 'failed',
-      });
+      await this.refreshBatchProgress(batch.id);
     } catch (error) {
+      const attempts = job.opts.attempts ?? 1;
+      const willRetry = job.attemptsMade + 1 < attempts;
       await this.batchRepository.update(batch.id, {
-        status: 'failed',
+        status: willRetry ? 'queued' : 'failed',
         errorMessage: error instanceof Error ? error.message.slice(0, 4000) : 'Import failed',
       });
       throw error;
     }
+  }
+
+  private async refreshBatchProgress(batchId: string): Promise<void> {
+    const items = await this.itemRepository.find({ where: { batchId } });
+    const mediaItems = items.filter((item) => !this.isFolderMimeType(item.sourceMimeType));
+    const completed = mediaItems.filter((item) => item.status === 'completed').length;
+    const failed = mediaItems.filter((item) => item.status === 'failed').length;
+    const active = mediaItems.some((item) => ['queued', 'importing'].includes(item.status));
+    const total = mediaItems.length;
+    const status = active
+      ? 'processing'
+      : failed === 0
+        ? 'completed'
+        : completed > 0
+          ? 'partial'
+          : 'failed';
+    await this.batchRepository.update(batchId, {
+      totalItems: total,
+      completedItems: completed,
+      failedItems: failed,
+      progressPercent: total ? Math.round(((completed + failed) / total) * 100) : 100,
+      status,
+    });
   }
 
   private async importItem(
@@ -166,7 +181,18 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     accessToken: string,
     userId: string,
   ) {
-    await this.itemRepository.update(item.id, { status: 'importing', startedAt: new Date() });
+    await this.itemRepository
+      .createQueryBuilder()
+      .update(AssetImportEntity)
+      .set({
+        status: 'importing',
+        startedAt: new Date(),
+        attemptCount: () => 'attempt_count + 1',
+        errorCode: null,
+        errorMessage: null,
+      })
+      .where('id = :id AND status = :status', { id: item.id, status: 'queued' })
+      .execute();
     const file = await this.getFile(accessToken, item.sourceFileId ?? '');
     const metadata = this.extractDriveMetadata(file);
     await this.itemRepository.update(item.id, {
@@ -182,12 +208,24 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       sourceDurationSeconds: metadata.durationSeconds,
       sourceCreator: metadata.creator,
       sourceModifiedAt: file.modifiedTime ? new Date(file.modifiedTime) : null,
+      sourceRevisionId: file.headRevisionId ?? null,
     });
     if (file.mimeType === 'application/vnd.google-apps.folder') {
       throw new Error('Folder discovery must be completed before importing this item');
     }
     if (!this.isSupportedMedia(file.mimeType)) {
       throw new Error('Only image and video files can be imported from Google Drive');
+    }
+    const existing = await this.findExistingProjectMedia(batch.projectId, file.id);
+    if (existing && batch.duplicatePolicy === 'reuse_existing') {
+      await this.itemRepository.update(item.id, {
+        assetId: existing.assetId,
+        sourceRevisionId: file.headRevisionId ?? null,
+        resolution: 'reused',
+        status: 'completed',
+        finishedAt: new Date(),
+      });
+      return;
     }
     const response = await fetch(
       `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`,
@@ -231,7 +269,29 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       order: { profileVersion: 'DESC' },
     });
 
+    let reusedDuringTransaction = false;
     await this.dataSource.transaction(async (manager) => {
+      await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+        `google-drive:${batch.projectId}:${file.id}`,
+      ]);
+      const currentExisting = await this.findExistingProjectMedia(
+        batch.projectId,
+        file.id,
+        manager,
+      );
+      if (batch.duplicatePolicy === 'reuse_existing' && currentExisting) {
+        reusedDuringTransaction = true;
+        await manager.update(AssetImportEntity, item.id, {
+          assetId: currentExisting.assetId,
+          sourceRevisionId: file.headRevisionId ?? null,
+          resolution: 'reused',
+          status: 'completed',
+          finishedAt: new Date(),
+        });
+        return;
+      }
+      const overwriteExisting =
+        batch.duplicatePolicy === 'overwrite_existing' ? currentExisting : null;
       await manager.insert(AssetEntity, {
         id: assetId,
         assetType,
@@ -246,8 +306,10 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         processingStatus: 'uploaded',
         processingError: null,
         sourceType: 'google_drive',
+        googleDriveFileId: file.id,
         sourceMetadata: {
           sourceFileId: file.id,
+          ...(file.headRevisionId ? { revisionId: file.headRevisionId } : {}),
           ...(file.modifiedTime ? { modifiedTime: file.modifiedTime } : {}),
           ...(metadata.creator ? { driveCreator: metadata.creator } : {}),
           ...(metadata.width !== null ? { driveWidth: metadata.width } : {}),
@@ -256,14 +318,18 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         },
         createdBy: userId,
       });
-      await manager.insert(ProjectMediaEntity, {
-        id: uuidv7(),
-        projectId: batch.projectId,
-        assetId,
-        sortOrder: 0,
-        caption: null,
-        createdBy: userId,
-      });
+      if (overwriteExisting) {
+        await manager.update(ProjectMediaEntity, overwriteExisting.projectMediaId, { assetId });
+      } else {
+        await manager.insert(ProjectMediaEntity, {
+          id: uuidv7(),
+          projectId: batch.projectId,
+          assetId,
+          sortOrder: 0,
+          caption: null,
+          createdBy: userId,
+        });
+      }
       await manager.insert(MediaRenderJobEntity, {
         id: renderJobId,
         assetId,
@@ -292,11 +358,26 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         sourceDurationSeconds: metadata.durationSeconds,
         sourceCreator: metadata.creator,
         sourceModifiedAt: file.modifiedTime ? new Date(file.modifiedTime) : null,
+        sourceRevisionId: file.headRevisionId ?? null,
+        resolution: overwriteExisting ? 'overwritten' : 'created',
         status: 'completed',
         finishedAt: new Date(),
       });
       await this.refreshProjectCounters(manager, batch.projectId);
     });
+
+    if (reusedDuringTransaction) {
+      try {
+        await this.storage.deleteObject(storageKey);
+      } catch (error) {
+        this.logger.warn(
+          `Failed to clean up duplicate Drive object ${storageKey}: ${
+            error instanceof Error ? error.message : 'unknown error'
+          }`,
+        );
+      }
+      return;
+    }
 
     await this.mediaQueue.addProcessingJob({
       eventId: renderJobId,
@@ -308,7 +389,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
 
   private async getFile(accessToken: string, fileId: string): Promise<DriveFile> {
     const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,fileExtension,fullFileExtension,modifiedTime,imageMediaMetadata(width,height),videoMediaMetadata(width,height,durationMillis),owners(displayName,emailAddress)&supportsAllDrives=true`,
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,fileExtension,fullFileExtension,modifiedTime,headRevisionId,imageMediaMetadata(width,height),videoMediaMetadata(width,height,durationMillis),owners(displayName,emailAddress)&supportsAllDrives=true`,
       {
         headers: { Authorization: `Bearer ${accessToken}` },
         signal: AbortSignal.timeout(30_000),
@@ -328,6 +409,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         fileExtension: payload.fileExtension,
         fullFileExtension: payload.fullFileExtension,
         modifiedTime: payload.modifiedTime,
+        headRevisionId: payload.headRevisionId,
       })}`,
     );
     return payload;
@@ -393,7 +475,6 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         sourceType: 'google_drive',
         sourceDriveId: batch.sourceDriveId,
         sourceFileId: file.id,
-        sourceRevisionId: null,
         sourceName: this.withExtension(
           file.name,
           file.mimeType,
@@ -401,7 +482,9 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         ).slice(0, 255),
         sourceMimeType: file.mimeType,
         sourceSizeBytes: file.size ?? null,
+        sourceRevisionId: file.headRevisionId ?? null,
         ...this.toImportMetadata(file),
+        resolution: null,
         status: 'queued',
         attemptCount: 0,
         errorCode: null,
@@ -554,5 +637,29 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
 
   private isSupportedMedia(mimeType: string): boolean {
     return mimeType.startsWith('image/') || mimeType.startsWith('video/');
+  }
+
+  private isFolderMimeType(mimeType: string | null): boolean {
+    return (
+      mimeType === 'application/vnd.google-apps.folder' || Boolean(mimeType?.includes('folder'))
+    );
+  }
+
+  private async findExistingProjectMedia(
+    projectId: string,
+    fileId: string,
+    manager: import('typeorm').EntityManager = this.dataSource.manager,
+  ): Promise<{ assetId: string; projectMediaId: string } | null> {
+    const row = await manager
+      .createQueryBuilder()
+      .select('asset.id', 'assetId')
+      .addSelect('media.id', 'projectMediaId')
+      .from(ProjectMediaEntity, 'media')
+      .innerJoin(AssetEntity, 'asset', 'asset.id = media.asset_id')
+      .where('media.project_id = :projectId', { projectId })
+      .andWhere('asset.google_drive_file_id = :fileId', { fileId })
+      .orderBy('media.created_at', 'DESC')
+      .getRawOne<{ assetId: string; projectMediaId: string }>();
+    return row ?? null;
   }
 }

@@ -41,6 +41,9 @@ export class AssetEntity {
   @Column({ name: 'source_type', type: 'varchar', length: 30, default: 'local' })
   sourceType!: string;
 
+  @Column({ name: 'google_drive_file_id', type: 'varchar', length: 255, nullable: true })
+  googleDriveFileId!: string | null;
+
   @Column({ name: 'source_metadata', type: 'jsonb', default: () => "'{}'::jsonb" })
   sourceMetadata!: Record<string, unknown>;
 

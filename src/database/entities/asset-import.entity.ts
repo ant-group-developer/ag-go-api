@@ -59,6 +59,9 @@ export class AssetImportEntity {
   @Column({ name: 'source_modified_at', type: 'timestamptz', nullable: true })
   sourceModifiedAt!: Date | null;
 
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  resolution!: 'created' | 'reused' | 'overwritten' | null;
+
   @Column({ type: 'varchar', length: 20, default: 'queued' })
   status!: 'queued' | 'importing' | 'completed' | 'failed' | 'cancelled';
 
