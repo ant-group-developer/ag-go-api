@@ -2,11 +2,11 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Inject } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
@@ -110,6 +110,12 @@ export class MediaService {
             previewUrl,
             previewVariantCode: previewVariant?.variantCode ?? null,
             watermarkVariant: previewVariant?.hasWatermark ? previewVariant.variantCode : null,
+            creatorName:
+              typeof sourceMetadata.driveCreator === 'string' ? sourceMetadata.driveCreator : null,
+            modifiedAt:
+              typeof sourceMetadata.modifiedTime === 'string'
+                ? sourceMetadata.modifiedTime
+                : item.asset.updatedAt,
           });
         }),
       )) as unknown as Array<Record<string, unknown>>,
@@ -160,7 +166,7 @@ export class MediaService {
             originalBucket: dto.originalBucket?.trim() || 'ag-go-media',
             originalStorageKey:
               dto.originalStorageKey?.trim() ||
-              `projects/${projectId}/assets/${uuidv7()}-${dto.originalFilename.trim()}`,
+              `projects/${projectId}/originals/${uuidv7()}-${dto.originalFilename.trim()}`,
             processingStatus: 'uploaded',
             processingError: null,
             sourceType: 'local',

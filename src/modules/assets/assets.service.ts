@@ -76,10 +76,8 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     if (dto.fileSizeBytes > maxUploadBytes) {
       throw new BadRequestException(`File exceeds the ${maxUploadBytes} byte upload limit`);
     }
-    if (dto.targetProjectId) {
-      const project = await this.getProject(dto.targetProjectId);
-      await this.requireProjectAccess(project, userId, 'editor', userType);
-    }
+    const project = await this.getProject(dto.targetProjectId);
+    await this.requireProjectAccess(project, userId, 'editor', userType);
 
     const normalizedIdempotencyKey = idempotencyKey?.trim().slice(0, 255);
     if (normalizedIdempotencyKey) {
@@ -98,8 +96,9 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     const assetId = uuidv7();
     const sessionId = uuidv7();
     const bucketName = this.config.getOrThrow<string>('R2_BUCKET');
-    const extension = this.normalizeExtension(dto.extension, dto.originalFilename);
-    const storageKey = `uploads/${userId}/${assetId}${extension ? `.${extension}` : ''}`;
+    const extension = this.normalizeExtension(dto.extension, dto.originalFilename, dto.mimeType);
+    const originalFilename = this.ensureFilenameExtension(dto.originalFilename.trim(), extension);
+    const storageKey = `projects/${dto.targetProjectId}/originals/${assetId}${extension ? `.${extension}` : ''}`;
     const expiresAt = new Date(
       Date.now() + this.config.getOrThrow<number>('UPLOAD_SESSION_TTL_SECONDS') * 1000,
     );
@@ -108,7 +107,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       const asset = manager.create(AssetEntity, {
         id: assetId,
         assetType: dto.assetType,
-        originalFilename: dto.originalFilename.trim(),
+        originalFilename,
         extension: extension || null,
         mimeType: dto.mimeType.trim(),
         checksumSha256: null,
@@ -127,7 +126,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
         manager.create(AssetUploadSessionEntity, {
           id: sessionId,
           assetId,
-          targetProjectId: dto.targetProjectId ?? null,
+          targetProjectId: dto.targetProjectId,
           storageProvider: asset.storageProvider,
           bucketName,
           storageKey,
@@ -487,12 +486,37 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  private normalizeExtension(extension: string | undefined, filename: string): string {
-    const value = extension || filename.split('.').pop() || '';
+  private normalizeExtension(
+    extension: string | undefined,
+    filename: string,
+    mimeType?: string,
+  ): string {
+    const filenameExtension =
+      !extension && filename.lastIndexOf('.') > 0
+        ? filename.slice(filename.lastIndexOf('.') + 1)
+        : '';
+    const value = extension || filenameExtension || this.extensionFromMimeType(mimeType);
     return value
       .replace(/[^a-zA-Z0-9]/g, '')
       .toLowerCase()
       .slice(0, 20);
+  }
+
+  private extensionFromMimeType(mimeType?: string): string {
+    const map: Record<string, string> = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+      'video/mp4': 'mp4',
+      'video/quicktime': 'mp4',
+      'video/webm': 'webm',
+      'video/x-matroska': 'mkv',
+    };
+    return map[mimeType?.toLowerCase() ?? ''] ?? '';
+  }
+
+  private ensureFilenameExtension(filename: string, extension: string): string {
+    return extension && filename.lastIndexOf('.') <= 0 ? `${filename}.${extension}` : filename;
   }
 
   private async refreshProjectCounters(

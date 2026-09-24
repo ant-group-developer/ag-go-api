@@ -43,8 +43,7 @@ export class CreateUploadSessionDto {
   @Matches(/^[a-fA-F0-9]{64}$/)
   expectedChecksumSha256?: string;
 
-  @IsOptional()
-  @ApiPropertyOptional({ format: 'uuid' })
+  @ApiProperty({ format: 'uuid', description: 'Project that owns this uploaded asset' })
   @IsUUID()
-  targetProjectId?: string;
+  targetProjectId!: string;
 }
