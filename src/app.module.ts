@@ -34,9 +34,9 @@ import { ProjectEntity } from './database/entities/project.entity';
 import { ProvinceEntity } from './database/entities/province.entity';
 import { RenderBatchEntity } from './database/entities/render-batch.entity';
 import { RenderProfileEntity } from './database/entities/render-profile.entity';
-import { TagEntity } from './database/entities/tag.entity';
 import { SystemLogEntity } from './database/entities/system-log.entity';
 import { SystemSettingEntity } from './database/entities/system-setting.entity';
+import { TagEntity } from './database/entities/tag.entity';
 import { HealthController } from './health/health.controller';
 import { QueueModule } from './infra/queue/queue.module';
 import { AccountModule } from './modules/account/account.module';
@@ -47,14 +47,14 @@ import { CountriesModule } from './modules/countries/countries.module';
 import { DownloadsModule } from './modules/downloads/downloads.module';
 import { FoldersModule } from './modules/folders/folders.module';
 import { GoogleDriveModule } from './modules/google-drive/google-drive.module';
+import { LogsModule } from './modules/logs/logs.module';
 import { MediaModule } from './modules/media/media.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { ProvincesModule } from './modules/provinces/provinces.module';
 import { RenderModule } from './modules/render/render.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
 import { TagsModule } from './modules/tags/tags.module';
-import { SettingsModule } from './modules/settings/settings.module';
-import { LogsModule } from './modules/logs/logs.module';
 
 @Module({
   imports: [

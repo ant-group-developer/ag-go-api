@@ -119,9 +119,7 @@ export class R2StorageAdapter implements StorageAdapter {
       ContentType: contentType,
       ...(contentLength !== undefined ? { ContentLength: contentLength } : {}),
     };
-    await this.client.send(
-      new PutObjectCommand(commandInput),
-    );
+    await this.client.send(new PutObjectCommand(commandInput));
     const result = await this.headObject(storageKey);
     if (!result) {
       throw new Error('Uploaded R2 object was not found');

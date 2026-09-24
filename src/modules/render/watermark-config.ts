@@ -83,9 +83,7 @@ export function normalizeWatermarkConfig(
 
   return {
     text:
-      typeof config?.text === 'string'
-        ? config.text.slice(0, 200)
-        : DEFAULT_WATERMARK_CONFIG.text,
+      typeof config?.text === 'string' ? config.text.slice(0, 200) : DEFAULT_WATERMARK_CONFIG.text,
     logoAssetId:
       typeof config?.logoAssetId === 'string' && config.logoAssetId.length > 0
         ? config.logoAssetId
