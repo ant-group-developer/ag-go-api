@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,8 +11,12 @@ import { USER_TYPES } from '../../common/auth/user-type';
 import type {
   AccountApplication,
   AccountCurrentUser,
+  AccountPaginationMeta,
   AccountUser,
   AccountUserQuery,
+  AccountUserSearchQuery,
+  AccountUserSearchResponse,
+  AccountUserSummary,
   AccountUsersResponse,
 } from './account.types';
 
@@ -84,6 +89,43 @@ export class AccountApiService {
     return result;
   }
 
+  /** Searches users with the caller's own bearer token (never the API key). */
+  async searchUsers(
+    accessToken: string,
+    query: AccountUserSearchQuery,
+  ): Promise<AccountUserSearchResponse> {
+    // GET /v2/users (ag-account-server UsersController.findAll): searches name/email by `keyword`,
+    // non-admin callers only see members of groups they manage. It has no `fields` param, so the
+    // response is trimmed to the summary fields below.
+    const url = this.buildAccountUrl('users');
+    url.searchParams.set('page', String(query.page ?? 1));
+    url.searchParams.set('limit', String(query.limit ?? 20));
+    url.searchParams.set('is_active', 'true');
+    url.searchParams.set('sort_by', 'name');
+    url.searchParams.set('sort_order', 'asc');
+    const keyword = query.keyword?.trim();
+    if (keyword) {
+      url.searchParams.set('keyword', keyword);
+    }
+
+    const payload = await this.request<{ data: AccountUser[]; meta: AccountPaginationMeta }>(
+      url.toString(),
+      false,
+      accessToken,
+      true,
+    );
+    const result = this.unwrap(payload);
+    if (!this.isPaginatedUsersResponse(result)) {
+      throw new BadGatewayException('Account API returned an invalid user response');
+    }
+
+    const { total, page, limit, totalPages, hasNextPage } = result.meta;
+    return {
+      data: result.data.map((user) => this.toUserSummary(user)),
+      meta: { total, page, limit, totalPages, hasNextPage: hasNextPage ?? page < totalPages },
+    };
+  }
+
   async getUsersByIds(userIds: string[], fields = ACTOR_FIELDS): Promise<Map<string, AccountUser>> {
     const ids = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))];
     const result = new Map<string, AccountUser>();
@@ -149,6 +191,17 @@ export class AccountApiService {
     return result;
   }
 
+  private toUserSummary(user: AccountUser): AccountUserSummary {
+    const text = (value: unknown) =>
+      typeof value === 'string' && value.trim() ? value.trim() : undefined;
+    return {
+      id: user.id,
+      name: text(user.name),
+      email: text(user.email),
+      avatar: text(user.avatar),
+    };
+  }
+
   private buildUsersUrl(userId: string, query: AccountUserQuery): string {
     const url = this.buildAccountUrl('public/users');
     url.searchParams.set('user_ids', userId);
@@ -192,6 +245,7 @@ export class AccountApiService {
     url: string,
     requireApiKey = true,
     accessToken?: string,
+    forwardAuthErrors = false,
   ): Promise<T | AccountApiEnvelope<T>> {
     const apiKey = this.config.get<string>('ACCOUNT_API_KEY')?.trim();
     if (requireApiKey && !apiKey) {
@@ -220,6 +274,10 @@ export class AccountApiService {
       throw new BadGatewayException('Account API is unavailable');
     }
 
+    if (forwardAuthErrors && (response.status === 401 || response.status === 403)) {
+      // Mapped to 403 (not 401) so the web client does not treat it as an expired session.
+      throw new ForbiddenException('Account API denied access for the current user');
+    }
     const body = await this.readBody(response);
     if (!response.ok) {
       this.logger.warn(`Account API returned HTTP ${response.status}`);
@@ -277,6 +335,26 @@ export class AccountApiService {
       typeof (meta as Record<string, unknown>).page === 'number' &&
       typeof (meta as Record<string, unknown>).page_size === 'number' &&
       typeof (meta as Record<string, unknown>).total_pages === 'number'
+    );
+  }
+
+  private isPaginatedUsersResponse(
+    value: unknown,
+  ): value is { data: AccountUser[]; meta: AccountPaginationMeta } {
+    if (typeof value !== 'object' || value === null) {
+      return false;
+    }
+    const { data, meta } = value as Record<string, unknown>;
+    if (!Array.isArray(data) || typeof meta !== 'object' || meta === null) {
+      return false;
+    }
+    const candidate = meta as Record<string, unknown>;
+    return (
+      data.every((user) => typeof (user as Record<string, unknown>)?.id === 'string') &&
+      typeof candidate.total === 'number' &&
+      typeof candidate.page === 'number' &&
+      typeof candidate.limit === 'number' &&
+      typeof candidate.totalPages === 'number'
     );
   }
 

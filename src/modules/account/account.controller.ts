@@ -2,8 +2,11 @@ import { Controller, Get, Query, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
+import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
+import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { AccountApiService } from './account-api.service';
 import { AccountUserQueryDto } from './dto/account-user-query.dto';
+import { SearchAccountUsersDto } from './dto/search-account-users.dto';
 
 @ApiTags('account')
 @ApiBearerAuth()
@@ -26,6 +29,14 @@ export class AccountController {
   getUsers(@Req() request: Request, @Query() query: AccountUserQueryDto) {
     const { userId } = this.authContext.getContext(request);
     return this.accountApi.getUsers(userId, query);
+  }
+
+  @Get('users/search')
+  @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
+  @ApiOperation({ summary: 'Tìm user trong Account API bằng token của user hiện tại' })
+  searchUsers(@Req() request: Request, @Query() query: SearchAccountUsersDto) {
+    const { accessToken } = this.authContext.getContext(request);
+    return this.accountApi.searchUsers(accessToken, query);
   }
 
   @Get('applications')
