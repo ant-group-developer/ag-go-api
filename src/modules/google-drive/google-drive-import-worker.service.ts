@@ -12,6 +12,7 @@ import { GoogleDriveConnectionEntity } from '../../database/entities/google-driv
 import { ImportBatchEntity } from '../../database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
+import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import type { ImportQueueJobData } from '../../infra/queue/import-queue.service';
 import { MediaQueueService } from '../../infra/queue/media-queue.service';
@@ -24,7 +25,16 @@ type DriveFile = {
   name: string;
   mimeType: string;
   size?: string;
+  fileExtension?: string;
+  fullFileExtension?: string;
   modifiedTime?: string;
+  imageMediaMetadata?: { width?: number; height?: number };
+  videoMediaMetadata?: {
+    width?: number;
+    height?: number;
+    durationMillis?: string;
+  };
+  owners?: Array<{ displayName?: string; emailAddress?: string }>;
 };
 
 @Injectable()
@@ -158,6 +168,21 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
   ) {
     await this.itemRepository.update(item.id, { status: 'importing', startedAt: new Date() });
     const file = await this.getFile(accessToken, item.sourceFileId ?? '');
+    const metadata = this.extractDriveMetadata(file);
+    await this.itemRepository.update(item.id, {
+      sourceName: this.withExtension(
+        file.name,
+        file.mimeType,
+        file.fileExtension ?? file.fullFileExtension,
+      ).slice(0, 255),
+      sourceMimeType: file.mimeType,
+      sourceSizeBytes: file.size ?? null,
+      sourceWidth: metadata.width,
+      sourceHeight: metadata.height,
+      sourceDurationSeconds: metadata.durationSeconds,
+      sourceCreator: metadata.creator,
+      sourceModifiedAt: file.modifiedTime ? new Date(file.modifiedTime) : null,
+    });
     if (file.mimeType === 'application/vnd.google-apps.folder') {
       throw new Error('Folder discovery must be completed before importing this item');
     }
@@ -187,7 +212,12 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     }
 
     const assetId = uuidv7();
-    const storageKey = `imports/${userId}/${assetId}/${this.safeName(file.name)}`;
+    const originalFilename = this.withExtension(
+      file.name,
+      file.mimeType,
+      file.fileExtension ?? file.fullFileExtension,
+    );
+    const storageKey = `projects/${batch.projectId}/originals/${assetId}/${this.safeName(originalFilename)}`;
     await this.storage.putObject(
       storageKey,
       Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
@@ -205,8 +235,8 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       await manager.insert(AssetEntity, {
         id: assetId,
         assetType,
-        originalFilename: file.name,
-        extension: file.name.split('.').pop()?.slice(0, 20) ?? null,
+        originalFilename,
+        extension: originalFilename.split('.').pop()?.slice(0, 20) ?? null,
         mimeType: file.mimeType,
         checksumSha256: null,
         fileSizeBytes: String(contentLength),
@@ -216,7 +246,14 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         processingStatus: 'uploaded',
         processingError: null,
         sourceType: 'google_drive',
-        sourceMetadata: { sourceFileId: file.id, modifiedTime: file.modifiedTime },
+        sourceMetadata: {
+          sourceFileId: file.id,
+          ...(file.modifiedTime ? { modifiedTime: file.modifiedTime } : {}),
+          ...(metadata.creator ? { driveCreator: metadata.creator } : {}),
+          ...(metadata.width !== null ? { driveWidth: metadata.width } : {}),
+          ...(metadata.height !== null ? { driveHeight: metadata.height } : {}),
+          ...(metadata.durationSeconds ? { durationSeconds: metadata.durationSeconds } : {}),
+        },
         createdBy: userId,
       });
       await manager.insert(ProjectMediaEntity, {
@@ -247,12 +284,18 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       });
       await manager.update(AssetImportEntity, item.id, {
         assetId,
-        sourceName: file.name,
+        sourceName: originalFilename,
         sourceMimeType: file.mimeType,
         sourceSizeBytes: file.size ?? null,
+        sourceWidth: metadata.width,
+        sourceHeight: metadata.height,
+        sourceDurationSeconds: metadata.durationSeconds,
+        sourceCreator: metadata.creator,
+        sourceModifiedAt: file.modifiedTime ? new Date(file.modifiedTime) : null,
         status: 'completed',
         finishedAt: new Date(),
       });
+      await this.refreshProjectCounters(manager, batch.projectId);
     });
 
     await this.mediaQueue.addProcessingJob({
@@ -265,7 +308,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
 
   private async getFile(accessToken: string, fileId: string): Promise<DriveFile> {
     const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,modifiedTime&supportsAllDrives=true`,
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,fileExtension,fullFileExtension,modifiedTime,imageMediaMetadata(width,height),videoMediaMetadata(width,height,durationMillis),owners(displayName,emailAddress)&supportsAllDrives=true`,
       {
         headers: { Authorization: `Bearer ${accessToken}` },
         signal: AbortSignal.timeout(30_000),
@@ -274,7 +317,20 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     if (!response.ok) {
       throw new Error(`Google Drive metadata lookup failed with ${response.status}`);
     }
-    return (await response.json()) as DriveFile;
+    const payload = (await response.json()) as DriveFile;
+    this.logger.log(
+      `[Google Drive API] import file metadata: ${JSON.stringify({
+        fileId,
+        id: payload.id,
+        name: payload.name,
+        mimeType: payload.mimeType,
+        size: payload.size,
+        fileExtension: payload.fileExtension,
+        fullFileExtension: payload.fullFileExtension,
+        modifiedTime: payload.modifiedTime,
+      })}`,
+    );
+    return payload;
   }
 
   private async expandFolder(
@@ -312,7 +368,11 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
 
     await this.itemRepository.update(rootItem.id, {
       status: 'completed',
-      sourceName: root.name,
+      sourceName: this.withExtension(
+        root.name,
+        root.mimeType,
+        root.fileExtension ?? root.fullFileExtension,
+      ),
       sourceMimeType: root.mimeType,
       finishedAt: new Date(),
     });
@@ -334,9 +394,14 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         sourceDriveId: batch.sourceDriveId,
         sourceFileId: file.id,
         sourceRevisionId: null,
-        sourceName: file.name.slice(0, 255),
+        sourceName: this.withExtension(
+          file.name,
+          file.mimeType,
+          file.fileExtension ?? file.fullFileExtension,
+        ).slice(0, 255),
         sourceMimeType: file.mimeType,
         sourceSizeBytes: file.size ?? null,
+        ...this.toImportMetadata(file),
         status: 'queued',
         attemptCount: 0,
         errorCode: null,
@@ -358,7 +423,8 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     do {
       const params = new URLSearchParams({
         q: `'${parentId.replaceAll("'", "\\'")}' in parents and trashed = false`,
-        fields: 'nextPageToken,files(id,name,mimeType,size,modifiedTime)',
+        fields:
+          'nextPageToken,files(id,name,mimeType,size,fileExtension,fullFileExtension,modifiedTime,imageMediaMetadata(width,height),videoMediaMetadata(width,height,durationMillis),owners(displayName,emailAddress))',
         pageSize: '1000',
         includeItemsFromAllDrives: 'true',
         supportsAllDrives: 'true',
@@ -384,6 +450,22 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         nextPageToken?: string;
         files?: DriveFile[];
       };
+      this.logger.log(
+        `[Google Drive API] import folder page: ${JSON.stringify({
+          parentId,
+          driveId,
+          fileCount: page.files?.length ?? 0,
+          files: (page.files ?? []).map((file) => ({
+            id: file.id,
+            name: file.name,
+            mimeType: file.mimeType,
+            size: file.size,
+            fileExtension: file.fileExtension,
+            fullFileExtension: file.fullFileExtension,
+            modifiedTime: file.modifiedTime,
+          })),
+        })}`,
+      );
       files.push(...(page.files ?? []));
       pageToken = page.nextPageToken;
     } while (pageToken);
@@ -392,6 +474,82 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
 
   private safeName(value: string): string {
     return value.replace(/[^\w.\-]/g, '_').slice(0, 180) || 'file';
+  }
+
+  private async refreshProjectCounters(
+    manager: import('typeorm').EntityManager,
+    projectId: string,
+  ): Promise<void> {
+    const aggregate = await manager
+      .createQueryBuilder(ProjectMediaEntity, 'media')
+      .innerJoin(AssetEntity, 'asset', 'asset.id = media.asset_id')
+      .select('COUNT(*)', 'totalMedia')
+      .addSelect("COUNT(*) FILTER (WHERE asset.asset_type = 'image')", 'imageCount')
+      .addSelect("COUNT(*) FILTER (WHERE asset.asset_type = 'video')", 'videoCount')
+      .addSelect('COALESCE(SUM(asset.file_size_bytes), 0)', 'originalBytes')
+      .where('media.project_id = :projectId', { projectId })
+      .getRawOne<{
+        totalMedia: string;
+        imageCount: string;
+        videoCount: string;
+        originalBytes: string;
+      }>();
+
+    await manager.update(ProjectEntity, projectId, {
+      mediaCount: Number(aggregate?.totalMedia ?? 0),
+      imageCount: Number(aggregate?.imageCount ?? 0),
+      videoCount: Number(aggregate?.videoCount ?? 0),
+      originalBytes: String(aggregate?.originalBytes ?? 0),
+    });
+  }
+
+  private withExtension(name: string, mimeType: string, driveExtension?: string): string {
+    if (name.lastIndexOf('.') > 0) {
+      return name;
+    }
+    if (driveExtension) {
+      return `${name}.${driveExtension.replace(/^\./, '')}`;
+    }
+    const extensions: Record<string, string> = {
+      'image/jpeg': 'jpg',
+      'image/png': 'png',
+      'image/webp': 'webp',
+      'video/mp4': 'mp4',
+      'video/quicktime': 'mp4',
+      'video/webm': 'webm',
+      'video/x-matroska': 'mkv',
+    };
+    const extension = extensions[mimeType.toLowerCase()];
+    return extension ? `${name}.${extension}` : name;
+  }
+
+  private extractDriveMetadata(file: DriveFile): {
+    width: number | null;
+    height: number | null;
+    durationSeconds: string | null;
+    creator: string | null;
+  } {
+    const image = file.imageMediaMetadata;
+    const video = file.videoMediaMetadata;
+    const durationMillis = video?.durationMillis ? Number(video.durationMillis) : NaN;
+    const creator = file.owners?.[0]?.displayName ?? file.owners?.[0]?.emailAddress ?? null;
+    return {
+      width: image?.width ?? video?.width ?? null,
+      height: image?.height ?? video?.height ?? null,
+      durationSeconds: Number.isFinite(durationMillis) ? String(durationMillis / 1000) : null,
+      creator,
+    };
+  }
+
+  private toImportMetadata(file: DriveFile) {
+    const metadata = this.extractDriveMetadata(file);
+    return {
+      sourceWidth: metadata.width,
+      sourceHeight: metadata.height,
+      sourceDurationSeconds: metadata.durationSeconds,
+      sourceCreator: metadata.creator,
+      sourceModifiedAt: file.modifiedTime ? new Date(file.modifiedTime) : null,
+    };
   }
 
   private isSupportedMedia(mimeType: string): boolean {

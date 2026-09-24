@@ -38,6 +38,27 @@ export class AssetImportEntity {
   @Column({ name: 'source_size_bytes', type: 'bigint', nullable: true })
   sourceSizeBytes!: string | null;
 
+  @Column({ name: 'source_width', type: 'integer', nullable: true })
+  sourceWidth!: number | null;
+
+  @Column({ name: 'source_height', type: 'integer', nullable: true })
+  sourceHeight!: number | null;
+
+  @Column({
+    name: 'source_duration_seconds',
+    type: 'numeric',
+    precision: 12,
+    scale: 3,
+    nullable: true,
+  })
+  sourceDurationSeconds!: string | null;
+
+  @Column({ name: 'source_creator', type: 'varchar', length: 255, nullable: true })
+  sourceCreator!: string | null;
+
+  @Column({ name: 'source_modified_at', type: 'timestamptz', nullable: true })
+  sourceModifiedAt!: Date | null;
+
   @Column({ type: 'varchar', length: 20, default: 'queued' })
   status!: 'queued' | 'importing' | 'completed' | 'failed' | 'cancelled';
 

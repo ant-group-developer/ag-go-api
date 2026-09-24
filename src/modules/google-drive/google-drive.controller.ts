@@ -1,16 +1,6 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Post,
-  Query,
-  Res,
-  Req,
-} from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, Res } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
@@ -72,9 +62,7 @@ export class GoogleDriveController {
   @Get('picker-token')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
   pickerToken(@Req() request: Request) {
-    return this.googleDrive.getPickerAccessToken(
-      this.authContext.getContext(request).userId,
-    );
+    return this.googleDrive.getPickerAccessToken(this.authContext.getContext(request).userId);
   }
 
   @Delete('connection')
@@ -104,6 +92,13 @@ export class GoogleDriveController {
   getImport(@Param('batchId') batchId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.googleDrive.getImport(batchId, context.userId, context.userType);
+  }
+
+  @Get('imports')
+  @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
+  listImports(@Query('projectId') projectId: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.googleDrive.listImports(projectId, context.userId, context.userType);
   }
 
   @Post('imports/:batchId/cancel')

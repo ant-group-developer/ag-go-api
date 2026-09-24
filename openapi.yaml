@@ -911,6 +911,73 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a19
       tags: *a20
+  /render-watermark/upload-session:
+    post:
+      operationId: RenderController_createWatermarkUploadSession
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUploadSessionDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
+  /render-watermark/assets/{assetId}/complete:
+    post:
+      operationId: RenderController_completeWatermarkUpload
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteUploadDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
+  /render-watermark/assets/{assetId}/abort:
+    post:
+      operationId: RenderController_abortWatermarkUpload
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteUploadDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
   /render-batches:
     post:
       operationId: RenderController_createBatch
@@ -921,6 +988,25 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/CreateRenderBatchDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      tags: *a20
+  /render-watermark/rerender:
+    post:
+      operationId: RenderController_rerenderWatermark
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RerenderWatermarkDto"
       responses:
         "201":
           description: ""
@@ -1087,6 +1173,11 @@ paths:
           in: query
           schema:
             type: string
+        - name: returnUrl
+          required: true
+          in: query
+          schema:
+            type: string
       responses:
         "201":
           description: ""
@@ -1125,6 +1216,25 @@ paths:
       parameters: []
       responses:
         "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /google-drive/sources/summary:
+    post:
+      operationId: GoogleDriveController_summarizeSources
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SummarizeSourcesDto"
+      responses:
+        "201":
           description: ""
           content:
             application/json:
@@ -1496,11 +1606,13 @@ components:
         targetProjectId:
           type: string
           format: uuid
+          description: Project that owns this uploaded asset
       required:
         - assetType
         - originalFilename
         - mimeType
         - fileSizeBytes
+        - targetProjectId
     CompleteUploadDto:
       type: object
       properties:
@@ -1526,7 +1638,13 @@ components:
     CreateRenderBatchDto:
       type: object
       properties: {}
+    RerenderWatermarkDto:
+      type: object
+      properties: {}
     CreateDownloadDto:
+      type: object
+      properties: {}
+    SummarizeSourcesDto:
       type: object
       properties: {}
     CreateImportDto:

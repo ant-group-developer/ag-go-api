@@ -45,6 +45,7 @@ import { UniqueCountryCode1830000000000 } from './migrations/1830000000000-uniqu
 import { MissingModules1840000000000 } from './migrations/1840000000000-missing-modules';
 import { SettingsLogs1850000000000 } from './migrations/1850000000000-settings-logs';
 import { LegacyWatermarkProfileMigration1860000000000 } from './migrations/1860000000000-legacy-watermark-profile';
+import { ImportSourceMetadataMigration1870000000000 } from './migrations/1870000000000-import-source-metadata';
 
 loadEnv();
 
@@ -107,6 +108,7 @@ export const AppDataSource = new DataSource({
     MissingModules1840000000000,
     SettingsLogs1850000000000,
     LegacyWatermarkProfileMigration1860000000000,
+    ImportSourceMetadataMigration1870000000000,
   ],
   synchronize: false,
 });
