@@ -467,10 +467,60 @@ export class GoogleDriveService implements OnModuleDestroy {
     ) {
       throw new ForbiddenException('Insufficient project permission');
     }
-    return this.batchRepository.find({
+    const batches = await this.batchRepository.find({
       where: { projectId },
       order: { createdAt: 'DESC' },
       take: 50,
+    });
+    if (!batches.length) {
+      return [];
+    }
+    const stats = await this.itemRepository
+      .createQueryBuilder('item')
+      .select('item.batch_id', 'batchId')
+      .addSelect('COUNT(*)', 'fileCount')
+      .addSelect("COUNT(*) FILTER (WHERE item.source_mime_type LIKE 'image/%')", 'imageCount')
+      .addSelect("COUNT(*) FILTER (WHERE item.source_mime_type LIKE 'video/%')", 'videoCount')
+      .addSelect('COALESCE(SUM(item.source_size_bytes), 0)', 'totalBytes')
+      .addSelect(
+        "COALESCE(SUM(item.source_size_bytes) FILTER (WHERE item.status = 'completed'), 0)",
+        'importedBytes',
+      )
+      .addSelect("COUNT(*) FILTER (WHERE item.resolution = 'reused')", 'reusedCount')
+      .addSelect('MAX(item.finished_at)', 'finishedAt')
+      .where('item.batch_id IN (:...batchIds)', { batchIds: batches.map((batch) => batch.id) })
+      .andWhere("COALESCE(item.source_mime_type, '') NOT IN ('application/vnd.google-apps.folder')")
+      .groupBy('item.batch_id')
+      .getRawMany<{
+        batchId: string;
+        fileCount: string;
+        imageCount: string;
+        videoCount: string;
+        totalBytes: string;
+        importedBytes: string;
+        reusedCount: string;
+        finishedAt: Date | null;
+      }>();
+    const statsByBatch = new Map(stats.map((row) => [row.batchId, row]));
+    const enriched = await this.actorEnrichment.enrich(
+      batches as unknown as Record<string, unknown>[],
+      [{ id: 'createdBy', target: 'createdByUser' }],
+    );
+    return enriched.map((batch) => {
+      const row = statsByBatch.get(batch.id as string);
+      const finished = ['completed', 'partial', 'failed', 'cancelled'].includes(
+        batch.status as string,
+      );
+      return {
+        ...batch,
+        fileCount: Number(row?.fileCount ?? 0),
+        imageCount: Number(row?.imageCount ?? 0),
+        videoCount: Number(row?.videoCount ?? 0),
+        totalBytes: String(row?.totalBytes ?? 0),
+        importedBytes: String(row?.importedBytes ?? 0),
+        reusedCount: Number(row?.reusedCount ?? 0),
+        finishedAt: finished ? (row?.finishedAt ?? batch.updatedAt) : null,
+      };
     });
   }
 
