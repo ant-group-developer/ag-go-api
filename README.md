@@ -65,7 +65,12 @@ REDIS_URL=redis://:password@host.docker.internal:6379
 
 ## Docker
 
-Compose chạy hai service `api` và `worker`, cùng đọc biến runtime từ `.env`.
+Compose chạy service `api` và hai worker, cùng đọc biến runtime từ `.env`:
+
+| Service | Role | Việc xử lý |
+|---|---|---|
+| `worker-media` | `media` | Render preview/thumbnail bằng FFmpeg/Sharp (nặng CPU) |
+| `worker-io` | `download,import,outbox` | Tạo ZIP tải xuống (stream thẳng lên R2), import Google Drive, dispatch outbox event |
 Sau khi chuẩn bị các dịch vụ phụ thuộc và `.env`, build image, chạy migration
 rồi khởi động các service:
 
@@ -79,12 +84,12 @@ docker compose up -d
 Xem log hoặc dừng service:
 
 ```bash
-docker compose logs -f api worker
+docker compose logs -f api worker-media worker-io
 docker compose down
 ```
 
-Giới hạn tài nguyên được cấu hình qua `.env`: `API_MEMORY_LIMIT`, `API_CPUS`,
-`WORKER_MEMORY_LIMIT` và `WORKER_CPUS`.
+Giới hạn tài nguyên được cấu hình qua `.env`: `API_MEMORY_LIMIT`, `API_CPUS` và
+`WORKER_{MEDIA,IO}_MEMORY_LIMIT` / `WORKER_{MEDIA,IO}_CPUS`.
 
 ## Lệnh thường dùng
 
@@ -100,12 +105,16 @@ yarn migration:run
 yarn migration:revert
 ```
 
-Worker development có thể chạy độc lập:
+Worker development có thể chạy độc lập. `yarn worker` chạy tất cả role trong một
+process; tham số role nhận danh sách phân tách bằng dấu phẩy
+(`media`, `download`, `import`, `outbox`):
 
 ```bash
 yarn worker
-yarn worker:outbox
 yarn worker:media
+yarn worker:download
+yarn worker:io
+yarn worker:outbox
 ```
 
 ## CI/CD
