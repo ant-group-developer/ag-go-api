@@ -19,6 +19,10 @@ export class UpdateSettingsDto {
   faviconUrl?: string | null;
 
   @IsOptional()
+  @IsUrl()
+  loginBackgroundUrl?: string | null;
+
+  @IsOptional()
   @IsEmail()
   supportEmail?: string | null;
 
