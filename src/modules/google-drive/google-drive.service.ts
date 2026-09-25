@@ -12,7 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import Redis from 'ioredis';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
@@ -229,17 +229,51 @@ export class GoogleDriveService implements OnModuleDestroy {
   }
 
   async disconnect(userId: string) {
-    const connection = await this.connectionRepository.findOne({
-      where: { externalUserId: userId, status: 'active' },
+    // `error` connections can still hold a refresh token (e.g. a transient refresh failure),
+    // so they are revoked and wiped too: disconnecting must leave no usable grant behind.
+    const connections = await this.connectionRepository.find({
+      where: { externalUserId: userId, status: In(['active', 'error']) },
     });
-    if (!connection) {
-      return { success: true };
+    for (const connection of connections) {
+      if (connection.encryptedRefreshToken) {
+        await this.revokeGoogleGrant(connection.encryptedRefreshToken);
+      }
+      connection.status = 'revoked';
+      connection.revokedAt = new Date();
+      connection.encryptedRefreshToken = '';
+      await this.connectionRepository.save(connection);
     }
-    connection.status = 'revoked';
-    connection.revokedAt = new Date();
-    connection.encryptedRefreshToken = '';
-    await this.connectionRepository.save(connection);
     return { success: true };
+  }
+
+  /**
+   * Revokes the grant on Google's side so AG Go disappears from the user's Google Account
+   * permissions. Best-effort: the local token is deleted even if Google is unreachable, and a
+   * grant the user already revoked (400 invalid_token) needs nothing further.
+   */
+  private async revokeGoogleGrant(encryptedRefreshToken: string): Promise<void> {
+    try {
+      const response = await fetch('https://oauth2.googleapis.com/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: this.decrypt(encryptedRefreshToken) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        if (payload?.error !== 'invalid_token') {
+          this.logger.warn(
+            `Google grant revocation failed with ${response.status}${
+              payload?.error ? ` (${payload.error})` : ''
+            }`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Google grant revocation failed: ${error instanceof Error ? error.message : error}`,
+      );
+    }
   }
 
   async summarizeSources(sources: SummarizeSourceDto[], projectId: string, userId: string) {
