@@ -13,7 +13,10 @@ import { ImportBatchEntity } from '../../database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
-import type { ImportQueueJobData } from '../../infra/queue/import-queue.service';
+import {
+  ImportQueueService,
+  type ImportQueueJobData,
+} from '../../infra/queue/import-queue.service';
 import { MediaQueueService } from '../../infra/queue/media-queue.service';
 import { IMPORT_JOB, IMPORT_QUEUE } from '../../infra/queue/queue.constants';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
@@ -38,11 +41,21 @@ type DriveFile = {
   owners?: Array<{ displayName?: string; emailAddress?: string }>;
 };
 
+/** How often a running import touches its batch and current item, so the sweep sees it is alive. */
+const HEARTBEAT_MS = 15_000;
+/** Rows untouched for this long belong to a worker that died (container restart, OOM, SIGKILL). */
+const STALE_MS = 2 * 60_000;
+/** How often the worker looks for imports whose worker died mid-run. */
+const STALE_SWEEP_MS = 60_000;
+/** An item that took down its worker this many times is failed instead of retried. */
+const MAX_ITEM_ATTEMPTS = 3;
+
 @Injectable()
 export class GoogleDriveImportWorkerService implements OnModuleDestroy {
   private readonly logger = new Logger(GoogleDriveImportWorkerService.name);
   private connection?: Redis;
   private worker?: Worker<ImportQueueJobData>;
+  private sweepTimer?: NodeJS.Timeout;
 
   constructor(
     private readonly config: ConfigService,
@@ -57,6 +70,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     private readonly renderProfileRepository: Repository<RenderProfileEntity>,
     private readonly googleDrive: GoogleDriveService,
     private readonly mediaQueue: MediaQueueService,
+    private readonly importQueue: ImportQueueService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
   ) {}
 
@@ -84,11 +98,134 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     this.worker.on('failed', (job, error) => {
       this.logger.error(`Import job ${job?.id ?? 'unknown'} failed: ${error.message}`);
     });
+
+    this.sweepTimer = setInterval(() => void this.recoverStaleImports(), STALE_SWEEP_MS);
+    this.sweepTimer.unref();
+    void this.recoverStaleImports();
   }
 
   async onModuleDestroy(): Promise<void> {
+    if (this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+    }
     await this.worker?.close();
     await this.connection?.quit();
+  }
+
+  /**
+   * Resumes imports whose worker died mid-run. Items left `importing` go back to `queued`
+   * (or fail once they used every attempt), and batches that still have work but no live
+   * BullMQ job, e.g. the job hit the stalled limit or Redis lost it, are enqueued again.
+   * Completed items are never touched, so the new job continues where the old one stopped.
+   */
+  private async recoverStaleImports(): Promise<void> {
+    try {
+      const staleBefore = new Date(Date.now() - STALE_MS);
+      const cancelled = await this.dataSource.query(
+        `UPDATE asset_imports item SET status = 'cancelled', finished_at = now(), updated_at = now()
+         FROM import_batches batch
+         WHERE batch.id = item.batch_id AND batch.status = 'cancelled'
+           AND item.status = 'importing' AND item.updated_at < $1
+         RETURNING item.id`,
+        [staleBefore],
+      );
+      const exhausted = await this.dataSource.query(
+        `UPDATE asset_imports SET status = 'failed', error_code = 'WORKER_LOST',
+           error_message = 'The worker stopped while importing this file', finished_at = now(),
+           updated_at = now()
+         WHERE status = 'importing' AND updated_at < $1 AND attempt_count >= $2
+         RETURNING id`,
+        [staleBefore, MAX_ITEM_ATTEMPTS],
+      );
+      const requeued = await this.dataSource.query(
+        `UPDATE asset_imports SET status = 'queued', updated_at = now()
+         WHERE status = 'importing' AND updated_at < $1
+         RETURNING id`,
+        [staleBefore],
+      );
+      const itemCounts = [cancelled, exhausted, requeued].map(
+        (rows: unknown[][]) => rows[0].length,
+      );
+      if (itemCounts.some((count) => count > 0)) {
+        this.logger.warn(
+          `Recovered stale import items: ${itemCounts[2]} re-queued, ${itemCounts[1]} failed, ${itemCounts[0]} cancelled`,
+        );
+      }
+
+      const batches = await this.batchRepository
+        .createQueryBuilder('batch')
+        .where('batch.status IN (:...statuses)', { statuses: ['queued', 'processing'] })
+        .andWhere('batch.updated_at < :staleBefore', { staleBefore })
+        .getMany();
+      for (const batch of batches) {
+        await this.resumeBatch(batch, staleBefore);
+      }
+    } catch (error) {
+      this.logger.error(
+        `Stale import sweep failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async resumeBatch(batch: ImportBatchEntity, staleBefore: Date): Promise<void> {
+    try {
+      if (batch.queueJobId && (await this.importQueue.hasPendingJob(batch.queueJobId))) {
+        // Waiting behind other imports, or running; BullMQ moves a stalled active job back itself.
+        return;
+      }
+      // Claims the batch, so several worker replicas sweeping at once enqueue it only once.
+      const claimed = await this.batchRepository
+        .createQueryBuilder()
+        .update(ImportBatchEntity)
+        .set({ updatedAt: () => 'now()' })
+        .where('id = :id AND status IN (:...statuses) AND updated_at < :staleBefore', {
+          id: batch.id,
+          statuses: ['queued', 'processing'],
+          staleBefore,
+        })
+        .execute();
+      if (!claimed.affected) {
+        return;
+      }
+      const remaining = await this.itemRepository.count({
+        where: { batchId: batch.id, status: 'queued' },
+      });
+      if (remaining === 0) {
+        await this.refreshBatchProgress(batch.id);
+        return;
+      }
+      const queueJobId = await this.importQueue.addJob({
+        batchId: batch.id,
+        userId: batch.createdBy,
+      });
+      await this.batchRepository.update(batch.id, { queueJobId });
+      this.logger.warn(
+        `Resumed import batch ${batch.id} (${remaining} items left) as job ${queueJobId}`,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Import batch ${batch.id} could not be resumed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  /** Keeps updated_at fresh while this worker is alive, so recoverStaleImports leaves the rows alone. */
+  private startHeartbeat(table: 'import_batches' | 'asset_imports', id: string): NodeJS.Timeout {
+    const timer = setInterval(() => {
+      this.dataSource
+        .query(`UPDATE ${table} SET updated_at = now() WHERE id = $1`, [id])
+        .catch((error: unknown) =>
+          this.logger.warn(
+            `Import heartbeat for ${table} ${id} failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+    }, HEARTBEAT_MS);
+    timer.unref();
+    return timer;
   }
 
   private async process(job: Job<ImportQueueJobData>): Promise<void> {
@@ -98,6 +235,15 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     if (!batch || ['completed', 'cancelled'].includes(batch.status)) {
       return;
     }
+    const heartbeat = this.startHeartbeat('import_batches', batch.id);
+    try {
+      await this.runBatch(job, batch);
+    } finally {
+      clearInterval(heartbeat);
+    }
+  }
+
+  private async runBatch(job: Job<ImportQueueJobData>, batch: ImportBatchEntity): Promise<void> {
     await this.batchRepository.update(batch.id, { status: 'processing' });
     const connection = batch.connectionId
       ? await this.connectionRepository.findOne({ where: { id: batch.connectionId } })
@@ -181,7 +327,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     accessToken: string,
     userId: string,
   ) {
-    await this.itemRepository
+    const claimed = await this.itemRepository
       .createQueryBuilder()
       .update(AssetImportEntity)
       .set({
@@ -193,6 +339,24 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       })
       .where('id = :id AND status = :status', { id: item.id, status: 'queued' })
       .execute();
+    if (!claimed.affected) {
+      // Another job of this batch (a retry or a resumed job) already took or cancelled it.
+      return;
+    }
+    const heartbeat = this.startHeartbeat('asset_imports', item.id);
+    try {
+      await this.downloadItem(batch, item, accessToken, userId);
+    } finally {
+      clearInterval(heartbeat);
+    }
+  }
+
+  private async downloadItem(
+    batch: ImportBatchEntity,
+    item: AssetImportEntity,
+    accessToken: string,
+    userId: string,
+  ) {
     const file = await this.getFile(accessToken, item.sourceFileId ?? '');
     const metadata = this.extractDriveMetadata(file);
     await this.itemRepository.update(item.id, {
