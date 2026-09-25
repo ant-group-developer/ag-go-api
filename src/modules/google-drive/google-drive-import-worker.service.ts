@@ -12,12 +12,12 @@ import { GoogleDriveConnectionEntity } from '../../database/entities/google-driv
 import { ImportBatchEntity } from '../../database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
-import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import type { ImportQueueJobData } from '../../infra/queue/import-queue.service';
 import { MediaQueueService } from '../../infra/queue/media-queue.service';
 import { IMPORT_JOB, IMPORT_QUEUE } from '../../infra/queue/queue.constants';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
+import { refreshProjectMediaSummary } from '../media/project-media-summary';
 import { GoogleDriveService } from './google-drive.service';
 
 type DriveFile = {
@@ -363,7 +363,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         status: 'completed',
         finishedAt: new Date(),
       });
-      await this.refreshProjectCounters(manager, batch.projectId);
+      await refreshProjectMediaSummary(manager, batch.projectId);
     });
 
     if (reusedDuringTransaction) {
@@ -557,33 +557,6 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
 
   private safeName(value: string): string {
     return value.replace(/[^\w.\-]/g, '_').slice(0, 180) || 'file';
-  }
-
-  private async refreshProjectCounters(
-    manager: import('typeorm').EntityManager,
-    projectId: string,
-  ): Promise<void> {
-    const aggregate = await manager
-      .createQueryBuilder(ProjectMediaEntity, 'media')
-      .innerJoin(AssetEntity, 'asset', 'asset.id = media.asset_id')
-      .select('COUNT(*)', 'totalMedia')
-      .addSelect("COUNT(*) FILTER (WHERE asset.asset_type = 'image')", 'imageCount')
-      .addSelect("COUNT(*) FILTER (WHERE asset.asset_type = 'video')", 'videoCount')
-      .addSelect('COALESCE(SUM(asset.file_size_bytes), 0)', 'originalBytes')
-      .where('media.project_id = :projectId', { projectId })
-      .getRawOne<{
-        totalMedia: string;
-        imageCount: string;
-        videoCount: string;
-        originalBytes: string;
-      }>();
-
-    await manager.update(ProjectEntity, projectId, {
-      mediaCount: Number(aggregate?.totalMedia ?? 0),
-      imageCount: Number(aggregate?.imageCount ?? 0),
-      videoCount: Number(aggregate?.videoCount ?? 0),
-      originalBytes: String(aggregate?.originalBytes ?? 0),
-    });
   }
 
   private withExtension(name: string, mimeType: string, driveExtension?: string): string {
