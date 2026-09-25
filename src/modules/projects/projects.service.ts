@@ -87,9 +87,10 @@ export class ProjectsService {
       );
     }
 
+    const sortOrder = query.sortOrder === 'asc' ? 'ASC' : 'DESC';
     const [projects, total] = await projectQuery
-      .orderBy('project.updatedAt', 'DESC')
-      .addOrderBy('project.id', 'DESC')
+      .orderBy(`project.${query.sortBy ?? 'updatedAt'}`, sortOrder)
+      .addOrderBy('project.id', sortOrder)
       .skip(query.skip)
       .take(query.pageSize)
       .getManyAndCount();
