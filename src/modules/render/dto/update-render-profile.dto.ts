@@ -1,5 +1,8 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -8,12 +11,35 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   Max,
   MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
+import {
+  PREVIEW_WIDTH_MAX,
+  PREVIEW_WIDTH_MIN,
+  PREVIEW_WIDTHS_MAX_COUNT,
+  THUMBNAIL_WIDTH_MAX,
+  THUMBNAIL_WIDTH_MIN,
+} from '../render-sizes';
 import { WATERMARK_POSITIONS } from '../watermark-config';
+
+export class RenderSizesDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(PREVIEW_WIDTHS_MAX_COUNT)
+  @IsInt({ each: true })
+  @Min(PREVIEW_WIDTH_MIN, { each: true })
+  @Max(PREVIEW_WIDTH_MAX, { each: true })
+  previewWidths!: number[];
+
+  @IsInt()
+  @Min(THUMBNAIL_WIDTH_MIN)
+  @Max(THUMBNAIL_WIDTH_MAX)
+  thumbnailWidth!: number;
+}
 
 export class WatermarkConfigDto {
   @IsOptional()
@@ -27,7 +53,7 @@ export class WatermarkConfigDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(9)
+  @Matches(/^#[0-9a-fA-F]{6}$/, { message: 'color must be a #RRGGBB hex color' })
   color?: string;
 
   @IsOptional()
@@ -134,4 +160,10 @@ export class UpdateRenderProfileDto {
   @ValidateNested()
   @Type(() => WatermarkConfigDto)
   watermarkConfig?: WatermarkConfigDto;
+
+  @IsOptional()
+  @IsObject()
+  @ValidateNested()
+  @Type(() => RenderSizesDto)
+  renderSizes?: RenderSizesDto;
 }

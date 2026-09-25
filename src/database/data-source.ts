@@ -48,6 +48,7 @@ import { LegacyWatermarkProfileMigration1860000000000 } from './migrations/18600
 import { ImportSourceMetadataMigration1870000000000 } from './migrations/1870000000000-import-source-metadata';
 import { GoogleDriveImportDeduplicationMigration1880000000000 } from './migrations/1880000000000-google-drive-import-deduplication';
 import { GoogleDriveImportDefaultPolicyMigration1890000000000 } from './migrations/1890000000000-google-drive-import-default-policy';
+import { RenderSizesMigration1900000000000 } from './migrations/1900000000000-render-sizes';
 
 loadEnv();
 
@@ -113,6 +114,7 @@ export const AppDataSource = new DataSource({
     ImportSourceMetadataMigration1870000000000,
     GoogleDriveImportDeduplicationMigration1880000000000,
     GoogleDriveImportDefaultPolicyMigration1890000000000,
+    RenderSizesMigration1900000000000,
   ],
   synchronize: false,
 });
