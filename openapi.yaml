@@ -1363,6 +1363,19 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a21
       tags: *a22
+  /render-jobs/auto:
+    get:
+      operationId: RenderController_listAutoJobs
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a21
+      tags: *a22
   /render-jobs/{id}/retry:
     post:
       operationId: RenderController_retryJob
