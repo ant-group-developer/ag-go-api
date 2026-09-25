@@ -19,25 +19,48 @@ services:
           memory: ${API_MEMORY_LIMIT:-2g}
     restart: unless-stopped
 
-  worker:
-    # Reuses the image built by `api`. Declaring `build` here too makes Compose
-    # build both services in parallel and race on the same tag
-    # ("image ... already exists").
+  # Workers are split by workload so they don't compete for the same CPU/RAM budget.
+  # They all reuse the image built by `api`: declaring `build` here too makes Compose
+  # build services in parallel and race on the same tag ("image ... already exists").
+  # On SIGTERM each worker finishes its running jobs first (a Drive download can take up
+  # to 2 minutes). Anything cut off by SIGKILL is resumed by the stale-job sweeps on the
+  # next start.
+
+  # FFmpeg/Sharp rendering: the only CPU-heavy workload, sized and scaled on its own.
+  worker-media:
     image: ag-go-api:${TAG:-latest}
     pull_policy: never
-    command: ['node', 'dist/workers/worker.js']
-    # On SIGTERM the worker finishes its running jobs first (a Drive download can take up to
-    # 2 minutes). Anything cut off by SIGKILL is resumed by the stale-job sweeps on the next start.
+    command: ['node', 'dist/workers/worker.js', 'media']
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-150s}
     env_file:
       - .env
     extra_hosts:
       - 'host.docker.internal:host-gateway'
-    mem_limit: ${WORKER_MEMORY_LIMIT:-2g}
-    cpus: ${WORKER_CPUS:-2}
+    mem_limit: ${WORKER_MEDIA_MEMORY_LIMIT:-2g}
+    cpus: ${WORKER_MEDIA_CPUS:-2}
     deploy:
       resources:
         limits:
-          cpus: '${WORKER_CPUS:-2}'
-          memory: ${WORKER_MEMORY_LIMIT:-2g}
+          cpus: '${WORKER_MEDIA_CPUS:-2}'
+          memory: ${WORKER_MEDIA_MEMORY_LIMIT:-2g}
+    restart: unless-stopped
+
+  # Network-bound work: Google Drive imports, ZIP downloads (streamed straight to R2, so
+  # memory stays flat) and the lightweight outbox dispatcher.
+  worker-io:
+    image: ag-go-api:${TAG:-latest}
+    pull_policy: never
+    command: ['node', 'dist/workers/worker.js', 'download,import,outbox']
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-150s}
+    env_file:
+      - .env
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    mem_limit: ${WORKER_IO_MEMORY_LIMIT:-1g}
+    cpus: ${WORKER_IO_CPUS:-1}
+    deploy:
+      resources:
+        limits:
+          cpus: '${WORKER_IO_CPUS:-1}'
+          memory: ${WORKER_IO_MEMORY_LIMIT:-1g}
     restart: unless-stopped
