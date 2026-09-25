@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
@@ -6,8 +6,8 @@ import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { AssetsService } from '../assets/assets.service';
 import { CompleteUploadDto } from '../assets/dto/complete-upload.dto';
-import { CreateUploadSessionDto } from '../assets/dto/create-upload-session.dto';
 import { CreateRenderBatchDto } from './dto/create-render-batch.dto';
+import { CreateWatermarkLogoUploadSessionDto } from './dto/create-watermark-logo-upload-session.dto';
 import { RerenderWatermarkDto } from './dto/rerender-watermark.dto';
 import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
 import { RenderService } from './render.service';
@@ -41,9 +41,18 @@ export class RenderController {
 
   @Post('render-watermark/upload-session')
   @RequirePermissions(GO_PERMISSIONS.SETTINGS_MANAGE)
-  createWatermarkUploadSession(@Body() dto: CreateUploadSessionDto, @Req() request: Request) {
+  createWatermarkUploadSession(
+    @Body() dto: CreateWatermarkLogoUploadSessionDto,
+    @Req() request: Request,
+  ) {
     const context = this.authContext.getContext(request);
-    return this.assetsService.createUploadSession(dto, context.userId, context.userType);
+    return this.assetsService.createWatermarkLogoUploadSession(dto, context.userId);
+  }
+
+  @Get('render-watermark/logos/:assetId/url')
+  @RequirePermissions(GO_PERMISSIONS.SETTINGS_MANAGE)
+  getWatermarkLogoUrl(@Param('assetId', ParseUUIDPipe) assetId: string) {
+    return this.assetsService.getWatermarkLogoUrl(assetId);
   }
 
   @Post('render-watermark/assets/:assetId/complete')

@@ -10,6 +10,7 @@ import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
+import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
@@ -25,6 +26,7 @@ import {
   RerenderWatermarkScope,
 } from './dto/rerender-watermark.dto';
 import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
+import { normalizePreviewWidths, PREVIEW_VARIANT_SQL } from './render-sizes';
 import { normalizeWatermarkConfig } from './watermark-config';
 
 @Injectable()
@@ -108,6 +110,13 @@ export class RenderService {
                   ...(latest.watermarkConfig ?? {}),
                   ...(dto.watermarkConfig as Record<string, unknown>),
                 }),
+          renderSizes:
+            dto.renderSizes === undefined
+              ? latest.renderSizes
+              : {
+                  previewWidths: normalizePreviewWidths(dto.renderSizes.previewWidths),
+                  thumbnailWidth: dto.renderSizes.thumbnailWidth,
+                },
           isActive: true,
           createdBy: userId,
         }),
@@ -247,13 +256,21 @@ export class RenderService {
       }
     }
     if (dto.scope === RerenderWatermarkScope.NOT_WATERMARKED) {
+      // Any ready preview without a watermark (or no ready preview at all) needs a re-render.
+      // Thumbnails are never watermarked, so they are ignored here.
       mediaQuery.andWhere(
-        `NOT EXISTS (
+        `(EXISTS (
           SELECT 1 FROM asset_variants av
           WHERE av.asset_id = media.asset_id
             AND av.status = 'ready'
-            AND av.has_watermark = true
-        )`,
+            AND ${PREVIEW_VARIANT_SQL}
+            AND av.has_watermark = false
+        ) OR NOT EXISTS (
+          SELECT 1 FROM asset_variants av
+          WHERE av.asset_id = media.asset_id
+            AND av.status = 'ready'
+            AND ${PREVIEW_VARIANT_SQL}
+        ))`,
       );
     }
     if (dto.mediaType === RerenderMediaType.IMAGE) {
@@ -304,11 +321,13 @@ export class RenderService {
     ) {
       throw new ForbiddenException('Insufficient project permission');
     }
-    return this.batchRepository.find({
-      where: { projectId },
-      order: { createdAt: 'DESC' },
-      take: 50,
-    });
+    return this.enrichBatches(
+      await this.batchRepository.find({
+        where: { projectId },
+        order: { createdAt: 'DESC' },
+        take: 50,
+      }),
+    );
   }
 
   async listAllBatches(userId: string, userType?: 'ADMIN' | 'USER') {
@@ -316,7 +335,7 @@ export class RenderService {
       order: { createdAt: 'DESC' },
     });
     if (isAdminUserType(userType)) {
-      return batches;
+      return this.enrichBatches(batches);
     }
     const visible: RenderBatchEntity[] = [];
     for (const batch of batches) {
@@ -335,14 +354,122 @@ export class RenderService {
         visible.push(batch);
       }
     }
-    return visible;
+    return this.enrichBatches(visible);
   }
 
+  /**
+   * Adds what the render history table shows: the project (or how many projects a batch spans),
+   * the folder, the render profile and who started the batch.
+   */
+  private async enrichBatches(batches: RenderBatchEntity[]) {
+    if (batches.length === 0) {
+      return [];
+    }
+    const batchIds = batches.map((batch) => batch.id);
+    const [projectSummaries, folders, profiles] = await Promise.all([
+      this.dataSource.query(
+        `SELECT job.render_batch_id AS "batchId",
+                COUNT(DISTINCT media.project_id)::int AS "projectCount",
+                MIN(project.name) AS "projectName"
+         FROM media_render_jobs job
+         INNER JOIN project_media media ON media.asset_id = job.asset_id
+         INNER JOIN projects project ON project.id = media.project_id
+         WHERE job.render_batch_id = ANY($1::uuid[])
+         GROUP BY job.render_batch_id`,
+        [batchIds],
+      ) as Promise<Array<{ batchId: string; projectCount: number; projectName: string | null }>>,
+      this.dataSource.query(
+        `SELECT id, path_text AS "pathText" FROM folders WHERE id = ANY($1::uuid[])`,
+        [[...new Set(batches.flatMap((batch) => (batch.folderId ? [batch.folderId] : [])))]],
+      ) as Promise<Array<{ id: string; pathText: string }>>,
+      this.profileRepository.findBy({
+        id: In([...new Set(batches.map((batch) => batch.renderProfileId))]),
+      }),
+    ]);
+    const summaryByBatch = new Map(projectSummaries.map((row) => [row.batchId, row]));
+    const folderById = new Map(folders.map((folder) => [folder.id, folder.pathText]));
+    const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+    return this.actorEnrichment.enrich(
+      batches.map((batch) => {
+        const summary = summaryByBatch.get(batch.id);
+        const profile = profileById.get(batch.renderProfileId);
+        return {
+          ...batch,
+          projectName: summary?.projectName ?? null,
+          projectCount: summary?.projectCount ?? 0,
+          folderPath: batch.folderId ? (folderById.get(batch.folderId) ?? null) : null,
+          profileName: profile?.name ?? null,
+          profileVersion: profile?.profileVersion ?? null,
+        };
+      }) as unknown as Array<Record<string, unknown>>,
+      [{ id: 'createdBy', target: 'createdByUser' }],
+    );
+  }
+
+  /**
+   * Jobs of a batch with the source file (name, size, resolution), its project and the variants
+   * it currently has, so the UI can compare the original with the rendered outputs.
+   */
   async listJobs(batchId: string, userId: string, userType?: 'ADMIN' | 'USER') {
     const batch = await this.getBatch(batchId, userId, userType);
-    return this.jobRepository.find({
+    const jobs = await this.jobRepository.find({
       where: { renderBatchId: batch.id },
       order: { createdAt: 'ASC' },
+    });
+    const assetIds = [...new Set(jobs.map((job) => job.assetId))];
+    if (assetIds.length === 0) {
+      return [];
+    }
+    const [assets, variants, projects] = await Promise.all([
+      this.assetRepository.findBy({ id: In(assetIds) }),
+      this.dataSource.getRepository(AssetVariantEntity).find({
+        where: { assetId: In(assetIds), status: 'ready' },
+        order: { width: 'ASC' },
+      }),
+      this.dataSource.query(
+        `SELECT DISTINCT ON (media.asset_id)
+                media.asset_id AS "assetId", project.id, project.name
+         FROM project_media media
+         INNER JOIN projects project ON project.id = media.project_id
+         WHERE media.asset_id = ANY($1::uuid[])
+         ORDER BY media.asset_id, media.created_at ASC`,
+        [assetIds],
+      ) as Promise<Array<{ assetId: string; id: string; name: string }>>,
+    ]);
+    const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+    const projectByAsset = new Map(projects.map((project) => [project.assetId, project]));
+    return jobs.map((job) => {
+      const asset = assetById.get(job.assetId);
+      const metadata = asset?.sourceMetadata ?? {};
+      const project = projectByAsset.get(job.assetId);
+      return {
+        ...job,
+        asset: asset
+          ? {
+              id: asset.id,
+              assetType: asset.assetType,
+              originalFilename: asset.originalFilename,
+              mimeType: asset.mimeType,
+              fileSizeBytes: asset.fileSizeBytes,
+              processingStatus: asset.processingStatus,
+              width: readNumber(metadata.width),
+              height: readNumber(metadata.height),
+              durationSeconds: readNumber(metadata.durationSeconds),
+            }
+          : null,
+        project: project ? { id: project.id, name: project.name } : null,
+        outputs: variants
+          .filter((variant) => variant.assetId === job.assetId)
+          .map((variant) => ({
+            variantCode: variant.variantCode,
+            mimeType: variant.mimeType,
+            width: variant.width,
+            height: variant.height,
+            fileSizeBytes: variant.fileSizeBytes,
+            hasWatermark: variant.hasWatermark,
+            renderVersion: variant.renderVersion,
+          })),
+      };
     });
   }
 
@@ -364,8 +491,9 @@ export class RenderService {
       startedAt: null,
       finishedAt: null,
     });
+    // Failed BullMQ jobs are kept (removeOnFail: false), so re-adding with the same id is a no-op.
     await this.mediaQueue.addProcessingJob({
-      eventId: job.id,
+      eventId: `${job.id}-retry-${uuidv7()}`,
       assetId: job.assetId,
       renderJobId: job.id,
       userId,
@@ -429,4 +557,9 @@ export class RenderService {
       throw new ForbiddenException('Insufficient render batch permission');
     }
   }
+}
+
+function readNumber(value: unknown): number | null {
+  const number = typeof value === 'string' ? Number(value) : value;
+  return typeof number === 'number' && Number.isFinite(number) ? number : null;
 }
