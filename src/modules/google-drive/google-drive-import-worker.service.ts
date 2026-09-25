@@ -4,7 +4,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { Job, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { Readable } from 'node:stream';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Not, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { AssetImportEntity } from '../../database/entities/asset-import.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
@@ -21,6 +21,7 @@ import { MediaQueueService } from '../../infra/queue/media-queue.service';
 import { IMPORT_JOB, IMPORT_QUEUE } from '../../infra/queue/queue.constants';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { refreshProjectMediaSummary } from '../media/project-media-summary';
+import { DriveAccessToken, DriveAuthError, driveFetch, withIdleTimeout } from './drive-http';
 import { GoogleDriveService } from './google-drive.service';
 
 type DriveFile = {
@@ -49,6 +50,10 @@ const STALE_MS = 2 * 60_000;
 const STALE_SWEEP_MS = 60_000;
 /** An item that took down its worker this many times is failed instead of retried. */
 const MAX_ITEM_ATTEMPTS = 3;
+/** How long Drive may take to start answering a download. */
+const DOWNLOAD_RESPONSE_TIMEOUT_MS = 30_000;
+/** A download (or its upload to R2) that moves no data for this long is treated as stalled. */
+const DOWNLOAD_IDLE_TIMEOUT_MS = 60_000;
 
 @Injectable()
 export class GoogleDriveImportWorkerService implements OnModuleDestroy {
@@ -245,38 +250,43 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
 
   private async runBatch(job: Job<ImportQueueJobData>, batch: ImportBatchEntity): Promise<void> {
     await this.batchRepository.update(batch.id, { status: 'processing' });
-    const connection = batch.connectionId
-      ? await this.connectionRepository.findOne({ where: { id: batch.connectionId } })
-      : null;
-    if (!connection) {
-      throw new Error('Google Drive connection is missing');
-    }
-
     try {
-      const accessToken = await this.googleDrive.getDriveAccessToken(
-        connection.id,
-        job.data.userId,
+      const connection = batch.connectionId
+        ? await this.connectionRepository.findOne({ where: { id: batch.connectionId } })
+        : null;
+      if (!connection) {
+        throw new Error('Google Drive connection is missing');
+      }
+      const token = new DriveAccessToken(() =>
+        this.googleDrive.refreshDriveAccessToken(connection.id, job.data.userId),
       );
+      // Retries the batch early when Drive cannot be reached at all.
+      await token.get();
+
+      if (!(await this.discoverFolders(batch, token))) {
+        return;
+      }
+      await this.refreshBatchProgress(batch.id);
       const queuedItems = await this.itemRepository.find({
         where: { batchId: batch.id, status: 'queued' },
         order: { createdAt: 'ASC' },
       });
       for (const item of queuedItems) {
-        const root = await this.getFile(accessToken, item.sourceFileId ?? '');
-        if (root.mimeType === 'application/vnd.google-apps.folder') {
-          await this.expandFolder(batch, item, root, accessToken);
+        if (this.isFolderMimeType(item.sourceMimeType)) {
+          continue;
         }
-      }
-      const items = await this.itemRepository.find({
-        where: { batchId: batch.id },
-        order: { createdAt: 'ASC' },
-      });
-      const mediaItems = items.filter((item) => !this.isFolderMimeType(item.sourceMimeType));
-      await this.batchRepository.update(batch.id, { totalItems: mediaItems.length });
-      for (const item of mediaItems.filter((candidate) => candidate.status === 'queued')) {
+        let claimed = true;
         try {
-          await this.importItem(batch, item, accessToken, job.data.userId);
+          claimed = await this.importItem(batch, item, token, job.data.userId);
         } catch (error) {
+          if (error instanceof DriveAuthError) {
+            // Not this file's fault: put it back and let the batch retry once Drive answers.
+            await this.itemRepository.update(
+              { id: item.id, status: 'importing' },
+              { status: 'queued' },
+            );
+            throw error;
+          }
           await this.itemRepository.update(item.id, {
             status: 'failed',
             errorCode: 'IMPORT_FAILED',
@@ -284,49 +294,132 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
             finishedAt: new Date(),
           });
         }
+        if (!claimed) {
+          if (await this.isCancelled(batch.id)) {
+            break;
+          }
+          continue;
+        }
         await this.refreshBatchProgress(batch.id);
       }
       await this.refreshBatchProgress(batch.id);
     } catch (error) {
       const attempts = job.opts.attempts ?? 1;
       const willRetry = job.attemptsMade + 1 < attempts;
-      await this.batchRepository.update(batch.id, {
-        status: willRetry ? 'queued' : 'failed',
-        errorMessage: error instanceof Error ? error.message.slice(0, 4000) : 'Import failed',
-      });
+      await this.batchRepository.update(
+        { id: batch.id, status: Not('cancelled') },
+        {
+          status: willRetry ? 'queued' : 'failed',
+          errorMessage: error instanceof Error ? error.message.slice(0, 4000) : 'Import failed',
+        },
+      );
       throw error;
     }
   }
 
-  private async refreshBatchProgress(batchId: string): Promise<void> {
-    const items = await this.itemRepository.find({ where: { batchId } });
-    const mediaItems = items.filter((item) => !this.isFolderMimeType(item.sourceMimeType));
-    const completed = mediaItems.filter((item) => item.status === 'completed').length;
-    const failed = mediaItems.filter((item) => item.status === 'failed').length;
-    const active = mediaItems.some((item) => ['queued', 'importing'].includes(item.status));
-    const total = mediaItems.length;
-    const status = active
-      ? 'processing'
-      : failed === 0
-        ? 'completed'
-        : completed > 0
-          ? 'partial'
-          : 'failed';
-    await this.batchRepository.update(batchId, {
-      totalItems: total,
-      completedItems: completed,
-      failedItems: failed,
-      progressPercent: total ? Math.round(((completed + failed) / total) * 100) : 100,
-      status,
-    });
+  /**
+   * Expands the batch's queued folder sources into their media files. A source that cannot be
+   * read fails on its own and the rest of the batch continues. Returns false when the batch
+   * was cancelled meanwhile; its remaining files are then cancelled too.
+   */
+  private async discoverFolders(
+    batch: ImportBatchEntity,
+    token: DriveAccessToken,
+  ): Promise<boolean> {
+    // Files picked directly and files found in a folder already carry their MIME type, so a
+    // resumed batch does not look up thousands of files again just to find its folders.
+    const roots = await this.itemRepository
+      .createQueryBuilder('item')
+      .where('item.batch_id = :batchId AND item.status = :status', {
+        batchId: batch.id,
+        status: 'queued',
+      })
+      .andWhere("(item.source_mime_type IS NULL OR item.source_mime_type LIKE '%folder%')")
+      .orderBy('item.created_at', 'ASC')
+      .getMany();
+    for (const root of roots) {
+      if (await this.isCancelled(batch.id)) {
+        break;
+      }
+      try {
+        const file = await this.getFile(token, root.sourceFileId ?? '');
+        if (file.mimeType === 'application/vnd.google-apps.folder') {
+          await this.expandFolder(batch, root, file, token);
+        }
+      } catch (error) {
+        if (error instanceof DriveAuthError) {
+          throw error;
+        }
+        await this.itemRepository.update(
+          { id: root.id, status: 'queued' },
+          {
+            status: 'failed',
+            errorCode: 'DISCOVERY_FAILED',
+            errorMessage: error instanceof Error ? error.message.slice(0, 4000) : 'Import failed',
+            finishedAt: new Date(),
+          },
+        );
+      }
+    }
+    if (await this.isCancelled(batch.id)) {
+      await this.itemRepository.update(
+        { batchId: batch.id, status: 'queued' },
+        { status: 'cancelled' },
+      );
+      await this.refreshBatchProgress(batch.id);
+      return false;
+    }
+    return true;
   }
 
+  private async isCancelled(batchId: string): Promise<boolean> {
+    return this.batchRepository.exists({ where: { id: batchId, status: 'cancelled' } });
+  }
+
+  /**
+   * Recounts the batch from its items in one query. An expanded folder is not a file of its
+   * own, a folder still waiting to be expanded is pending and one that could not be read
+   * counts as failed. A cancelled batch keeps its status.
+   */
+  private async refreshBatchProgress(batchId: string): Promise<void> {
+    const [counts] = (await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total,
+         COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+         COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+         COUNT(*) FILTER (WHERE status IN ('queued', 'importing'))::int AS active
+       FROM asset_imports
+       WHERE batch_id = $1
+         AND NOT (COALESCE(source_mime_type, '') LIKE '%folder%'
+           AND status IN ('completed', 'cancelled'))`,
+      [batchId],
+    )) as Array<{ total: number; completed: number; failed: number; active: number }>;
+    const { total, completed, failed, active } = counts;
+    const status =
+      active > 0 ? 'processing' : failed === 0 ? 'completed' : completed > 0 ? 'partial' : 'failed';
+    await this.dataSource.query(
+      `UPDATE import_batches
+       SET total_items = $2, completed_items = $3, failed_items = $4, progress_percent = $5,
+         status = CASE WHEN status = 'cancelled' THEN status ELSE $6::varchar END,
+         updated_at = now()
+       WHERE id = $1`,
+      [
+        batchId,
+        total,
+        completed,
+        failed,
+        total ? Math.round(((completed + failed) / total) * 100) : 100,
+        status,
+      ],
+    );
+  }
+
+  /** Imports one file. Returns false when it was not claimed: another job took it, or it was cancelled. */
   private async importItem(
     batch: ImportBatchEntity,
     item: AssetImportEntity,
-    accessToken: string,
+    token: DriveAccessToken,
     userId: string,
-  ) {
+  ): Promise<boolean> {
     const claimed = await this.itemRepository
       .createQueryBuilder()
       .update(AssetImportEntity)
@@ -338,26 +431,29 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         errorMessage: null,
       })
       .where('id = :id AND status = :status', { id: item.id, status: 'queued' })
+      .andWhere(
+        "NOT EXISTS (SELECT 1 FROM import_batches b WHERE b.id = batch_id AND b.status = 'cancelled')",
+      )
       .execute();
     if (!claimed.affected) {
-      // Another job of this batch (a retry or a resumed job) already took or cancelled it.
-      return;
+      return false;
     }
     const heartbeat = this.startHeartbeat('asset_imports', item.id);
     try {
-      await this.downloadItem(batch, item, accessToken, userId);
+      await this.downloadItem(batch, item, token, userId);
     } finally {
       clearInterval(heartbeat);
     }
+    return true;
   }
 
   private async downloadItem(
     batch: ImportBatchEntity,
     item: AssetImportEntity,
-    accessToken: string,
+    token: DriveAccessToken,
     userId: string,
   ) {
-    const file = await this.getFile(accessToken, item.sourceFileId ?? '');
+    const file = await this.getFile(token, item.sourceFileId ?? '');
     const metadata = this.extractDriveMetadata(file);
     await this.itemRepository.update(item.id, {
       sourceName: this.withExtension(
@@ -391,28 +487,6 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       });
       return;
     }
-    const response = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        signal: AbortSignal.timeout(120_000),
-      },
-    );
-    if (!response.ok || !response.body) {
-      throw new Error(`Google Drive download failed with ${response.status}`);
-    }
-    const headerContentLength = Number(response.headers.get('content-length'));
-    const metadataContentLength = Number(file.size);
-    const contentLength =
-      Number.isSafeInteger(metadataContentLength) && metadataContentLength > 0
-        ? metadataContentLength
-        : Number.isSafeInteger(headerContentLength) && headerContentLength > 0
-          ? headerContentLength
-          : undefined;
-    if (contentLength === undefined) {
-      throw new Error('Google Drive response did not include a valid file size');
-    }
-
     const assetId = uuidv7();
     const originalFilename = this.withExtension(
       file.name,
@@ -420,12 +494,51 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       file.fileExtension ?? file.fullFileExtension,
     );
     const storageKey = `projects/${batch.projectId}/originals/${assetId}/${this.safeName(originalFilename)}`;
-    await this.storage.putObject(
-      storageKey,
-      Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-      file.mimeType,
-      contentLength,
+    // No limit on the total time, so large videos can finish; only a slow start or a stall aborts.
+    const controller = new AbortController();
+    const responseTimer = setTimeout(
+      () => controller.abort(new Error('Google Drive download did not start responding in time')),
+      DOWNLOAD_RESPONSE_TIMEOUT_MS,
     );
+    let body: Readable | undefined;
+    let uploadedBytes: number;
+    try {
+      const response = await driveFetch(
+        token,
+        `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`,
+        { signal: controller.signal },
+      );
+      clearTimeout(responseTimer);
+      if (!response.ok || !response.body) {
+        throw new Error(`Google Drive download failed with ${response.status}`);
+      }
+      const headerContentLength = Number(response.headers.get('content-length'));
+      const metadataContentLength = Number(file.size);
+      const contentLength =
+        Number.isSafeInteger(metadataContentLength) && metadataContentLength > 0
+          ? metadataContentLength
+          : Number.isSafeInteger(headerContentLength) && headerContentLength > 0
+            ? headerContentLength
+            : undefined;
+      if (contentLength === undefined) {
+        throw new Error('Google Drive response did not include a valid file size');
+      }
+      body = withIdleTimeout(
+        Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+        DOWNLOAD_IDLE_TIMEOUT_MS,
+        () => controller.abort(),
+      );
+      ({ sizeBytes: uploadedBytes } = await this.storage.putObject(
+        storageKey,
+        body,
+        file.mimeType,
+        contentLength,
+      ));
+    } finally {
+      clearTimeout(responseTimer);
+      body?.destroy();
+      controller.abort();
+    }
     const assetType = file.mimeType.startsWith('video/') ? 'video' : 'image';
     const renderJobId = uuidv7();
     const profile = await this.renderProfileRepository.findOne({
@@ -463,7 +576,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         extension: originalFilename.split('.').pop()?.slice(0, 20) ?? null,
         mimeType: file.mimeType,
         checksumSha256: null,
-        fileSizeBytes: String(contentLength),
+        fileSizeBytes: String(uploadedBytes),
         storageProvider: 'r2',
         originalBucket: this.config.getOrThrow<string>('R2_BUCKET'),
         originalStorageKey: storageKey,
@@ -551,13 +664,11 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     });
   }
 
-  private async getFile(accessToken: string, fileId: string): Promise<DriveFile> {
-    const response = await fetch(
+  private async getFile(token: DriveAccessToken, fileId: string): Promise<DriveFile> {
+    const response = await driveFetch(
+      token,
       `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?fields=id,name,mimeType,size,fileExtension,fullFileExtension,modifiedTime,headRevisionId,imageMediaMetadata(width,height),videoMediaMetadata(width,height,durationMillis),owners(displayName,emailAddress)&supportsAllDrives=true`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        signal: AbortSignal.timeout(30_000),
-      },
+      { signal: AbortSignal.timeout(30_000) },
     );
     if (!response.ok) {
       throw new Error(`Google Drive metadata lookup failed with ${response.status}`);
@@ -583,7 +694,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     batch: ImportBatchEntity,
     rootItem: AssetImportEntity,
     root: DriveFile,
-    accessToken: string,
+    token: DriveAccessToken,
   ): Promise<void> {
     const discovered = new Map<string, DriveFile>();
     const pending = [root.id];
@@ -594,7 +705,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       if (!parentId) {
         continue;
       }
-      const files = await this.listChildren(accessToken, parentId, batch.sourceDriveId);
+      const files = await this.listChildren(token, parentId, batch.sourceDriveId);
       for (const file of files) {
         if (file.mimeType === 'application/vnd.google-apps.folder') {
           pending.push(file.id);
@@ -661,7 +772,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
   }
 
   private async listChildren(
-    accessToken: string,
+    token: DriveAccessToken,
     parentId: string,
     driveId: string | null,
   ): Promise<DriveFile[]> {
@@ -683,12 +794,10 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       if (pageToken) {
         params.set('pageToken', pageToken);
       }
-      const response = await fetch(
+      const response = await driveFetch(
+        token,
         `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-          signal: AbortSignal.timeout(30_000),
-        },
+        { signal: AbortSignal.timeout(30_000) },
       );
       if (!response.ok) {
         throw new Error(`Google Drive folder listing failed with ${response.status}`);

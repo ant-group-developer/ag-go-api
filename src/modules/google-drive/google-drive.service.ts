@@ -426,6 +426,14 @@ export class GoogleDriveService implements OnModuleDestroy {
   }
 
   async getDriveAccessToken(connectionId: string, userId: string): Promise<string> {
+    return (await this.refreshDriveAccessToken(connectionId, userId)).accessToken;
+  }
+
+  /** Exchanges the stored refresh token for a new access token and when it expires. */
+  async refreshDriveAccessToken(
+    connectionId: string,
+    userId: string,
+  ): Promise<{ accessToken: string; expiresAt: Date }> {
     const connection = await this.connectionRepository.findOne({
       where: { id: connectionId, externalUserId: userId, status: 'active' },
     });
@@ -437,7 +445,12 @@ export class GoogleDriveService implements OnModuleDestroy {
     if (!clientId || !clientSecret) {
       throw new ServiceUnavailableException('Google Drive OAuth is not configured');
     }
+    // Only a grant Google revoked or a token we can no longer decrypt needs the user to
+    // reconnect; timeouts and Google 5xx are transient and must not disable the connection.
+    let needsReconnect = true;
     try {
+      const refreshToken = this.decrypt(connection.encryptedRefreshToken);
+      needsReconnect = false;
       const response = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: {
@@ -447,28 +460,30 @@ export class GoogleDriveService implements OnModuleDestroy {
         body: new URLSearchParams({
           client_id: clientId,
           client_secret: clientSecret,
-          refresh_token: this.decrypt(connection.encryptedRefreshToken),
+          refresh_token: refreshToken,
           grant_type: 'refresh_token',
         }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!response.ok) {
-        throw new Error(`Google token refresh failed with ${response.status}`);
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        needsReconnect = payload?.error === 'invalid_grant';
+        throw new Error(
+          `Google token refresh failed with ${response.status}${
+            payload?.error ? ` (${payload.error})` : ''
+          }`,
+        );
       }
       const tokens = (await response.json()) as GoogleTokenResponse;
       if (!tokens.access_token) {
         throw new Error('Google token refresh did not return an access token');
       }
-      await this.connectionRepository.update(connection.id, {
-        expiresAt: tokens.expires_in
-          ? new Date(Date.now() + tokens.expires_in * 1000)
-          : connection.expiresAt,
-        lastError: null,
-      });
-      return tokens.access_token;
+      const expiresAt = new Date(Date.now() + (tokens.expires_in ?? 3600) * 1000);
+      await this.connectionRepository.update(connection.id, { expiresAt, lastError: null });
+      return { accessToken: tokens.access_token, expiresAt };
     } catch (error) {
       await this.connectionRepository.update(connection.id, {
-        status: 'error',
+        ...(needsReconnect ? { status: 'error' as const } : {}),
         lastError: error instanceof Error ? error.message.slice(0, 4000) : 'Token refresh failed',
       });
       throw error;
