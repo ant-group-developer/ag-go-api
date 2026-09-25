@@ -1,6 +1,6 @@
 import { Column, CreateDateColumn, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
-export type OutboxEventStatus = 'pending' | 'published' | 'failed';
+export type OutboxEventStatus = 'pending' | 'published' | 'failed' | 'dead';
 
 @Entity('outbox_events')
 export class OutboxEventEntity {

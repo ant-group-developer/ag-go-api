@@ -4,8 +4,11 @@ import {
   CopyObjectCommand,
   CreateMultipartUploadCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListMultipartUploadsCommand,
+  ListObjectsV2Command,
   ListPartsCommand,
   PutObjectCommand,
   S3Client,
@@ -177,6 +180,61 @@ export class R2StorageAdapter implements StorageAdapter {
         Key: storageKey,
       }),
     );
+  }
+
+  async deletePrefix(prefix: string, keep?: (storageKey: string) => boolean): Promise<number> {
+    let deleted = 0;
+    let continuationToken: string | undefined;
+    do {
+      // A listing page holds at most 1000 keys, which is also the DeleteObjects batch limit.
+      const page = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      const keys = (page.Contents ?? []).flatMap((object) =>
+        object.Key && !keep?.(object.Key) ? [object.Key] : [],
+      );
+      if (keys.length > 0) {
+        const result = await this.client.send(
+          new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true },
+          }),
+        );
+        const failed = result.Errors ?? [];
+        if (failed.length > 0) {
+          throw new Error(
+            `R2 could not delete ${failed.length} object(s) under ${prefix}: ${failed[0]?.Key} (${failed[0]?.Code})`,
+          );
+        }
+        deleted += keys.length;
+      }
+      continuationToken = page.IsTruncated ? page.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    let keyMarker: string | undefined;
+    let uploadIdMarker: string | undefined;
+    do {
+      const page = await this.client.send(
+        new ListMultipartUploadsCommand({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          KeyMarker: keyMarker,
+          UploadIdMarker: uploadIdMarker,
+        }),
+      );
+      for (const upload of page.Uploads ?? []) {
+        if (upload.Key && upload.UploadId && !keep?.(upload.Key)) {
+          await this.abortMultipartUpload(upload.Key, upload.UploadId);
+        }
+      }
+      keyMarker = page.IsTruncated ? page.NextKeyMarker : undefined;
+      uploadIdMarker = page.IsTruncated ? page.NextUploadIdMarker : undefined;
+    } while (keyMarker);
+    return deleted;
   }
 
   async createMultipartUpload(storageKey: string, contentType: string): Promise<string> {
