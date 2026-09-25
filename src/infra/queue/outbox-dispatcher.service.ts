@@ -1,8 +1,9 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
+import { STORAGE_ADAPTER, type StorageAdapter } from '../../modules/assets/storage/storage-adapter';
 import { MediaQueueService } from './media-queue.service';
 
 @Injectable()
@@ -14,6 +15,7 @@ export class OutboxDispatcherService implements OnModuleDestroy {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly mediaQueue: MediaQueueService,
     private readonly config: ConfigService,
+    @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
   ) {}
 
   start(): void {
@@ -63,6 +65,8 @@ export class OutboxDispatcherService implements OnModuleDestroy {
             renderJobId: this.readString(event.payload.renderJobId) ?? assetId,
             userId: this.readString(event.payload.userId),
           });
+        } else if (event.eventType === 'project.storage.purge') {
+          await this.purgeProjectStorage(event);
         }
         await this.dataSource.getRepository(OutboxEventEntity).update(event.id, {
           status: 'published',
@@ -87,6 +91,21 @@ export class OutboxDispatcherService implements OnModuleDestroy {
     if (this.timer) {
       clearInterval(this.timer);
     }
+  }
+
+  /** Removes a deleted project's R2 objects, keeping the ones other projects still use. */
+  private async purgeProjectStorage(event: OutboxEventEntity): Promise<void> {
+    const prefix = this.readString(event.payload.prefix);
+    if (!prefix?.startsWith('projects/') || !prefix.endsWith('/')) {
+      throw new Error('Outbox event has an invalid project storage prefix');
+    }
+    const keepPrefixes = Array.isArray(event.payload.keepPrefixes)
+      ? event.payload.keepPrefixes.filter((value): value is string => typeof value === 'string')
+      : [];
+    const deleted = await this.storage.deletePrefix(prefix, (key) =>
+      keepPrefixes.some((keepPrefix) => key.startsWith(keepPrefix)),
+    );
+    this.logger.log(`Deleted ${deleted} R2 object(s) under ${prefix}`);
   }
 
   private readString(value: unknown): string | undefined {

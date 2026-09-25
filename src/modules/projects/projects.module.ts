@@ -8,6 +8,7 @@ import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ProvinceEntity } from '../../database/entities/province.entity';
 import { TagEntity } from '../../database/entities/tag.entity';
+import { QueueModule } from '../../infra/queue/queue.module';
 import { AccountModule } from '../account/account.module';
 import { AuditModule } from '../audit/audit.module';
 import { FoldersModule } from '../folders/folders.module';
@@ -19,6 +20,7 @@ import { ProjectsService } from './projects.service';
     AccountModule,
     AuditModule,
     FoldersModule,
+    QueueModule,
     TypeOrmModule.forFeature([
       ProjectEntity,
       ProjectEvaluationSummaryEntity,
