@@ -32,7 +32,13 @@ import {
 } from '../render/watermark-policy';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { CreateUploadSessionDto } from './dto/create-upload-session.dto';
+import { UploadPartsDto } from './dto/upload-parts.dto';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage/storage-adapter';
+import {
+  describePartMismatch,
+  MULTIPART_THRESHOLD_BYTES,
+  multipartLayout,
+} from './upload-multipart';
 
 @Injectable()
 export class AssetsService implements OnModuleInit, OnModuleDestroy {
@@ -84,7 +90,11 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     return this.openUploadSession(
       dto,
       userId,
-      { targetProjectId: project.id, keyPrefix: `projects/${project.id}/originals` },
+      {
+        targetProjectId: project.id,
+        keyPrefix: `projects/${project.id}/originals`,
+        allowMultipart: true,
+      },
       idempotencyKey,
     );
   }
@@ -119,6 +129,8 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       targetProjectId: string | null;
       keyPrefix: string;
       sourceMetadata?: Record<string, unknown>;
+      /** Lets large files go up in parts; the watermark logo is always a single PUT. */
+      allowMultipart?: boolean;
     },
     idempotencyKey?: string,
   ) {
@@ -145,45 +157,63 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     const expiresAt = new Date(
       Date.now() + this.config.getOrThrow<number>('UPLOAD_SESSION_TTL_SECONDS') * 1000,
     );
+    const multipart =
+      Boolean(target.allowMultipart) && dto.fileSizeBytes > MULTIPART_THRESHOLD_BYTES;
+    if (multipart && dto.expectedChecksumSha256) {
+      // R2 has no whole-file SHA-256 for an object assembled from parts.
+      throw new BadRequestException('Checksum verification is not supported for large uploads');
+    }
+    const multipartUploadId = multipart
+      ? await this.storage.createMultipartUpload(storageKey, dto.mimeType.trim())
+      : null;
 
-    const session = await this.dataSource.transaction(async (manager) => {
-      const asset = manager.create(AssetEntity, {
-        id: assetId,
-        assetType: dto.assetType,
-        originalFilename,
-        extension: extension || null,
-        mimeType: dto.mimeType.trim(),
-        checksumSha256: null,
-        fileSizeBytes: String(dto.fileSizeBytes),
-        storageProvider: 'r2',
-        originalBucket: bucketName,
-        originalStorageKey: storageKey,
-        processingStatus: 'uploading',
-        processingError: null,
-        sourceType: 'local',
-        sourceMetadata: target.sourceMetadata ?? {},
-        createdBy: userId,
-      });
-      await manager.save(asset);
-      return manager.save(
-        manager.create(AssetUploadSessionEntity, {
-          id: sessionId,
-          assetId,
-          targetProjectId: target.targetProjectId,
-          storageProvider: asset.storageProvider,
-          bucketName,
-          storageKey,
-          multipartUploadId: null,
-          expectedSizeBytes: String(dto.fileSizeBytes),
-          expectedChecksumSha256: dto.expectedChecksumSha256?.toLowerCase() ?? null,
-          idempotencyKey: normalizedIdempotencyKey ?? null,
-          status: 'initiated',
-          expiresAt,
-          completedAt: null,
+    const session = await this.dataSource
+      .transaction(async (manager) => {
+        const asset = manager.create(AssetEntity, {
+          id: assetId,
+          assetType: dto.assetType,
+          originalFilename,
+          extension: extension || null,
+          mimeType: dto.mimeType.trim(),
+          checksumSha256: null,
+          fileSizeBytes: String(dto.fileSizeBytes),
+          storageProvider: 'r2',
+          originalBucket: bucketName,
+          originalStorageKey: storageKey,
+          processingStatus: 'uploading',
+          processingError: null,
+          sourceType: 'local',
+          sourceMetadata: target.sourceMetadata ?? {},
           createdBy: userId,
-        }),
-      );
-    });
+        });
+        await manager.save(asset);
+        return manager.save(
+          manager.create(AssetUploadSessionEntity, {
+            id: sessionId,
+            assetId,
+            targetProjectId: target.targetProjectId,
+            storageProvider: asset.storageProvider,
+            bucketName,
+            storageKey,
+            multipartUploadId,
+            expectedSizeBytes: String(dto.fileSizeBytes),
+            expectedChecksumSha256: dto.expectedChecksumSha256?.toLowerCase() ?? null,
+            idempotencyKey: normalizedIdempotencyKey ?? null,
+            status: 'initiated',
+            expiresAt,
+            completedAt: null,
+            createdBy: userId,
+          }),
+        );
+      })
+      .catch(async (error: unknown) => {
+        if (multipartUploadId) {
+          await this.storage
+            .abortMultipartUpload(storageKey, multipartUploadId)
+            .catch(() => undefined);
+        }
+        throw error;
+      });
 
     return this.toUploadSessionResponse(session, dto.mimeType);
   }
@@ -194,17 +224,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     userType?: 'ADMIN' | 'USER',
   ) {
-    const session = await this.sessionRepository.findOne({
-      where: isAdminUserType(userType)
-        ? { id: dto.uploadSessionId }
-        : { id: dto.uploadSessionId, createdBy: userId },
-    });
-    if (!session) {
-      throw new NotFoundException('Upload session not found');
-    }
-    if (session.assetId !== assetId) {
-      throw new BadRequestException('Upload session does not belong to this asset');
-    }
+    const session = await this.findUploadSession(assetId, dto.uploadSessionId, userId, userType);
     if (session.status === 'completed') {
       return {
         ...(await this.getAsset(session.assetId)),
@@ -214,7 +234,13 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     }
     this.ensureSessionOpen(session);
 
-    const head = await this.storage.headObject(session.storageKey);
+    let head = await this.storage.headObject(session.storageKey);
+    // No object yet: assemble it from the parts. When it exists, a previous complete call
+    // already did that and only failed afterwards.
+    if (!head && session.multipartUploadId) {
+      await this.completeMultipartUpload(session, session.multipartUploadId);
+      head = await this.storage.headObject(session.storageKey);
+    }
     if (!head) {
       throw new ConflictException('Uploaded object was not found');
     }
@@ -322,17 +348,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     userType?: 'ADMIN' | 'USER',
   ) {
-    const session = await this.sessionRepository.findOne({
-      where: isAdminUserType(userType)
-        ? { id: uploadSessionId }
-        : { id: uploadSessionId, createdBy: userId },
-    });
-    if (!session) {
-      throw new NotFoundException('Upload session not found');
-    }
-    if (session.assetId !== assetId) {
-      throw new BadRequestException('Upload session does not belong to this asset');
-    }
+    const session = await this.findUploadSession(assetId, uploadSessionId, userId, userType);
     if (session.status === 'completed') {
       throw new ConflictException('Completed upload cannot be aborted');
     }
@@ -341,8 +357,52 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       await manager.update(AssetUploadSessionEntity, session.id, { status: 'aborted' });
       await manager.update(AssetEntity, session.assetId, { processingStatus: 'cancelled' });
     });
-    await this.storage.deleteObject(session.storageKey);
+    await this.discardUploadedData(session);
     return { success: true };
+  }
+
+  /** Presigned URLs for parts of a multipart upload, requested in batches as the upload goes. */
+  async getUploadPartUrls(
+    assetId: string,
+    dto: UploadPartsDto,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ) {
+    const session = await this.findUploadSession(assetId, dto.uploadSessionId, userId, userType);
+    if (session.status === 'completed') {
+      throw new ConflictException('Upload session is already completed');
+    }
+    this.ensureSessionOpen(session);
+    if (!session.multipartUploadId || !session.expectedSizeBytes) {
+      throw new BadRequestException('Upload session is not a multipart upload');
+    }
+    const { partCount } = multipartLayout(Number(session.expectedSizeBytes));
+    const partNumbers = [...new Set(dto.partNumbers)];
+    if (partNumbers.some((partNumber) => partNumber > partCount)) {
+      throw new BadRequestException(`This upload has only ${partCount} parts`);
+    }
+    // A large file can take longer than the session TTL; each batch of parts keeps it open.
+    await this.sessionRepository.update(session.id, {
+      status: 'uploading',
+      expiresAt: new Date(
+        Date.now() + this.config.getOrThrow<number>('UPLOAD_SESSION_TTL_SECONDS') * 1000,
+      ),
+    });
+    const expiresInSeconds = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
+    const uploadId = session.multipartUploadId;
+    return {
+      parts: await Promise.all(
+        partNumbers.map(async (partNumber) => ({
+          partNumber,
+          url: await this.storage.getPresignedUploadPartUrl(
+            session.storageKey,
+            uploadId,
+            partNumber,
+            expiresInSeconds,
+          ),
+        })),
+      ),
+    };
   }
 
   async listVariants(assetId: string, userId: string, userType?: 'ADMIN' | 'USER') {
@@ -474,7 +534,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       }
       await this.sessionRepository.update(session.id, { status: 'expired' });
       await this.assetRepository.update(session.assetId, { processingStatus: 'cancelled' });
-      await this.storage.deleteObject(session.storageKey);
+      await this.discardUploadedData(session);
     }
     return expired.filter((session) => session.expiresAt.getTime() < now).length;
   }
@@ -600,6 +660,43 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async findUploadSession(
+    assetId: string,
+    uploadSessionId: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ) {
+    const session = await this.sessionRepository.findOne({
+      where: isAdminUserType(userType)
+        ? { id: uploadSessionId }
+        : { id: uploadSessionId, createdBy: userId },
+    });
+    if (!session) {
+      throw new NotFoundException('Upload session not found');
+    }
+    if (session.assetId !== assetId) {
+      throw new BadRequestException('Upload session does not belong to this asset');
+    }
+    return session;
+  }
+
+  /** Checks that every part arrived with the size the layout expects, then assembles the object. */
+  private async completeMultipartUpload(session: AssetUploadSessionEntity, uploadId: string) {
+    const parts = await this.storage.listMultipartParts(session.storageKey, uploadId);
+    const mismatch = describePartMismatch(parts, Number(session.expectedSizeBytes));
+    if (mismatch) {
+      throw new BadRequestException(`Upload is incomplete: ${mismatch}`);
+    }
+    await this.storage.completeMultipartUpload(session.storageKey, uploadId, parts);
+  }
+
+  private async discardUploadedData(session: AssetUploadSessionEntity) {
+    if (session.multipartUploadId) {
+      await this.storage.abortMultipartUpload(session.storageKey, session.multipartUploadId);
+    }
+    await this.storage.deleteObject(session.storageKey);
+  }
+
   private ensureSessionOpen(session: AssetUploadSessionEntity) {
     if (session.expiresAt.getTime() < Date.now()) {
       void this.sessionRepository.update(session.id, { status: 'expired' });
@@ -615,16 +712,27 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       1,
       Math.floor((session.expiresAt.getTime() - Date.now()) / 1000),
     );
+    // Multipart sessions have no single upload URL: the client asks for part URLs instead.
+    const multipart =
+      session.multipartUploadId && session.expectedSizeBytes
+        ? multipartLayout(Number(session.expectedSizeBytes))
+        : null;
     return {
       assetId: session.assetId,
       uploadSessionId: session.id,
       storageProvider: session.storageProvider,
       storageKey: session.storageKey,
-      uploadUrl: await this.storage.getPresignedPutUrl(
-        session.storageKey,
-        session.asset?.mimeType ?? contentType ?? 'application/octet-stream',
-        Math.min(expiresInSeconds, this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS')),
-      ),
+      uploadUrl: multipart
+        ? null
+        : await this.storage.getPresignedPutUrl(
+            session.storageKey,
+            session.asset?.mimeType ?? contentType ?? 'application/octet-stream',
+            Math.min(
+              expiresInSeconds,
+              this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS'),
+            ),
+          ),
+      multipart,
       expiresAt: session.expiresAt,
       status: session.status,
     };
