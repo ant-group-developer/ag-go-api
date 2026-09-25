@@ -1,16 +1,26 @@
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CopyObjectCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  ListPartsCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Readable } from 'node:stream';
-import type { ObjectHead, StorageAdapter } from './storage-adapter';
+import type { ObjectHead, StorageAdapter, UploadedPart } from './storage-adapter';
+
+/** Parts in flight hold QUEUE_SIZE x PART_BYTES of memory per stream upload. */
+const MULTIPART_PART_BYTES = 16 * 1024 * 1024;
+const MULTIPART_QUEUE_SIZE = 4;
 
 @Injectable()
 export class R2StorageAdapter implements StorageAdapter {
@@ -112,17 +122,35 @@ export class R2StorageAdapter implements StorageAdapter {
     contentType: string,
     contentLength?: number,
   ): Promise<ObjectHead> {
-    const commandInput = {
-      Bucket: this.bucket,
-      Key: storageKey,
-      Body: body,
-      ContentType: contentType,
-      ...(contentLength !== undefined ? { ContentLength: contentLength } : {}),
-    };
-    await this.client.send(new PutObjectCommand(commandInput));
+    if (body instanceof Readable) {
+      // Multipart: a single PUT caps at 5 GB and must finish within one request.
+      await new Upload({
+        client: this.client,
+        params: { Bucket: this.bucket, Key: storageKey, Body: body, ContentType: contentType },
+        partSize: MULTIPART_PART_BYTES,
+        queueSize: MULTIPART_QUEUE_SIZE,
+        leavePartsOnError: false,
+      }).done();
+    } else {
+      await this.client.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: storageKey,
+          Body: body,
+          ContentType: contentType,
+          ...(contentLength !== undefined ? { ContentLength: contentLength } : {}),
+        }),
+      );
+    }
     const result = await this.headObject(storageKey);
     if (!result) {
       throw new Error('Uploaded R2 object was not found');
+    }
+    if (contentLength !== undefined && result.sizeBytes !== contentLength) {
+      await this.deleteObject(storageKey);
+      throw new Error(
+        `Uploaded R2 object is ${result.sizeBytes} bytes, expected ${contentLength} bytes`,
+      );
     }
     return result;
   }
@@ -151,11 +179,107 @@ export class R2StorageAdapter implements StorageAdapter {
     );
   }
 
+  async createMultipartUpload(storageKey: string, contentType: string): Promise<string> {
+    const result = await this.client.send(
+      new CreateMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: storageKey,
+        ContentType: contentType,
+      }),
+    );
+    if (!result.UploadId) {
+      throw new Error('R2 did not return a multipart upload id');
+    }
+    return result.UploadId;
+  }
+
+  async getPresignedUploadPartUrl(
+    storageKey: string,
+    uploadId: string,
+    partNumber: number,
+    expiresInSeconds: number,
+  ): Promise<string> {
+    return getSignedUrl(
+      this.client,
+      new UploadPartCommand({
+        Bucket: this.bucket,
+        Key: storageKey,
+        UploadId: uploadId,
+        PartNumber: partNumber,
+      }),
+      { expiresIn: expiresInSeconds },
+    );
+  }
+
+  async listMultipartParts(storageKey: string, uploadId: string): Promise<UploadedPart[]> {
+    const parts: UploadedPart[] = [];
+    let marker: string | undefined;
+    do {
+      const page = await this.client.send(
+        new ListPartsCommand({
+          Bucket: this.bucket,
+          Key: storageKey,
+          UploadId: uploadId,
+          PartNumberMarker: marker,
+        }),
+      );
+      for (const part of page.Parts ?? []) {
+        if (part.PartNumber !== undefined && part.ETag) {
+          parts.push({
+            partNumber: part.PartNumber,
+            etag: part.ETag,
+            sizeBytes: Number(part.Size ?? 0),
+          });
+        }
+      }
+      marker = page.IsTruncated ? page.NextPartNumberMarker : undefined;
+    } while (marker);
+    return parts;
+  }
+
+  async completeMultipartUpload(
+    storageKey: string,
+    uploadId: string,
+    parts: UploadedPart[],
+  ): Promise<void> {
+    await this.client.send(
+      new CompleteMultipartUploadCommand({
+        Bucket: this.bucket,
+        Key: storageKey,
+        UploadId: uploadId,
+        MultipartUpload: {
+          Parts: [...parts]
+            .sort((a, b) => a.partNumber - b.partNumber)
+            .map((part) => ({ PartNumber: part.partNumber, ETag: part.etag })),
+        },
+      }),
+    );
+  }
+
+  async abortMultipartUpload(storageKey: string, uploadId: string): Promise<void> {
+    try {
+      await this.client.send(
+        new AbortMultipartUploadCommand({
+          Bucket: this.bucket,
+          Key: storageKey,
+          UploadId: uploadId,
+        }),
+      );
+    } catch (error) {
+      if (!this.isNotFound(error)) {
+        throw error;
+      }
+    }
+  }
+
   private isNotFound(error: unknown): boolean {
     if (typeof error !== 'object' || error === null) {
       return false;
     }
-    if ('name' in error && (error.name === 'NotFound' || error.name === 'NoSuchKey')) {
+    if (
+      'name' in error &&
+      (error.name === 'NotFound' || error.name === 'NoSuchKey' || error.name === 'NoSuchUpload')
+    ) {
       return true;
     }
     if ('$metadata' in error && typeof error.$metadata === 'object' && error.$metadata !== null) {

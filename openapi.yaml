@@ -1010,6 +1010,31 @@ paths:
         - bearer: []
       tags: &a20
         - assets
+  /assets/{assetId}/upload-parts:
+    post:
+      operationId: AssetsController_getUploadPartUrls
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadPartsDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      summary: Presigned URL để upload từng phần của phiên upload multipart
+      tags: *a20
   /assets/{assetId}/complete:
     post:
       operationId: AssetsController_completeUpload
@@ -2047,6 +2072,22 @@ components:
         - mimeType
         - fileSizeBytes
         - targetProjectId
+    UploadPartsDto:
+      type: object
+      properties:
+        uploadSessionId:
+          type: string
+          format: uuid
+        partNumbers:
+          minItems: 1
+          maxItems: 100
+          description: Part numbers (1-based) to get presigned upload URLs for
+          type: array
+          items:
+            type: number
+      required:
+        - uploadSessionId
+        - partNumbers
     CompleteUploadDto:
       type: object
       properties:

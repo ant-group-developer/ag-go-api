@@ -29,6 +29,16 @@ export class ImportQueueService implements OnModuleDestroy {
     return jobId;
   }
 
+  /** True while the job is still waiting, delayed or running; false once it is gone, completed or failed. */
+  async hasPendingJob(jobId: string): Promise<boolean> {
+    const job = await this.getQueue().getJob(jobId);
+    if (!job) {
+      return false;
+    }
+    const state = await job.getState();
+    return ['waiting', 'waiting-children', 'delayed', 'prioritized', 'active'].includes(state);
+  }
+
   async onModuleDestroy(): Promise<void> {
     await this.queue?.close();
     await this.connection?.quit();

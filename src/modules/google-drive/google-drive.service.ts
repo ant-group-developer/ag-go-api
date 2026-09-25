@@ -12,7 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import Redis from 'ioredis';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
@@ -229,17 +229,51 @@ export class GoogleDriveService implements OnModuleDestroy {
   }
 
   async disconnect(userId: string) {
-    const connection = await this.connectionRepository.findOne({
-      where: { externalUserId: userId, status: 'active' },
+    // `error` connections can still hold a refresh token (e.g. a transient refresh failure),
+    // so they are revoked and wiped too: disconnecting must leave no usable grant behind.
+    const connections = await this.connectionRepository.find({
+      where: { externalUserId: userId, status: In(['active', 'error']) },
     });
-    if (!connection) {
-      return { success: true };
+    for (const connection of connections) {
+      if (connection.encryptedRefreshToken) {
+        await this.revokeGoogleGrant(connection.encryptedRefreshToken);
+      }
+      connection.status = 'revoked';
+      connection.revokedAt = new Date();
+      connection.encryptedRefreshToken = '';
+      await this.connectionRepository.save(connection);
     }
-    connection.status = 'revoked';
-    connection.revokedAt = new Date();
-    connection.encryptedRefreshToken = '';
-    await this.connectionRepository.save(connection);
     return { success: true };
+  }
+
+  /**
+   * Revokes the grant on Google's side so AG Go disappears from the user's Google Account
+   * permissions. Best-effort: the local token is deleted even if Google is unreachable, and a
+   * grant the user already revoked (400 invalid_token) needs nothing further.
+   */
+  private async revokeGoogleGrant(encryptedRefreshToken: string): Promise<void> {
+    try {
+      const response = await fetch('https://oauth2.googleapis.com/revoke', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: this.decrypt(encryptedRefreshToken) }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        if (payload?.error !== 'invalid_token') {
+          this.logger.warn(
+            `Google grant revocation failed with ${response.status}${
+              payload?.error ? ` (${payload.error})` : ''
+            }`,
+          );
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Google grant revocation failed: ${error instanceof Error ? error.message : error}`,
+      );
+    }
   }
 
   async summarizeSources(sources: SummarizeSourceDto[], projectId: string, userId: string) {
@@ -392,6 +426,14 @@ export class GoogleDriveService implements OnModuleDestroy {
   }
 
   async getDriveAccessToken(connectionId: string, userId: string): Promise<string> {
+    return (await this.refreshDriveAccessToken(connectionId, userId)).accessToken;
+  }
+
+  /** Exchanges the stored refresh token for a new access token and when it expires. */
+  async refreshDriveAccessToken(
+    connectionId: string,
+    userId: string,
+  ): Promise<{ accessToken: string; expiresAt: Date }> {
     const connection = await this.connectionRepository.findOne({
       where: { id: connectionId, externalUserId: userId, status: 'active' },
     });
@@ -403,7 +445,12 @@ export class GoogleDriveService implements OnModuleDestroy {
     if (!clientId || !clientSecret) {
       throw new ServiceUnavailableException('Google Drive OAuth is not configured');
     }
+    // Only a grant Google revoked or a token we can no longer decrypt needs the user to
+    // reconnect; timeouts and Google 5xx are transient and must not disable the connection.
+    let needsReconnect = true;
     try {
+      const refreshToken = this.decrypt(connection.encryptedRefreshToken);
+      needsReconnect = false;
       const response = await fetch('https://oauth2.googleapis.com/token', {
         method: 'POST',
         headers: {
@@ -413,28 +460,30 @@ export class GoogleDriveService implements OnModuleDestroy {
         body: new URLSearchParams({
           client_id: clientId,
           client_secret: clientSecret,
-          refresh_token: this.decrypt(connection.encryptedRefreshToken),
+          refresh_token: refreshToken,
           grant_type: 'refresh_token',
         }),
         signal: AbortSignal.timeout(10_000),
       });
       if (!response.ok) {
-        throw new Error(`Google token refresh failed with ${response.status}`);
+        const payload = (await response.json().catch(() => null)) as { error?: string } | null;
+        needsReconnect = payload?.error === 'invalid_grant';
+        throw new Error(
+          `Google token refresh failed with ${response.status}${
+            payload?.error ? ` (${payload.error})` : ''
+          }`,
+        );
       }
       const tokens = (await response.json()) as GoogleTokenResponse;
       if (!tokens.access_token) {
         throw new Error('Google token refresh did not return an access token');
       }
-      await this.connectionRepository.update(connection.id, {
-        expiresAt: tokens.expires_in
-          ? new Date(Date.now() + tokens.expires_in * 1000)
-          : connection.expiresAt,
-        lastError: null,
-      });
-      return tokens.access_token;
+      const expiresAt = new Date(Date.now() + (tokens.expires_in ?? 3600) * 1000);
+      await this.connectionRepository.update(connection.id, { expiresAt, lastError: null });
+      return { accessToken: tokens.access_token, expiresAt };
     } catch (error) {
       await this.connectionRepository.update(connection.id, {
-        status: 'error',
+        ...(needsReconnect ? { status: 'error' as const } : {}),
         lastError: error instanceof Error ? error.message.slice(0, 4000) : 'Token refresh failed',
       });
       throw error;
