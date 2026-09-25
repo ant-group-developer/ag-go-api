@@ -4,7 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import ffmpegPath from 'ffmpeg-static';
 import { path as ffprobePath } from 'ffprobe-static';
 import { spawn } from 'node:child_process';
-import { createReadStream, createWriteStream, promises as fs } from 'node:fs';
+import { createReadStream, createWriteStream, promises as fs, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -57,6 +57,9 @@ const JOB_HEARTBEAT_MS = 30_000;
 
 /** A `processing` job with no heartbeat for this long has lost its worker. */
 const STALE_JOB_MS = 3 * 60_000;
+
+/** Every temp file a render writes starts with this, so leftovers can be found by name. */
+const TEMP_FILE_PREFIX = 'ag-go-';
 
 /** FFmpeg reports its position on stdout (about twice a second) and keeps stderr for errors. */
 const FFMPEG_PROGRESS_ARGS = ['-nostdin', '-nostats', '-progress', 'pipe:1'];
@@ -202,6 +205,33 @@ export class MediaProcessingService {
     return requeuedRows.map((row) => ({ id: row.id, assetId: row.asset_id }));
   }
 
+  /**
+   * Deletes render temp files left behind when the worker process died mid-job (the
+   * `finally` that removes them never ran), which can be hundreds of MB per 4K source.
+   * Synchronous and only called before the worker takes jobs, so it cannot delete a file a
+   * running render still needs.
+   */
+  removeLeftoverTempFiles(): void {
+    const dir = tmpdir();
+    let removed = 0;
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith(TEMP_FILE_PREFIX)) {
+        continue;
+      }
+      try {
+        rmSync(join(dir, name), { force: true, recursive: true });
+        removed += 1;
+      } catch (error) {
+        this.logger.warn(
+          `Temp file ${name} could not be removed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+    if (removed > 0) {
+      this.logger.warn(`Removed ${removed} temp files left by an interrupted render`);
+    }
+  }
+
   /** Marks a job re-queued by recoverStaleJobs as failed when it could not be enqueued. */
   async failUnqueuedJob(jobId: string, message: string): Promise<void> {
     await this.jobRepository.update(
@@ -253,7 +283,7 @@ export class MediaProcessingService {
         ? await this.renderProfileRepository.findOne({ where: { id: job.renderProfileId } })
         : await findActiveRenderProfile(this.renderProfileRepository);
 
-      const tempPath = join(tmpdir(), `ag-go-${asset.id}-${Date.now()}`);
+      const tempPath = join(tmpdir(), `${TEMP_FILE_PREFIX}${asset.id}-${Date.now()}`);
       try {
         await this.assetRepository.update(asset.id, {
           processingStatus: 'processing',
@@ -525,7 +555,7 @@ export class MediaProcessingService {
     quality: { thumbnail: number },
     profile: RenderProfileEntity | null,
   ): Promise<string> {
-    const posterPath = join(tmpdir(), `ag-go-poster-${asset.id}-${Date.now()}.jpg`);
+    const posterPath = join(tmpdir(), `${TEMP_FILE_PREFIX}poster-${asset.id}-${Date.now()}.jpg`);
     try {
       await this.runProcess(ffmpegPath, [
         '-y',
@@ -573,8 +603,8 @@ export class MediaProcessingService {
     const variantCode = previewVariantCode(size.width);
     const previewKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${variantCode}.mp4`;
     const stamp = `${asset.id}-${size.width}-${Date.now()}`;
-    const previewPath = join(tmpdir(), `ag-go-preview-${stamp}.mp4`);
-    const watermarkPath = join(tmpdir(), `ag-go-watermark-${stamp}.png`);
+    const previewPath = join(tmpdir(), `${TEMP_FILE_PREFIX}preview-${stamp}.mp4`);
+    const watermarkPath = join(tmpdir(), `${TEMP_FILE_PREFIX}watermark-${stamp}.png`);
     try {
       const watermark = await this.createWatermark(size.width, size.height, profile);
       if (watermark) {

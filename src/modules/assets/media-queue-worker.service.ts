@@ -31,6 +31,8 @@ export class MediaQueueWorkerService implements OnModuleDestroy {
     if (this.worker) {
       return;
     }
+    // Before the Worker exists, so no render of this process is using a temp file yet.
+    this.processingService.removeLeftoverTempFiles();
     // libvips sizes its pool from the host's cores too; match the FFmpeg cap.
     sharp.concurrency(this.config.getOrThrow<number>('MEDIA_FFMPEG_THREADS'));
     this.connection = new Redis(this.config.getOrThrow<string>('REDIS_URL'), {

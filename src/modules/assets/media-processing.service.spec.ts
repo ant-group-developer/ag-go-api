@@ -1,4 +1,7 @@
 import type { ConfigService } from '@nestjs/config';
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import os, { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import sharp from 'sharp';
 import type { Repository } from 'typeorm';
@@ -312,5 +315,34 @@ describe('MediaProcessingService runProcess', () => {
     await expect(
       runProcess()(process.execPath, fakeFfmpeg(1000), { stallMs: 300, timeoutMs: 400 }),
     ).rejects.toThrow('Media processing timed out');
+  });
+});
+
+describe('MediaProcessingService removeLeftoverTempFiles', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  it('deletes only render temp files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cleanup-test-'));
+    jest.spyOn(os, 'tmpdir').mockReturnValue(dir);
+    for (const name of ['ag-go-asset-1', 'ag-go-preview-a-1920-1.mp4', 'other.txt']) {
+      writeFileSync(join(dir, name), 'x');
+    }
+    const service = new MediaProcessingService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    try {
+      service.removeLeftoverTempFiles();
+      expect(readdirSync(dir)).toEqual(['other.txt']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
