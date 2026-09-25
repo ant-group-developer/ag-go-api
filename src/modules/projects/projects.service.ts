@@ -4,6 +4,7 @@ import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { ListResponseDto } from '../../common/dto/list-response.dto';
+import { OutboxService } from '../../common/outbox.service';
 import { CategoryEntity } from '../../database/entities/category.entity';
 import { CountryEntity } from '../../database/entities/country.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
@@ -38,6 +39,7 @@ export class ProjectsService {
     private readonly folderAccessService: FolderAccessService,
     private readonly actorEnrichment: ActorEnrichmentService,
     private readonly auditService: AuditService,
+    private readonly outboxService: OutboxService,
   ) {}
 
   async list(query: ListProjectsQueryDto, userId: string, userType?: 'ADMIN' | 'USER') {
@@ -332,7 +334,56 @@ export class ProjectsService {
   async remove(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
     const project = await this.findOne(id, userId, userType);
     await this.requireFolderAccess(project.folderId, userId, 'editor', userType);
-    await this.projectRepository.remove(project);
+    const storagePrefix = `projects/${id}/`;
+    await this.dataSource.transaction(async (manager) => {
+      // Assets stored under this project's prefix; one attached to another project stays.
+      const ownedAssets = (await manager.query(
+        `SELECT asset.id, asset.original_storage_key AS "originalStorageKey",
+           EXISTS (
+             SELECT 1 FROM project_media media
+             WHERE media.asset_id = asset.id AND media.project_id <> $2
+           ) AS shared
+         FROM assets asset
+         WHERE asset.original_storage_key LIKE $1 || '%'`,
+        [storagePrefix, id],
+      )) as Array<{ id: string; originalStorageKey: string; shared: boolean }>;
+      const sharedAssets = ownedAssets.filter((asset) => asset.shared);
+      const keepPrefixes = [
+        ...sharedAssets.map((asset) => asset.originalStorageKey),
+        ...sharedAssets.map((asset) => `${storagePrefix}variants/${asset.id}/`),
+      ];
+      if (sharedAssets.length > 0) {
+        const variants = (await manager.query(
+          'SELECT storage_key AS "storageKey" FROM asset_variants WHERE asset_id = ANY($1::uuid[])',
+          [sharedAssets.map((asset) => asset.id)],
+        )) as Array<{ storageKey: string }>;
+        keepPrefixes.push(...variants.map((variant) => variant.storageKey));
+      }
+
+      await manager.delete(ProjectEntity, id);
+      const removableAssetIds = ownedAssets
+        .filter((asset) => !asset.shared)
+        .map((asset) => asset.id);
+      if (removableAssetIds.length > 0) {
+        await manager.query('DELETE FROM assets WHERE id = ANY($1::uuid[])', [removableAssetIds]);
+      }
+      // Their ZIP files live under the prefix too.
+      await manager.query(
+        `UPDATE download_jobs
+         SET status = CASE WHEN status = 'completed' THEN 'expired' ELSE 'cancelled' END,
+             updated_at = now()
+         WHERE project_id = $1 AND status IN ('queued', 'processing', 'completed')`,
+        [id],
+      );
+      await manager.save(
+        this.outboxService.create(manager, {
+          eventType: 'project.storage.purge',
+          aggregateType: 'project',
+          aggregateId: id,
+          payload: { prefix: storagePrefix, keepPrefixes },
+        }),
+      );
+    });
     await this.auditService.record({
       projectId: id,
       actorUserId: userId,

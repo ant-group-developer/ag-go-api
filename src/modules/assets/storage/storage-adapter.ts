@@ -28,6 +28,11 @@ export interface StorageAdapter {
   ): Promise<ObjectHead>;
   copyObject(sourceKey: string, targetKey: string): Promise<ObjectHead>;
   deleteObject(storageKey: string): Promise<void>;
+  /**
+   * Deletes every object under `prefix` except the keys `keep` returns true for, and aborts the
+   * multipart uploads still open there. Returns the number of objects deleted.
+   */
+  deletePrefix(prefix: string, keep?: (storageKey: string) => boolean): Promise<number>;
   /** Starts a multipart upload the browser fills part by part; returns its upload id. */
   createMultipartUpload(storageKey: string, contentType: string): Promise<string>;
   getPresignedUploadPartUrl(

@@ -50,6 +50,7 @@ import { GoogleDriveImportDeduplicationMigration1880000000000 } from './migratio
 import { GoogleDriveImportDefaultPolicyMigration1890000000000 } from './migrations/1890000000000-google-drive-import-default-policy';
 import { RenderSizesMigration1900000000000 } from './migrations/1900000000000-render-sizes';
 import { BackfillImportedProjectStatusMigration1910000000000 } from './migrations/1910000000000-backfill-imported-project-status';
+import { OutboxDeadStatusMigration1920000000000 } from './migrations/1920000000000-outbox-dead-status';
 
 loadEnv();
 
@@ -117,6 +118,7 @@ export const AppDataSource = new DataSource({
     GoogleDriveImportDefaultPolicyMigration1890000000000,
     RenderSizesMigration1900000000000,
     BackfillImportedProjectStatusMigration1910000000000,
+    OutboxDeadStatusMigration1920000000000,
   ],
   synchronize: false,
 });

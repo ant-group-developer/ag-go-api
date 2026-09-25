@@ -551,6 +551,23 @@ export class GoogleDriveService implements OnModuleDestroy {
         finishedAt: Date | null;
       }>();
     const statsByBatch = new Map(stats.map((row) => [row.batchId, row]));
+    // Folders picked as sources; only these roots are stored, not the subfolders traversed.
+    const folderItems = await this.itemRepository
+      .createQueryBuilder('item')
+      .select(['item.batchId', 'item.sourceFileId', 'item.sourceName', 'item.status'])
+      .where('item.batch_id IN (:...batchIds)', { batchIds: batches.map((batch) => batch.id) })
+      .andWhere("item.source_mime_type LIKE '%folder%'")
+      .orderBy('item.created_at', 'ASC')
+      .getMany();
+    const foldersByBatch = new Map<
+      string,
+      Array<{ fileId: string | null; name: string; status: string }>
+    >();
+    for (const item of folderItems) {
+      const folders = foldersByBatch.get(item.batchId) ?? [];
+      folders.push({ fileId: item.sourceFileId, name: item.sourceName, status: item.status });
+      foldersByBatch.set(item.batchId, folders);
+    }
     const enriched = await this.actorEnrichment.enrich(
       batches as unknown as Record<string, unknown>[],
       [{ id: 'createdBy', target: 'createdByUser' }],
@@ -569,6 +586,7 @@ export class GoogleDriveService implements OnModuleDestroy {
         importedBytes: String(row?.importedBytes ?? 0),
         reusedCount: Number(row?.reusedCount ?? 0),
         finishedAt: finished ? (row?.finishedAt ?? batch.updatedAt) : null,
+        sourceFolders: foldersByBatch.get(batch.id as string) ?? [],
       };
     });
   }
