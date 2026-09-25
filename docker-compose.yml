@@ -20,10 +20,11 @@ services:
     restart: unless-stopped
 
   worker:
+    # Reuses the image built by `api`. Declaring `build` here too makes Compose
+    # build both services in parallel and race on the same tag
+    # ("image ... already exists").
     image: ag-go-api:${TAG:-latest}
-    build:
-      context: .
-      dockerfile: Dockerfile
+    pull_policy: never
     command: ['node', 'dist/workers/worker.js']
     env_file:
       - .env

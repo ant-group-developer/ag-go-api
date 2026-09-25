@@ -8,9 +8,11 @@ import { AssetVariantEntity } from '../../database/entities/asset-variant.entity
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { DownloadJobItemEntity } from '../../database/entities/download-job-item.entity';
 import { DownloadJobEntity } from '../../database/entities/download-job.entity';
+import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import type { DownloadQueueJobData } from '../../infra/queue/download-queue.service';
 import { DOWNLOAD_JOB, DOWNLOAD_QUEUE } from '../../infra/queue/queue.constants';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
+import { findRenderedVariant, renderedFilename } from './rendered-variant';
 
 type ZipEntry = { name: string; body: Buffer };
 
@@ -30,6 +32,8 @@ export class DownloadWorkerService implements OnModuleDestroy {
     private readonly assetRepository: Repository<AssetEntity>,
     @InjectRepository(AssetVariantEntity)
     private readonly variantRepository: Repository<AssetVariantEntity>,
+    @InjectRepository(RenderProfileEntity)
+    private readonly profileRepository: Repository<RenderProfileEntity>,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
   ) {}
 
@@ -83,22 +87,31 @@ export class DownloadWorkerService implements OnModuleDestroy {
         if (!asset) {
           throw new Error(`Asset ${item.assetId} not found`);
         }
-        const variant =
-          download.downloadType === 'rendered'
-            ? await this.variantRepository.findOne({
-                where: { assetId: asset.id, variantCode: 'preview', status: 'ready' },
-              })
-            : null;
-        const key = variant?.storageKey ?? asset.originalStorageKey;
+        let key = asset.originalStorageKey;
+        let filename = asset.originalFilename;
+        if (download.downloadType === 'rendered') {
+          const variant = await findRenderedVariant(
+            this.variantRepository,
+            this.profileRepository,
+            asset.id,
+          );
+          if (!variant) {
+            throw new Error(`Rendered variant of ${asset.originalFilename} is not ready`);
+          }
+          key = variant.storageKey;
+          filename = renderedFilename(asset.originalFilename, variant.mimeType);
+        }
         entries.push({
-          name: `${item.projectMediaId}-${asset.originalFilename}`,
+          name: `${item.projectMediaId}-${filename}`,
           body: await streamToBuffer(this.storage.readObject(key)),
         });
         await this.itemRepository.update(item.id, { status: 'added' });
         await this.jobRepository.increment({ id: download.id }, 'completedItems', 1);
       }
       const zip = createStoredZip(entries);
-      const storageKey = `downloads/${download.externalUserId}/${download.id}.zip`;
+      const storageKey = download.projectId
+        ? `projects/${download.projectId}/downloads/${download.externalUserId}/${download.id}.zip`
+        : `downloads/${download.externalUserId}/${download.id}.zip`;
       const head = await this.storage.putObject(storageKey, zip, 'application/zip');
       await this.jobRepository.update(download.id, {
         status: 'completed',

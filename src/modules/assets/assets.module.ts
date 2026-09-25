@@ -8,6 +8,7 @@ import { MediaRenderJobEntity } from '../../database/entities/media-render-job.e
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderBatchEntity } from '../../database/entities/render-batch.entity';
+import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { QueueModule } from '../../infra/queue/queue.module';
 import { FoldersModule } from '../folders/folders.module';
 import { AssetsController } from './assets.controller';
@@ -27,11 +28,13 @@ import { StorageModule } from './storage/storage.module';
       AssetVariantEntity,
       MediaRenderJobEntity,
       RenderBatchEntity,
+      RenderProfileEntity,
       ProjectMediaEntity,
       ProjectEntity,
     ]),
   ],
   controllers: [AssetsController],
   providers: [AuthContextService, AssetsService, MediaProcessingService, MediaQueueWorkerService],
+  exports: [AssetsService],
 })
 export class AssetsModule {}

@@ -2,11 +2,11 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Inject } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
@@ -18,9 +18,16 @@ import { ProjectEvaluationSummaryEntity } from '../../database/entities/project-
 import { ProjectMediaEvaluationEntity } from '../../database/entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
+import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { AuditService } from '../audit/audit.service';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
+import { isPreviewVariantCode, pickPreviewVariant } from '../render/render-sizes';
+import {
+  findActiveRenderProfile,
+  isVariantServable,
+  THUMBNAIL_VARIANT_CODE,
+} from '../render/watermark-policy';
 import { CreateProjectMediaDto } from './dto/create-project-media.dto';
 import { ReorderProjectMediaDto } from './dto/reorder-project-media.dto';
 import { SetProjectThumbnailDto } from './dto/set-project-thumbnail.dto';
@@ -85,31 +92,54 @@ export class MediaService {
     const variants = await this.dataSource.getRepository(AssetVariantEntity).findBy({
       assetId: In(items.map((item) => item.assetId)),
     });
-    const previewVariants = new Map(
-      variants
-        .filter((variant) => variant.variantCode === 'preview' && variant.hasWatermark)
-        .map((variant) => [variant.assetId, variant]),
+    const activeProfile = await findActiveRenderProfile(
+      this.dataSource.getRepository(RenderProfileEntity),
     );
+    const servable = variants.filter(
+      (variant) => variant.status === 'ready' && isVariantServable(variant, activeProfile),
+    );
+    const ttl = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
     const enrichedItems = await this.actorEnrichment.enrich(
       (await Promise.all(
         items.map(async (item) => {
-          const previewVariant = previewVariants.get(item.assetId);
+          const assetVariants = servable.filter((variant) => variant.assetId === item.assetId);
+          const previews = assetVariants
+            .filter((variant) => isPreviewVariantCode(variant.variantCode))
+            .sort((a, b) => (a.width ?? 0) - (b.width ?? 0));
+          const largestPreview = pickPreviewVariant(previews);
+          const thumbnail = assetVariants.find(
+            (variant) => variant.variantCode === THUMBNAIL_VARIANT_CODE,
+          );
           const sourceMetadata = item.asset.sourceMetadata ?? {};
-          const previewUrl =
-            previewVariant?.status === 'ready'
-              ? await this.storage.getPresignedGetUrl(
-                  previewVariant.storageKey,
-                  previewVariant.mimeType,
-                  this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS'),
-                )
-              : null;
           return Object.assign(item, {
             durationSeconds: readNumberMetadata(sourceMetadata, ['durationSeconds', 'duration']),
-            width: previewVariant?.width ?? readNumberMetadata(sourceMetadata, ['width']),
-            height: previewVariant?.height ?? readNumberMetadata(sourceMetadata, ['height']),
-            previewUrl,
-            previewVariantCode: previewVariant?.variantCode ?? null,
-            watermarkVariant: previewVariant?.hasWatermark ? previewVariant.variantCode : null,
+            width: readNumberMetadata(sourceMetadata, ['width']) ?? largestPreview?.width ?? null,
+            height:
+              readNumberMetadata(sourceMetadata, ['height']) ?? largestPreview?.height ?? null,
+            // Lists show the un-watermarked thumbnail; the watermarked preview is for viewing.
+            thumbnailUrl: thumbnail
+              ? await this.storage.getPresignedGetUrl(thumbnail.storageKey, thumbnail.mimeType, ttl)
+              : null,
+            previewUrl: largestPreview
+              ? await this.storage.getPresignedGetUrl(
+                  largestPreview.storageKey,
+                  largestPreview.mimeType,
+                  ttl,
+                )
+              : null,
+            previewVariants: previews.map((variant) => ({
+              variantCode: variant.variantCode,
+              width: variant.width,
+              height: variant.height,
+            })),
+            previewVariantCode: largestPreview?.variantCode ?? null,
+            watermarkVariant: largestPreview?.hasWatermark ? largestPreview.variantCode : null,
+            creatorName:
+              typeof sourceMetadata.driveCreator === 'string' ? sourceMetadata.driveCreator : null,
+            modifiedAt:
+              typeof sourceMetadata.modifiedTime === 'string'
+                ? sourceMetadata.modifiedTime
+                : item.asset.updatedAt,
           });
         }),
       )) as unknown as Array<Record<string, unknown>>,
@@ -160,7 +190,7 @@ export class MediaService {
             originalBucket: dto.originalBucket?.trim() || 'ag-go-media',
             originalStorageKey:
               dto.originalStorageKey?.trim() ||
-              `projects/${projectId}/assets/${uuidv7()}-${dto.originalFilename.trim()}`,
+              `projects/${projectId}/originals/${uuidv7()}-${dto.originalFilename.trim()}`,
             processingStatus: 'uploaded',
             processingError: null,
             sourceType: 'local',

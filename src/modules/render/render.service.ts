@@ -9,6 +9,9 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
+import { isAdminUserType } from '../../common/auth/user-type';
+import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
+import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
@@ -17,7 +20,19 @@ import { RenderProfileEntity } from '../../database/entities/render-profile.enti
 import { MediaQueueService } from '../../infra/queue/media-queue.service';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateRenderBatchDto } from './dto/create-render-batch.dto';
+import {
+  RerenderMediaType,
+  RerenderWatermarkDto,
+  RerenderWatermarkScope,
+} from './dto/rerender-watermark.dto';
 import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
+import { normalizePreviewWidths, PREVIEW_VARIANT_SQL } from './render-sizes';
+import { normalizeWatermarkConfig } from './watermark-config';
+
+const AUTO_JOBS_DEFAULT_LIMIT = 200;
+const AUTO_JOBS_MAX_LIMIT = 500;
+
+export type RenderJobSource = 'batch' | 'upload' | 'import' | 'retry' | 'other';
 
 @Injectable()
 export class RenderService {
@@ -33,6 +48,8 @@ export class RenderService {
     private readonly projectRepository: Repository<ProjectEntity>,
     @InjectRepository(ProjectMediaEntity)
     private readonly mediaRepository: Repository<ProjectMediaEntity>,
+    @InjectRepository(AssetEntity)
+    private readonly assetRepository: Repository<AssetEntity>,
     private readonly folderAccess: FolderAccessService,
     private readonly mediaQueue: MediaQueueService,
     private readonly actorEnrichment: ActorEnrichmentService,
@@ -53,6 +70,14 @@ export class RenderService {
     const current = await this.profileRepository.findOne({ where: { id, isActive: true } });
     if (!current) {
       throw new NotFoundException('Active render profile not found');
+    }
+    if (dto.watermarkConfig?.logoAssetId) {
+      const logo = await this.assetRepository.findOne({
+        where: { id: dto.watermarkConfig.logoAssetId, assetType: 'image' },
+      });
+      if (!logo) {
+        throw new BadRequestException('Watermark logo asset must be an image');
+      }
     }
 
     return this.dataSource.transaction(async (manager) => {
@@ -83,7 +108,20 @@ export class RenderService {
           videoBitrateBps:
             dto.videoBitrateBps === undefined ? latest.videoBitrateBps : dto.videoBitrateBps,
           watermarkEnabled: dto.watermarkEnabled ?? latest.watermarkEnabled,
-          watermarkConfig: dto.watermarkConfig ?? latest.watermarkConfig,
+          watermarkConfig:
+            dto.watermarkConfig === undefined
+              ? latest.watermarkConfig
+              : normalizeWatermarkConfig({
+                  ...(latest.watermarkConfig ?? {}),
+                  ...(dto.watermarkConfig as Record<string, unknown>),
+                }),
+          renderSizes:
+            dto.renderSizes === undefined
+              ? latest.renderSizes
+              : {
+                  previewWidths: normalizePreviewWidths(dto.renderSizes.previewWidths),
+                  thumbnailWidth: dto.renderSizes.thumbnailWidth,
+                },
           isActive: true,
           createdBy: userId,
         }),
@@ -100,10 +138,12 @@ export class RenderService {
       throw new BadRequestException('projectId, folderId or projectMediaIds is required');
     }
 
-    const profile = await this.profileRepository.findOne({
-      where: { code: 'default', isActive: true },
-      order: { profileVersion: 'DESC' },
-    });
+    const profile = dto.renderProfileId
+      ? await this.profileRepository.findOne({ where: { id: dto.renderProfileId, isActive: true } })
+      : await this.profileRepository.findOne({
+          where: { code: 'default', isActive: true },
+          order: { profileVersion: 'DESC' },
+        });
     if (!profile) {
       throw new ConflictException('Default render profile is not configured');
     }
@@ -196,6 +236,71 @@ export class RenderService {
     return enrichedBatch as unknown as RenderBatchEntity;
   }
 
+  async rerenderWatermark(dto: RerenderWatermarkDto, userId: string, userType?: 'ADMIN' | 'USER') {
+    const mediaQuery = this.mediaRepository
+      .createQueryBuilder('media')
+      .innerJoin(AssetEntity, 'asset', 'asset.id = media.asset_id')
+      .innerJoin(ProjectEntity, 'project', 'project.id = media.project_id');
+
+    if (dto.scope === RerenderWatermarkScope.PROJECT) {
+      if (!dto.projectIds?.length) {
+        throw new BadRequestException('projectIds is required for PROJECT scope');
+      }
+      mediaQuery.andWhere('media.project_id IN (:...projectIds)', {
+        projectIds: [...new Set(dto.projectIds)],
+      });
+    }
+    if (dto.scope === RerenderWatermarkScope.FILTER) {
+      if (dto.dateFrom)
+        mediaQuery.andWhere('project.created_at >= :dateFrom', { dateFrom: dto.dateFrom });
+      if (dto.dateTo) mediaQuery.andWhere('project.created_at <= :dateTo', { dateTo: dto.dateTo });
+      if (dto.categoryIds?.length) {
+        mediaQuery.andWhere('project.category_id IN (:...categoryIds)', {
+          categoryIds: [...new Set(dto.categoryIds)],
+        });
+      }
+    }
+    if (dto.scope === RerenderWatermarkScope.NOT_WATERMARKED) {
+      // Any ready preview without a watermark (or no ready preview at all) needs a re-render.
+      // Thumbnails are never watermarked, so they are ignored here.
+      mediaQuery.andWhere(
+        `(EXISTS (
+          SELECT 1 FROM asset_variants av
+          WHERE av.asset_id = media.asset_id
+            AND av.status = 'ready'
+            AND ${PREVIEW_VARIANT_SQL}
+            AND av.has_watermark = false
+        ) OR NOT EXISTS (
+          SELECT 1 FROM asset_variants av
+          WHERE av.asset_id = media.asset_id
+            AND av.status = 'ready'
+            AND ${PREVIEW_VARIANT_SQL}
+        ))`,
+      );
+    }
+    if (dto.mediaType === RerenderMediaType.IMAGE) {
+      mediaQuery.andWhere('asset.asset_type = :assetType', { assetType: 'image' });
+    } else if (dto.mediaType === RerenderMediaType.VIDEO) {
+      mediaQuery.andWhere('asset.asset_type = :assetType', { assetType: 'video' });
+    }
+
+    const media = await mediaQuery.select('media.id', 'id').getRawMany<{ id: string }>();
+    if (media.length === 0) {
+      return { scope: dto.scope, matchedMedia: 0, enqueuedJobs: 0, batchId: null };
+    }
+    const batch = await this.createBatch(
+      { projectMediaIds: media.map((item) => item.id) },
+      userId,
+      userType,
+    );
+    return {
+      scope: dto.scope,
+      matchedMedia: media.length,
+      enqueuedJobs: batch.totalJobs,
+      batchId: batch.id,
+    };
+  }
+
   async getBatch(
     id: string,
     userId: string,
@@ -211,6 +316,254 @@ export class RenderService {
       [{ id: 'createdBy', target: 'createdByUser' }],
     );
     return enrichedBatch as unknown as RenderBatchEntity;
+  }
+
+  async listBatches(projectId: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    const project = await this.projectRepository.findOne({ where: { id: projectId } });
+    if (
+      !project ||
+      !(await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))
+    ) {
+      throw new ForbiddenException('Insufficient project permission');
+    }
+    return this.enrichBatches(
+      await this.batchRepository.find({
+        where: { projectId },
+        order: { createdAt: 'DESC' },
+        take: 50,
+      }),
+    );
+  }
+
+  async listAllBatches(userId: string, userType?: 'ADMIN' | 'USER') {
+    const batches = await this.batchRepository.find({
+      order: { createdAt: 'DESC' },
+    });
+    if (isAdminUserType(userType)) {
+      return this.enrichBatches(batches);
+    }
+    const visible: RenderBatchEntity[] = [];
+    for (const batch of batches) {
+      if (batch.projectId) {
+        const project = await this.projectRepository.findOne({ where: { id: batch.projectId } });
+        if (
+          project &&
+          (await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))
+        ) {
+          visible.push(batch);
+        }
+      } else if (
+        batch.folderId &&
+        (await this.folderAccess.canAccess(batch.folderId, userId, 'viewer', userType))
+      ) {
+        visible.push(batch);
+      }
+    }
+    return this.enrichBatches(visible);
+  }
+
+  /**
+   * Adds what the render history table shows: the project (or how many projects a batch spans),
+   * the folder, the render profile and who started the batch.
+   */
+  private async enrichBatches(batches: RenderBatchEntity[]) {
+    if (batches.length === 0) {
+      return [];
+    }
+    const batchIds = batches.map((batch) => batch.id);
+    const [projectSummaries, folders, profiles] = await Promise.all([
+      this.dataSource.query(
+        `SELECT job.render_batch_id AS "batchId",
+                COUNT(DISTINCT media.project_id)::int AS "projectCount",
+                MIN(project.name) AS "projectName"
+         FROM media_render_jobs job
+         INNER JOIN project_media media ON media.asset_id = job.asset_id
+         INNER JOIN projects project ON project.id = media.project_id
+         WHERE job.render_batch_id = ANY($1::uuid[])
+         GROUP BY job.render_batch_id`,
+        [batchIds],
+      ) as Promise<Array<{ batchId: string; projectCount: number; projectName: string | null }>>,
+      this.dataSource.query(
+        `SELECT id, path_text AS "pathText" FROM folders WHERE id = ANY($1::uuid[])`,
+        [[...new Set(batches.flatMap((batch) => (batch.folderId ? [batch.folderId] : [])))]],
+      ) as Promise<Array<{ id: string; pathText: string }>>,
+      this.profileRepository.findBy({
+        id: In([...new Set(batches.map((batch) => batch.renderProfileId))]),
+      }),
+    ]);
+    const summaryByBatch = new Map(projectSummaries.map((row) => [row.batchId, row]));
+    const folderById = new Map(folders.map((folder) => [folder.id, folder.pathText]));
+    const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+    return this.actorEnrichment.enrich(
+      batches.map((batch) => {
+        const summary = summaryByBatch.get(batch.id);
+        const profile = profileById.get(batch.renderProfileId);
+        return {
+          ...batch,
+          projectName: summary?.projectName ?? null,
+          projectCount: summary?.projectCount ?? 0,
+          folderPath: batch.folderId ? (folderById.get(batch.folderId) ?? null) : null,
+          profileName: profile?.name ?? null,
+          profileVersion: profile?.profileVersion ?? null,
+        };
+      }) as unknown as Array<Record<string, unknown>>,
+      [{ id: 'createdBy', target: 'createdByUser' }],
+    );
+  }
+
+  /** Jobs of a batch, described by {@link describeJobs}. */
+  async listJobs(batchId: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    const batch = await this.getBatch(batchId, userId, userType);
+    const jobs = await this.jobRepository.find({
+      where: { renderBatchId: batch.id },
+      order: { createdAt: 'ASC' },
+    });
+    return this.describeJobs(jobs);
+  }
+
+  /**
+   * Jobs queued automatically outside any batch: after an upload, a Google Drive import or a
+   * per-file retry. Newest first; non-admins only see jobs of projects they can view.
+   */
+  async listAutoJobs(
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    options: { projectId?: string; limit?: number } = {},
+  ) {
+    const limit = Math.min(
+      Math.max(Math.trunc(options.limit ?? AUTO_JOBS_DEFAULT_LIMIT), 1),
+      AUTO_JOBS_MAX_LIMIT,
+    );
+    const query = this.jobRepository
+      .createQueryBuilder('job')
+      .where('job.render_batch_id IS NULL')
+      .orderBy('job.createdAt', 'DESC')
+      .take(limit);
+
+    if (options.projectId) {
+      const project = await this.projectRepository.findOne({ where: { id: options.projectId } });
+      if (
+        !project ||
+        !(await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))
+      ) {
+        throw new ForbiddenException('Insufficient project permission');
+      }
+      query.andWhere(
+        `EXISTS (SELECT 1 FROM project_media media
+                 WHERE media.asset_id = job.asset_id AND media.project_id = :projectId)`,
+        { projectId: project.id },
+      );
+    } else if (!isAdminUserType(userType)) {
+      const folderIds = await this.folderAccess.accessibleFolderIds(userId, userType);
+      if (folderIds.length === 0) {
+        return [];
+      }
+      query.andWhere(
+        `EXISTS (SELECT 1 FROM project_media media
+                 INNER JOIN projects project ON project.id = media.project_id
+                 WHERE media.asset_id = job.asset_id AND project.folder_id IN (:...folderIds))`,
+        { folderIds },
+      );
+    }
+    return this.describeJobs(await query.getMany());
+  }
+
+  /**
+   * Adds the source file (name, size, resolution), its project, the variants it currently has,
+   * what queued the job and who did, so the UI can compare the original with the rendered outputs.
+   */
+  private async describeJobs(jobs: MediaRenderJobEntity[]) {
+    const assetIds = [...new Set(jobs.map((job) => job.assetId))];
+    if (assetIds.length === 0) {
+      return [];
+    }
+    const [assets, variants, projects] = await Promise.all([
+      this.assetRepository.findBy({ id: In(assetIds) }),
+      this.dataSource.getRepository(AssetVariantEntity).find({
+        where: { assetId: In(assetIds), status: 'ready' },
+        order: { width: 'ASC' },
+      }),
+      this.dataSource.query(
+        `SELECT DISTINCT ON (media.asset_id)
+                media.asset_id AS "assetId", project.id, project.name
+         FROM project_media media
+         INNER JOIN projects project ON project.id = media.project_id
+         WHERE media.asset_id = ANY($1::uuid[])
+         ORDER BY media.asset_id, media.created_at ASC`,
+        [assetIds],
+      ) as Promise<Array<{ assetId: string; id: string; name: string }>>,
+    ]);
+    const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+    const projectByAsset = new Map(projects.map((project) => [project.assetId, project]));
+    return this.actorEnrichment.enrich(
+      jobs.map((job) => {
+        const asset = assetById.get(job.assetId);
+        const metadata = asset?.sourceMetadata ?? {};
+        const project = projectByAsset.get(job.assetId);
+        return {
+          ...job,
+          source: renderJobSource(job),
+          asset: asset
+            ? {
+                id: asset.id,
+                assetType: asset.assetType,
+                originalFilename: asset.originalFilename,
+                mimeType: asset.mimeType,
+                fileSizeBytes: asset.fileSizeBytes,
+                processingStatus: asset.processingStatus,
+                width: readNumber(metadata.width),
+                height: readNumber(metadata.height),
+                durationSeconds: readNumber(metadata.durationSeconds),
+              }
+            : null,
+          project: project ? { id: project.id, name: project.name } : null,
+          outputs: variants
+            .filter((variant) => variant.assetId === job.assetId)
+            .map((variant) => ({
+              variantCode: variant.variantCode,
+              mimeType: variant.mimeType,
+              width: variant.width,
+              height: variant.height,
+              fileSizeBytes: variant.fileSizeBytes,
+              hasWatermark: variant.hasWatermark,
+              renderVersion: variant.renderVersion,
+            })),
+        };
+      }) as unknown as Array<Record<string, unknown>>,
+      [{ id: 'createdBy', target: 'createdByUser' }],
+    );
+  }
+
+  async retryJob(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    const job = await this.jobRepository.findOne({ where: { id } });
+    if (!job) {
+      throw new NotFoundException('Render job not found');
+    }
+    if (job.renderBatchId) {
+      await this.getBatch(job.renderBatchId, userId, userType);
+    } else {
+      await this.assertAssetRenderAccess(job.assetId, userId, userType);
+    }
+    if (job.status !== 'failed') {
+      throw new ConflictException('Only failed render jobs can be retried');
+    }
+    await this.jobRepository.update(id, {
+      status: 'queued',
+      progressPercent: 0,
+      progressMessage: 'Queued for retry',
+      errorCode: null,
+      errorMessage: null,
+      startedAt: null,
+      finishedAt: null,
+    });
+    // Failed BullMQ jobs are kept (removeOnFail: false), so re-adding with the same id is a no-op.
+    await this.mediaQueue.addProcessingJob({
+      eventId: `${job.id}-retry-${uuidv7()}`,
+      assetId: job.assetId,
+      renderJobId: job.id,
+      userId,
+    });
+    return this.jobRepository.findOneOrFail({ where: { id } });
   }
 
   async cancelBatch(
@@ -247,6 +600,27 @@ export class RenderService {
     return this.mediaRepository.findBy({ projectId: In(projects.map((project) => project.id)) });
   }
 
+  /** Jobs queued outside a batch: the user must be able to edit a project holding the asset. */
+  private async assertAssetRenderAccess(
+    assetId: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<void> {
+    const rows = (await this.dataSource.query(
+      `SELECT DISTINCT project.folder_id AS "folderId"
+       FROM project_media media
+       INNER JOIN projects project ON project.id = media.project_id
+       WHERE media.asset_id = $1`,
+      [assetId],
+    )) as Array<{ folderId: string }>;
+    for (const row of rows) {
+      if (await this.folderAccess.canAccess(row.folderId, userId, 'editor', userType)) {
+        return;
+      }
+    }
+    throw new ForbiddenException('Insufficient render job permission');
+  }
+
   private async assertBatchAccess(
     batch: RenderBatchEntity,
     userId: string,
@@ -269,4 +643,26 @@ export class RenderService {
       throw new ForbiddenException('Insufficient render batch permission');
     }
   }
+}
+
+/** What queued a job, read from the dedupe key each producer writes. */
+function renderJobSource(job: MediaRenderJobEntity): RenderJobSource {
+  if (job.renderBatchId) {
+    return 'batch';
+  }
+  if (job.dedupeKey.includes(':system:')) {
+    return 'upload';
+  }
+  if (job.dedupeKey.includes(':import:')) {
+    return 'import';
+  }
+  if (job.dedupeKey.includes(':retry:')) {
+    return 'retry';
+  }
+  return 'other';
+}
+
+function readNumber(value: unknown): number | null {
+  const number = typeof value === 'string' ? Number(value) : value;
+  return typeof number === 'number' && Number.isFinite(number) ? number : null;
 }

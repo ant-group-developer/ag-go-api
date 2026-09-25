@@ -13,4 +13,8 @@ export class CreateRenderBatchDto {
   @IsArray()
   @IsUUID(undefined, { each: true })
   projectMediaIds?: string[];
+
+  @IsOptional()
+  @IsUUID()
+  renderProfileId?: string;
 }

@@ -35,6 +35,10 @@ export class RenderProfileEntity {
   @Column({ name: 'watermark_config', type: 'jsonb', default: () => "'{}'::jsonb" })
   watermarkConfig!: Record<string, unknown>;
 
+  /** { previewWidths: number[]; thumbnailWidth: number }, see render/render-sizes.ts. */
+  @Column({ name: 'render_sizes', type: 'jsonb', default: () => "'{}'::jsonb" })
+  renderSizes!: Record<string, unknown>;
+
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive!: boolean;
 

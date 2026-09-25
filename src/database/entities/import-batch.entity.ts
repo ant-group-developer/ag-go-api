@@ -20,6 +20,9 @@ export class ImportBatchEntity {
   @Column({ name: 'source_root_id', type: 'varchar', length: 255, nullable: true })
   sourceRootId!: string | null;
 
+  @Column({ name: 'duplicate_policy', type: 'varchar', length: 20, default: 'reuse_existing' })
+  duplicatePolicy!: 'create_new' | 'reuse_existing' | 'overwrite_existing';
+
   @Column({ type: 'varchar', length: 20, default: 'queued' })
   status!: 'queued' | 'processing' | 'completed' | 'partial' | 'failed' | 'cancelled';
 

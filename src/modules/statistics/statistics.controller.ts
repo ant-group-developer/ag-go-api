@@ -4,8 +4,8 @@ import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
-import { StatisticsService } from './statistics.service';
 import { StatisticsQueryDto } from './dto/statistics-query.dto';
+import { StatisticsService } from './statistics.service';
 
 @ApiTags('statistics')
 @ApiBearerAuth()

@@ -5,6 +5,8 @@ import { FolderAccessGrantEntity } from '../../database/entities/folder-access-g
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
 import { AccountModule } from '../account/account.module';
+import { FolderAccessOverviewService } from './folder-access-overview.service';
+import { FolderAccessController } from './folder-access.controller';
 import { FolderAccessService } from './folder-access.service';
 import { FoldersController } from './folders.controller';
 import { FoldersService } from './folders.service';
@@ -14,8 +16,8 @@ import { FoldersService } from './folders.service';
     AccountModule,
     TypeOrmModule.forFeature([FolderEntity, FolderClosureEntity, FolderAccessGrantEntity]),
   ],
-  controllers: [FoldersController],
-  providers: [AuthContextService, FolderAccessService, FoldersService],
+  controllers: [FoldersController, FolderAccessController],
+  providers: [AuthContextService, FolderAccessService, FolderAccessOverviewService, FoldersService],
   exports: [FolderAccessService],
 })
 export class FoldersModule {}

@@ -35,9 +35,7 @@ export class SettingsLogs1850000000000 implements MigrationInterface {
         created_at timestamptz NOT NULL DEFAULT now()
       )
     `);
-    await queryRunner.query(
-      `CREATE INDEX system_logs_created_idx ON system_logs(created_at DESC)`,
-    );
+    await queryRunner.query(`CREATE INDEX system_logs_created_idx ON system_logs(created_at DESC)`);
     await queryRunner.query(
       `CREATE INDEX system_logs_filter_idx ON system_logs(category, level, created_at DESC)`,
     );

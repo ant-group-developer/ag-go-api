@@ -40,9 +40,13 @@ export const envValidationSchema = Joi.object({
   MEDIA_WORKER_ENABLED: Joi.boolean().truthy('true').falsy('false').required(),
   QUEUE_PREFIX: requiredString,
   MEDIA_WORKER_CONCURRENCY: Joi.number().integer().min(1).max(32).required(),
+  // Threads per FFmpeg/sharp run; keep it near WORKER_CPUS. Defaulted so existing .env files keep working.
+  MEDIA_FFMPEG_THREADS: Joi.number().integer().min(1).max(64).default(2),
   OUTBOX_POLL_INTERVAL_MS: Joi.number().integer().min(100).required(),
   MEDIA_JOB_ATTEMPTS: Joi.number().integer().min(1).max(20).required(),
   MEDIA_JOB_BACKOFF_MS: Joi.number().integer().min(100).required(),
+  // Limit for ffprobe/thumbnail runs, and the minimum for a video preview render, whose budget
+  // grows with the source length (a stuck preview render is killed by its stall check instead).
   MEDIA_RENDER_TIMEOUT_SECONDS: Joi.number().integer().min(1).required(),
   MEDIA_THUMBNAIL_MAX_WIDTH: Joi.number().integer().min(1).required(),
   MEDIA_THUMBNAIL_MAX_HEIGHT: Joi.number().integer().min(1).required(),
@@ -75,11 +79,6 @@ export const envValidationSchema = Joi.object({
   GOOGLE_CLIENT_ID: Joi.string().trim().allow('').optional(),
   GOOGLE_CLIENT_SECRET: Joi.string().trim().allow('').optional(),
   GOOGLE_REDIRECT_URI: Joi.string()
-    .trim()
-    .uri({ scheme: ['http', 'https'] })
-    .allow('')
-    .optional(),
-  GOOGLE_FRONTEND_CALLBACK_URL: Joi.string()
     .trim()
     .uri({ scheme: ['http', 'https'] })
     .allow('')
