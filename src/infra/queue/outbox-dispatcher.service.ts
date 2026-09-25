@@ -6,6 +6,11 @@ import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../../modules/assets/storage/storage-adapter';
 import { MediaQueueService } from './media-queue.service';
 
+/** Retries wait 5 s, 10 s, 20 s, ... up to an hour; 30 attempts span about a day. */
+const RETRY_BASE_DELAY_MS = 5_000;
+const RETRY_MAX_DELAY_MS = 60 * 60 * 1000;
+const MAX_ATTEMPTS = 30;
+
 @Injectable()
 export class OutboxDispatcherService implements OnModuleDestroy {
   private readonly logger = new Logger(OutboxDispatcherService.name);
@@ -36,7 +41,9 @@ export class OutboxDispatcherService implements OnModuleDestroy {
         .createQueryBuilder(OutboxEventEntity, 'event')
         .where('event.status IN (:...statuses)', { statuses: ['pending', 'failed'] })
         .andWhere('event.availableAt <= NOW()')
-        .orderBy('event.createdAt', 'ASC')
+        // Oldest due first: an event waiting out a retry delay never holds back newer ones.
+        .orderBy('event.availableAt', 'ASC')
+        .addOrderBy('event.createdAt', 'ASC')
         .setLock('pessimistic_write')
         .setOnLocked('skip_locked')
         .take(20)
@@ -76,10 +83,25 @@ export class OutboxDispatcherService implements OnModuleDestroy {
         published += 1;
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Outbox publish failed';
-        this.logger.error(`Outbox event ${event.id} failed: ${message}`);
+        // attemptCount was read before this attempt was counted.
+        const attempts = event.attemptCount + 1;
+        if (attempts >= MAX_ATTEMPTS) {
+          this.logger.error(
+            `Outbox event ${event.id} (${event.eventType}) gave up after ${attempts} attempts: ${message}`,
+          );
+          await this.dataSource.getRepository(OutboxEventEntity).update(event.id, {
+            status: 'dead',
+            lastError: message,
+          });
+          continue;
+        }
+        const delay = Math.min(RETRY_BASE_DELAY_MS * 2 ** (attempts - 1), RETRY_MAX_DELAY_MS);
+        this.logger.error(
+          `Outbox event ${event.id} (${event.eventType}) failed, attempt ${attempts}/${MAX_ATTEMPTS}, retrying in ${Math.round(delay / 1000)} s: ${message}`,
+        );
         await this.dataSource.getRepository(OutboxEventEntity).update(event.id, {
           status: 'failed',
-          availableAt: new Date(Date.now() + 5_000),
+          availableAt: new Date(Date.now() + delay),
           lastError: message,
         });
       }
