@@ -24,6 +24,12 @@ import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
 import { deriveProjectEvaluationStatus } from '../media/evaluation-status';
+import { isPreviewVariantCode, pickPreviewVariant } from '../render/render-sizes';
+import {
+  findActiveRenderProfile,
+  isVariantServable,
+  WATERMARK_LOGO_PURPOSE,
+} from '../render/watermark-policy';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { CreateUploadSessionDto } from './dto/create-upload-session.dto';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage/storage-adapter';
@@ -72,13 +78,50 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     userType?: 'ADMIN' | 'USER',
     idempotencyKey?: string,
   ) {
-    const maxUploadBytes = this.config.getOrThrow<number>('MAX_UPLOAD_SIZE_BYTES');
-    if (dto.fileSizeBytes > maxUploadBytes) {
-      throw new BadRequestException(`File exceeds the ${maxUploadBytes} byte upload limit`);
-    }
+    this.ensureUploadSize(dto.fileSizeBytes);
     const project = await this.getProject(dto.targetProjectId);
     await this.requireProjectAccess(project, userId, 'editor', userType);
+    return this.openUploadSession(
+      dto,
+      userId,
+      { targetProjectId: project.id, keyPrefix: `projects/${project.id}/originals` },
+      idempotencyKey,
+    );
+  }
 
+  /**
+   * Upload session for the watermark logo. The logo is a global setting: it is not attached to
+   * any project and is stored as-is, without render variants.
+   */
+  async createWatermarkLogoUploadSession(
+    dto: Omit<CreateUploadSessionDto, 'assetType' | 'targetProjectId'>,
+    userId: string,
+  ) {
+    this.ensureUploadSize(dto.fileSizeBytes);
+    return this.openUploadSession({ ...dto, assetType: 'image' }, userId, {
+      targetProjectId: null,
+      keyPrefix: 'settings/watermark',
+      sourceMetadata: { purpose: WATERMARK_LOGO_PURPOSE },
+    });
+  }
+
+  private ensureUploadSize(fileSizeBytes: number) {
+    const maxUploadBytes = this.config.getOrThrow<number>('MAX_UPLOAD_SIZE_BYTES');
+    if (fileSizeBytes > maxUploadBytes) {
+      throw new BadRequestException(`File exceeds the ${maxUploadBytes} byte upload limit`);
+    }
+  }
+
+  private async openUploadSession(
+    dto: Omit<CreateUploadSessionDto, 'targetProjectId'>,
+    userId: string,
+    target: {
+      targetProjectId: string | null;
+      keyPrefix: string;
+      sourceMetadata?: Record<string, unknown>;
+    },
+    idempotencyKey?: string,
+  ) {
     const normalizedIdempotencyKey = idempotencyKey?.trim().slice(0, 255);
     if (normalizedIdempotencyKey) {
       const existing = await this.sessionRepository.findOne({
@@ -98,7 +141,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     const bucketName = this.config.getOrThrow<string>('R2_BUCKET');
     const extension = this.normalizeExtension(dto.extension, dto.originalFilename, dto.mimeType);
     const originalFilename = this.ensureFilenameExtension(dto.originalFilename.trim(), extension);
-    const storageKey = `projects/${dto.targetProjectId}/originals/${assetId}${extension ? `.${extension}` : ''}`;
+    const storageKey = `${target.keyPrefix}/${assetId}${extension ? `.${extension}` : ''}`;
     const expiresAt = new Date(
       Date.now() + this.config.getOrThrow<number>('UPLOAD_SESSION_TTL_SECONDS') * 1000,
     );
@@ -118,7 +161,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
         processingStatus: 'uploading',
         processingError: null,
         sourceType: 'local',
-        sourceMetadata: {},
+        sourceMetadata: target.sourceMetadata ?? {},
         createdBy: userId,
       });
       await manager.save(asset);
@@ -126,7 +169,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
         manager.create(AssetUploadSessionEntity, {
           id: sessionId,
           assetId,
-          targetProjectId: dto.targetProjectId,
+          targetProjectId: target.targetProjectId,
           storageProvider: asset.storageProvider,
           bucketName,
           storageKey,
@@ -159,15 +202,15 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     if (!session) {
       throw new NotFoundException('Upload session not found');
     }
-    const profile = await this.renderProfileRepository.findOne({
-      where: { code: 'default', isActive: true },
-      order: { profileVersion: 'DESC' },
-    });
     if (session.assetId !== assetId) {
       throw new BadRequestException('Upload session does not belong to this asset');
     }
     if (session.status === 'completed') {
-      return this.getAsset(session.assetId);
+      return {
+        ...(await this.getAsset(session.assetId)),
+        uploadSessionId: session.id,
+        projectMediaId: await this.findSessionProjectMediaId(session),
+      };
     }
     this.ensureSessionOpen(session);
 
@@ -182,13 +225,20 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     if (expectedChecksum && expectedChecksum !== head.checksumSha256) {
       throw new BadRequestException('Uploaded object checksum does not match');
     }
+    const asset = await this.getAsset(session.assetId);
+    // The watermark logo is used as-is by the renderer; it must not be watermarked itself.
+    const isWatermarkLogo = asset.sourceMetadata?.purpose === WATERMARK_LOGO_PURPOSE;
+    const profile = isWatermarkLogo
+      ? null
+      : await findActiveRenderProfile(this.renderProfileRepository);
 
     let renderJobId: string | null = null;
     let outboxEventId: string | null = null;
+    let projectMediaId: string | null = null;
     await this.dataSource.transaction(async (manager) => {
       await manager.update(AssetEntity, session.assetId, {
         checksumSha256: head.checksumSha256 ?? expectedChecksum ?? null,
-        processingStatus: 'uploaded',
+        processingStatus: isWatermarkLogo ? 'ready' : 'uploaded',
       });
       await manager.update(AssetUploadSessionEntity, session.id, {
         status: 'completed',
@@ -198,9 +248,10 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
         const existingMedia = await manager.findOne(ProjectMediaEntity, {
           where: { projectId: session.targetProjectId, assetId: session.assetId },
         });
+        projectMediaId = existingMedia?.id ?? uuidv7();
         if (!existingMedia) {
           await manager.insert(ProjectMediaEntity, {
-            id: uuidv7(),
+            id: projectMediaId,
             projectId: session.targetProjectId,
             assetId: session.assetId,
             sortOrder: 0,
@@ -209,6 +260,9 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
           });
           await this.refreshProjectCounters(manager, session.targetProjectId);
         }
+      }
+      if (isWatermarkLogo) {
+        return;
       }
       const dedupeKey = `${session.assetId}:system:${profile?.id ?? 'legacy'}:${profile?.profileVersion ?? 1}`;
       const activeJob = await manager
@@ -258,6 +312,7 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       uploadSessionId: session.id,
       renderJobId,
       outboxEventId,
+      projectMediaId,
     };
   }
 
@@ -304,9 +359,10 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     userId: string,
     userType: 'ADMIN' | 'USER' | undefined,
     response: Response,
+    width?: number,
   ) {
     await this.requireAssetAccess(assetId, userId, 'viewer', userType);
-    const variant = await this.findReadyVariant(assetId, variantCode);
+    const variant = await this.findReadyVariant(assetId, variantCode, width);
     response.setHeader('Content-Type', variant.mimeType);
     response.setHeader('Content-Length', variant.fileSizeBytes);
     this.storage.readObject(variant.storageKey).pipe(response);
@@ -317,9 +373,10 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     variantCode: string,
     userId: string,
     userType?: 'ADMIN' | 'USER',
+    width?: number,
   ) {
     await this.requireAssetAccess(assetId, userId, 'viewer', userType);
-    const variant = await this.findReadyVariant(assetId, variantCode);
+    const variant = await this.findReadyVariant(assetId, variantCode, width);
     const expiresInSeconds = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
     const url = await this.storage.getPresignedGetUrl(
       variant.storageKey,
@@ -333,15 +390,47 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       variantCode: variant.variantCode,
       mimeType: variant.mimeType,
       fileSizeBytes: variant.fileSizeBytes,
+      width: variant.width,
+      height: variant.height,
     };
+  }
+
+  /**
+   * Presigned URL of the original, un-watermarked file, for evaluating media at full quality.
+   * Only for users allowed to evaluate or download originals (enforced by the controller).
+   */
+  async getOriginalUrl(assetId: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    const asset = await this.requireAssetAccess(assetId, userId, 'viewer', userType);
+    const expiresInSeconds = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
+    return {
+      url: await this.storage.getPresignedGetUrl(
+        asset.originalStorageKey,
+        asset.mimeType,
+        expiresInSeconds,
+      ),
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+      mimeType: asset.mimeType,
+      fileSizeBytes: asset.fileSizeBytes,
+    };
+  }
+
+  /** Preview sizes a viewer may choose from, smallest first. */
+  async listRenditions(assetId: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    await this.requireAssetAccess(assetId, userId, 'viewer', userType);
+    const previews = await this.findServablePreviews(assetId);
+    return previews
+      .sort((a, b) => (a.width ?? 0) - (b.width ?? 0))
+      .map((variant) => ({
+        variantCode: variant.variantCode,
+        width: variant.width,
+        height: variant.height,
+        mimeType: variant.mimeType,
+      }));
   }
 
   async retry(assetId: string, userId: string, userType?: 'ADMIN' | 'USER') {
     await this.requireAssetAccess(assetId, userId, 'editor', userType);
-    const profile = await this.renderProfileRepository.findOne({
-      where: { code: 'default', isActive: true },
-      order: { profileVersion: 'DESC' },
-    });
+    const profile = await findActiveRenderProfile(this.renderProfileRepository);
     return this.dataSource.transaction(async (manager) => {
       const job = await manager.save(
         manager.create(MediaRenderJobEntity, {
@@ -421,14 +510,69 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     throw new ForbiddenException('Insufficient asset permission');
   }
 
-  private async findReadyVariant(assetId: string, variantCode: string) {
-    const variant = await this.variantRepository.findOne({
-      where: { assetId, variantCode, status: 'ready' },
-    });
-    if (!variant || !variant.hasWatermark) {
+  /**
+   * `preview` is an alias for "the best preview for a frame `width` pixels wide" (the largest
+   * without a width); any other code is looked up as is.
+   */
+  private async findReadyVariant(assetId: string, variantCode: string, width?: number) {
+    if (variantCode === 'preview') {
+      const variant = pickPreviewVariant(await this.findServablePreviews(assetId), width);
+      if (!variant) {
+        throw new NotFoundException('Ready watermarked asset variant not found');
+      }
+      return variant;
+    }
+    const [variant, profile] = await Promise.all([
+      this.variantRepository.findOne({ where: { assetId, variantCode, status: 'ready' } }),
+      findActiveRenderProfile(this.renderProfileRepository),
+    ]);
+    if (!variant || !isVariantServable(variant, profile)) {
       throw new NotFoundException('Ready watermarked asset variant not found');
     }
     return variant;
+  }
+
+  private async findServablePreviews(assetId: string) {
+    const [variants, profile] = await Promise.all([
+      this.variantRepository.find({ where: { assetId, status: 'ready' } }),
+      findActiveRenderProfile(this.renderProfileRepository),
+    ]);
+    return variants.filter(
+      (variant) => isPreviewVariantCode(variant.variantCode) && isVariantServable(variant, profile),
+    );
+  }
+
+  private async findSessionProjectMediaId(session: AssetUploadSessionEntity) {
+    if (!session.targetProjectId) {
+      return null;
+    }
+    const media = await this.projectMediaRepository.findOne({
+      where: { projectId: session.targetProjectId, assetId: session.assetId },
+    });
+    return media?.id ?? null;
+  }
+
+  /** Presigned URL of the watermark logo original, for the settings page. */
+  async getWatermarkLogoUrl(assetId: string) {
+    const asset = await this.getAsset(assetId);
+    const isLogo =
+      asset.sourceMetadata?.purpose === WATERMARK_LOGO_PURPOSE ||
+      (await this.renderProfileRepository
+        .createQueryBuilder('profile')
+        .where("profile.watermark_config ->> 'logoAssetId' = :assetId", { assetId })
+        .getExists());
+    if (asset.assetType !== 'image' || !isLogo) {
+      throw new NotFoundException('Watermark logo not found');
+    }
+    const expiresInSeconds = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
+    return {
+      url: await this.storage.getPresignedGetUrl(
+        asset.originalStorageKey,
+        asset.mimeType,
+        expiresInSeconds,
+      ),
+      expiresAt: new Date(Date.now() + expiresInSeconds * 1000).toISOString(),
+    };
   }
 
   private async getProject(projectId: string) {
