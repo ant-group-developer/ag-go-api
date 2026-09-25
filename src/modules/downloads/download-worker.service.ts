@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Job, Worker } from 'bullmq';
 import Redis from 'ioredis';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { DownloadJobItemEntity } from '../../database/entities/download-job-item.entity';
@@ -13,8 +13,9 @@ import type { DownloadQueueJobData } from '../../infra/queue/download-queue.serv
 import { DOWNLOAD_JOB, DOWNLOAD_QUEUE } from '../../infra/queue/queue.constants';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { findRenderedVariant, renderedFilename } from './rendered-variant';
+import { createZipStream, type ZipStreamEntry } from './zip-stream';
 
-type ZipEntry = { name: string; body: Buffer };
+type ZipSource = { itemId: string; key: string; name: string };
 
 @Injectable()
 export class DownloadWorkerService implements OnModuleDestroy {
@@ -75,13 +76,17 @@ export class DownloadWorkerService implements OnModuleDestroy {
     if (!download || ['cancelled', 'completed', 'expired'].includes(download.status)) {
       return;
     }
-    await this.jobRepository.update(download.id, { status: 'processing' });
+    // Every attempt rebuilds the whole archive, so a retry re-adds items an earlier attempt
+    // already marked `added` and restarts the progress count.
+    await this.jobRepository.update(download.id, { status: 'processing', completedItems: 0 });
     try {
       const items = await this.itemRepository.find({
-        where: { downloadJobId: download.id, status: 'queued' },
+        where: { downloadJobId: download.id, status: In(['queued', 'added']) },
         order: { createdAt: 'ASC' },
       });
-      const entries: ZipEntry[] = [];
+      // Resolve every source first so a missing asset or unready variant fails the job
+      // before anything is uploaded.
+      const sources: ZipSource[] = [];
       for (const item of items) {
         const asset = await this.assetRepository.findOne({ where: { id: item.assetId } });
         if (!asset) {
@@ -101,18 +106,18 @@ export class DownloadWorkerService implements OnModuleDestroy {
           key = variant.storageKey;
           filename = renderedFilename(asset.originalFilename, variant.mimeType);
         }
-        entries.push({
-          name: `${item.projectMediaId}-${filename}`,
-          body: await streamToBuffer(this.storage.readObject(key)),
-        });
-        await this.itemRepository.update(item.id, { status: 'added' });
-        await this.jobRepository.increment({ id: download.id }, 'completedItems', 1);
+        sources.push({ itemId: item.id, key, name: `${item.projectMediaId}-${filename}` });
       }
-      const zip = createStoredZip(entries);
       const storageKey = download.projectId
         ? `projects/${download.projectId}/downloads/${download.externalUserId}/${download.id}.zip`
         : `downloads/${download.externalUserId}/${download.id}.zip`;
-      const head = await this.storage.putObject(storageKey, zip, 'application/zip');
+      // The archive streams straight into a multipart upload, one source object at a time,
+      // so memory stays bounded by the upload's part buffers whatever the archive size.
+      const head = await this.storage.putObject(
+        storageKey,
+        createZipStream(this.zipEntries(download.id, sources)),
+        'application/zip',
+      );
       await this.jobRepository.update(download.id, {
         status: 'completed',
         zipBucket: this.config.getOrThrow<string>('R2_BUCKET'),
@@ -129,64 +134,17 @@ export class DownloadWorkerService implements OnModuleDestroy {
       throw error;
     }
   }
-}
 
-async function streamToBuffer(stream: NodeJS.ReadableStream): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream as AsyncIterable<Buffer | Uint8Array | string>) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  return Buffer.concat(chunks);
-}
-
-function createStoredZip(entries: ZipEntry[]): Buffer {
-  const localParts: Buffer[] = [];
-  const centralParts: Buffer[] = [];
-  let offset = 0;
-  for (const entry of entries) {
-    const name = Buffer.from(entry.name.replace(/[^\w.\-/]/g, '_'), 'utf8');
-    const crc = crc32(entry.body);
-    const local = Buffer.alloc(30 + name.length);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(entry.body.length, 18);
-    local.writeUInt32LE(entry.body.length, 22);
-    local.writeUInt16LE(name.length, 26);
-    name.copy(local, 30);
-    localParts.push(local, entry.body);
-
-    const central = Buffer.alloc(46 + name.length);
-    central.writeUInt32LE(0x02014b50, 0);
-    central.writeUInt16LE(20, 4);
-    central.writeUInt16LE(20, 6);
-    central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(entry.body.length, 20);
-    central.writeUInt32LE(entry.body.length, 24);
-    central.writeUInt16LE(name.length, 28);
-    central.writeUInt32LE(offset, 42);
-    name.copy(central, 46);
-    centralParts.push(central);
-    offset += local.length + entry.body.length;
-  }
-  const central = Buffer.concat(centralParts);
-  const local = Buffer.concat(localParts);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(entries.length, 8);
-  end.writeUInt16LE(entries.length, 10);
-  end.writeUInt32LE(central.length, 12);
-  end.writeUInt32LE(local.length, 16);
-  return Buffer.concat([local, central, end]);
-}
-
-function crc32(buffer: Buffer): number {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
+  /** Yields each source to the ZIP writer; an item counts as added once its body is written. */
+  private async *zipEntries(
+    downloadId: string,
+    sources: ZipSource[],
+  ): AsyncGenerator<ZipStreamEntry> {
+    for (const source of sources) {
+      yield { name: source.name, body: this.storage.readObject(source.key) };
+      // Resumes only after the writer has consumed the whole body and asks for the next entry.
+      await this.itemRepository.update(source.itemId, { status: 'added' });
+      await this.jobRepository.increment({ id: downloadId }, 'completedItems', 1);
     }
   }
-  return (crc ^ 0xffffffff) >>> 0;
 }
