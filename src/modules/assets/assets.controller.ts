@@ -19,6 +19,7 @@ import { AssetsService } from './assets.service';
 import { AbortUploadDto } from './dto/abort-upload.dto';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { CreateUploadSessionDto } from './dto/create-upload-session.dto';
+import { UploadPartsDto } from './dto/upload-parts.dto';
 
 @ApiTags('assets')
 @ApiBearerAuth()
@@ -43,6 +44,18 @@ export class AssetsController {
       context.userType,
       idempotencyKey,
     );
+  }
+
+  @Post('assets/:assetId/upload-parts')
+  @RequirePermissions(GO_PERMISSIONS.PROJECT_EDIT)
+  @ApiOperation({ summary: 'Presigned URL để upload từng phần của phiên upload multipart' })
+  getUploadPartUrls(
+    @Param('assetId') assetId: string,
+    @Body() dto: UploadPartsDto,
+    @Req() request: Request,
+  ) {
+    const context = this.authContext.getContext(request);
+    return this.assetsService.getUploadPartUrls(assetId, dto, context.userId, context.userType);
   }
 
   @Post('assets/:assetId/complete')

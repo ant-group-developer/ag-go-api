@@ -26,6 +26,9 @@ services:
     image: ag-go-api:${TAG:-latest}
     pull_policy: never
     command: ['node', 'dist/workers/worker.js']
+    # On SIGTERM the worker finishes its running jobs first (a Drive download can take up to
+    # 2 minutes). Anything cut off by SIGKILL is resumed by the stale-job sweeps on the next start.
+    stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-150s}
     env_file:
       - .env
     extra_hosts:
