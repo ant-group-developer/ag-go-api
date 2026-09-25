@@ -680,6 +680,25 @@ paths:
           schema:
             maxLength: 200
             type: string
+        - name: sortBy
+          required: false
+          in: query
+          schema:
+            default: updatedAt
+            type: string
+            enum:
+              - name
+              - createdAt
+              - updatedAt
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            default: desc
+            type: string
+            enum:
+              - asc
+              - desc
         - name: folderId
           required: false
           in: query
@@ -1057,6 +1076,44 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a19
       tags: *a20
+  /assets/{assetId}/original-url:
+    get:
+      operationId: AssetsController_originalUrl
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      summary: Presigned URL file gốc (không watermark) để đánh giá media
+      tags: *a20
+  /assets/{assetId}/renditions:
+    get:
+      operationId: AssetsController_listRenditions
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a19
+      summary: Các kích thước preview (có watermark) người xem có thể chọn
+      tags: *a20
   /assets/{assetId}/preview/{variantCode}:
     get:
       operationId: AssetsController_preview
@@ -1093,7 +1150,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a19
-      summary: Tạo presigned URL để tải preview trực tiếp từ R2
+      summary:
+        Tạo presigned URL để tải preview trực tiếp từ R2. variantCode=preview
+        kèm width chọn kích thước phù hợp.
       tags: *a20
   /assets/{assetId}/retry:
     post:
@@ -1161,9 +1220,27 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateUploadSessionDto"
+              $ref: "#/components/schemas/CreateWatermarkLogoUploadSessionDto"
       responses:
         "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a21
+      tags: *a22
+  /render-watermark/logos/{assetId}/url:
+    get:
+      operationId: RenderController_getWatermarkLogoUrl
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
           description: ""
           content:
             application/json:
@@ -1979,6 +2056,31 @@ components:
     UpdateRenderProfileDto:
       type: object
       properties: {}
+    CreateWatermarkLogoUploadSessionDto:
+      type: object
+      properties:
+        originalFilename:
+          type: string
+          maxLength: 255
+        extension:
+          type: string
+          maxLength: 20
+        fileSizeBytes:
+          type: number
+          minimum: 1
+        expectedChecksumSha256:
+          type: string
+          pattern: ^[a-fA-F0-9]{64}$
+        mimeType:
+          type: string
+          enum:
+            - image/png
+            - image/jpeg
+            - image/webp
+      required:
+        - originalFilename
+        - fileSizeBytes
+        - mimeType
     CreateRenderBatchDto:
       type: object
       properties: {}

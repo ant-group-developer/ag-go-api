@@ -87,9 +87,10 @@ export class ProjectsService {
       );
     }
 
+    const sortOrder = query.sortOrder === 'asc' ? 'ASC' : 'DESC';
     const [projects, total] = await projectQuery
-      .orderBy('project.updatedAt', 'DESC')
-      .addOrderBy('project.id', 'DESC')
+      .orderBy(`project.${query.sortBy ?? 'updatedAt'}`, sortOrder)
+      .addOrderBy('project.id', sortOrder)
       .skip(query.skip)
       .take(query.pageSize)
       .getManyAndCount();
@@ -125,15 +126,7 @@ export class ProjectsService {
        ORDER BY tag.normalized_name ASC`,
       [projectIds],
     )) as Array<{ projectId: string; id: string; name: string }>;
-    const thumbnailMediaIds = projects.flatMap((project) =>
-      project.thumbnailProjectMediaId ? [project.thumbnailProjectMediaId] : [],
-    );
-    const thumbnailMedia = thumbnailMediaIds.length
-      ? await this.dataSource.getRepository(ProjectMediaEntity).findBy({
-          id: In(thumbnailMediaIds),
-        })
-      : [];
-    const thumbnailAssetIds = new Map(thumbnailMedia.map((media) => [media.id, media.assetId]));
+    const thumbnails = await this.resolveThumbnails(projects);
     const folderById = new Map(folderRecords.map((folder) => [folder.id, folder]));
     const countryById = new Map(countries.map((country) => [country.id, country]));
     const provinceById = new Map(provinces.map((province) => [province.id, province]));
@@ -157,9 +150,8 @@ export class ProjectsService {
         countryFlagUrl: country?.flagUrl ?? null,
         provinceName: province?.name ?? null,
         categoryName: category?.name ?? null,
-        thumbnailAssetId: project.thumbnailProjectMediaId
-          ? (thumbnailAssetIds.get(project.thumbnailProjectMediaId) ?? null)
-          : null,
+        thumbnailAssetId: thumbnails.get(project.id)?.assetId ?? null,
+        thumbnailSource: thumbnails.get(project.id)?.source ?? null,
         tags: (tagsByProjectId.get(project.id) ?? []).map((tag) => tag.name),
         tagIds: (tagsByProjectId.get(project.id) ?? []).map((tag) => tag.id),
       });
@@ -198,11 +190,7 @@ export class ProjectsService {
         [project.id],
       ) as Promise<Array<{ id: string; name: string }>>,
     ]);
-    const thumbnailMedia = project.thumbnailProjectMediaId
-      ? await this.dataSource.getRepository(ProjectMediaEntity).findOne({
-          where: { id: project.thumbnailProjectMediaId, projectId: project.id },
-        })
-      : null;
+    const thumbnail = (await this.resolveThumbnails([project])).get(project.id);
     const [enrichedProject] = await this.actorEnrichment.enrich(
       [
         Object.assign(project, {
@@ -211,7 +199,8 @@ export class ProjectsService {
           countryFlagUrl: country?.flagUrl ?? null,
           provinceName: province?.name ?? null,
           categoryName: category?.name ?? null,
-          thumbnailAssetId: thumbnailMedia?.assetId ?? null,
+          thumbnailAssetId: thumbnail?.assetId ?? null,
+          thumbnailSource: thumbnail?.source ?? null,
           tagIds: tags.map((tag) => tag.id),
           tags: tags.map((tag) => tag.name),
         }) as unknown as Record<string, unknown>,
@@ -351,6 +340,51 @@ export class ProjectsService {
       beforeData: { name: project.name, folderId: project.folderId },
     });
     return { success: true };
+  }
+
+  /**
+   * Project thumbnail: the media chosen by the user, otherwise the first media (images before
+   * videos, by sort order) whose thumbnail variant is ready. Thumbnails carry no watermark.
+   */
+  private async resolveThumbnails(
+    projects: Array<Pick<ProjectEntity, 'id' | 'thumbnailProjectMediaId'>>,
+  ): Promise<Map<string, { assetId: string; source: 'manual' | 'auto' }>> {
+    const thumbnails = new Map<string, { assetId: string; source: 'manual' | 'auto' }>();
+    const manualMediaIds = projects.flatMap((project) =>
+      project.thumbnailProjectMediaId ? [project.thumbnailProjectMediaId] : [],
+    );
+    if (manualMediaIds.length > 0) {
+      const manualMedia = await this.dataSource
+        .getRepository(ProjectMediaEntity)
+        .findBy({ id: In(manualMediaIds) });
+      for (const media of manualMedia) {
+        thumbnails.set(media.projectId, { assetId: media.assetId, source: 'manual' });
+      }
+    }
+
+    const missingProjectIds = projects
+      .filter((project) => !thumbnails.has(project.id))
+      .map((project) => project.id);
+    if (missingProjectIds.length === 0) {
+      return thumbnails;
+    }
+    const rows = (await this.dataSource.query(
+      `SELECT DISTINCT ON (media.project_id)
+         media.project_id AS "projectId", media.asset_id AS "assetId"
+       FROM project_media media
+       INNER JOIN assets asset ON asset.id = media.asset_id
+       INNER JOIN asset_variants variant
+         ON variant.asset_id = media.asset_id
+        AND variant.variant_code = 'thumbnail'
+        AND variant.status = 'ready'
+       WHERE media.project_id = ANY($1::uuid[])
+       ORDER BY media.project_id, (asset.asset_type = 'image') DESC, media.sort_order ASC, media.id ASC`,
+      [missingProjectIds],
+    )) as Array<{ projectId: string; assetId: string }>;
+    for (const row of rows) {
+      thumbnails.set(row.projectId, { assetId: row.assetId, source: 'auto' });
+    }
+    return thumbnails;
   }
 
   private async validateCatalogs(countryId?: string, provinceId?: string, categoryId?: string) {
