@@ -49,6 +49,9 @@ type MediaMetadata = {
   frameRate?: number;
 };
 
+/** How much of a failed FFmpeg run's stderr is kept as the job's error message. */
+const STDERR_TAIL_CHARS = 2000;
+
 @Injectable()
 export class MediaProcessingService {
   private readonly logger = new Logger(MediaProcessingService.name);
@@ -822,7 +825,9 @@ export class MediaProcessingService {
         if (code === 0) {
           resolve({ stdout, stderr });
         } else {
-          reject(new Error(stderr || `Media command exited with code ${code ?? 'unknown'}`));
+          // FFmpeg prints its banner first and the actual error last; keep the end.
+          const detail = stderr.trim().slice(-STDERR_TAIL_CHARS);
+          reject(new Error(detail || `Media command exited with code ${code ?? 'unknown'}`));
         }
       });
     });

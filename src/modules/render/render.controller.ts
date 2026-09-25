@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
@@ -108,6 +118,22 @@ export class RenderController {
   listJobs(@Param('id') id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.renderService.listJobs(id, context.userId, context.userType);
+  }
+
+  /** Jobs queued automatically after an upload or a Drive import (not part of a batch). */
+  @Get('render-jobs/auto')
+  @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
+  listAutoJobs(
+    @Query('projectId') projectId: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Req() request: Request,
+  ) {
+    const context = this.authContext.getContext(request);
+    const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
+    return this.renderService.listAutoJobs(context.userId, context.userType, {
+      ...(projectId ? { projectId } : {}),
+      ...(Number.isFinite(parsedLimit) ? { limit: parsedLimit } : {}),
+    });
   }
 
   @Post('render-jobs/:id/retry')

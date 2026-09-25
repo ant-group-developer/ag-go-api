@@ -16,6 +16,7 @@ export class SettingsService {
     siteDescription: 'AG Go internal media workspace',
     logoUrl: null,
     faviconUrl: null,
+    loginBackgroundUrl: null,
     supportEmail: null,
     supportUrl: null,
     primaryColor: null,
