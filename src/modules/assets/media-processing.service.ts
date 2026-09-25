@@ -4,7 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import ffmpegPath from 'ffmpeg-static';
 import { path as ffprobePath } from 'ffprobe-static';
 import { spawn } from 'node:child_process';
-import { createWriteStream, promises as fs } from 'node:fs';
+import { createReadStream, createWriteStream, promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
@@ -52,6 +52,40 @@ type MediaMetadata = {
 /** How much of a failed FFmpeg run's stderr is kept as the job's error message. */
 const STDERR_TAIL_CHARS = 2000;
 
+/** How often a running job refreshes its updated_at. */
+const JOB_HEARTBEAT_MS = 30_000;
+
+/** A `processing` job with no heartbeat for this long has lost its worker. */
+const STALE_JOB_MS = 3 * 60_000;
+
+/** FFmpeg reports its position on stdout (about twice a second) and keeps stderr for errors. */
+const FFMPEG_PROGRESS_ARGS = ['-nostdin', '-nostats', '-progress', 'pipe:1'];
+
+/** A preview render whose position has not moved for this long is stuck, however long it ran. */
+const RENDER_STALL_MS = 2 * 60_000;
+
+/**
+ * Total preview render budget per second of source. 4K60 10-bit HEVC to 1920px took about
+ * 8 s per source second with two renders sharing 2 CPUs.
+ */
+const RENDER_SECONDS_PER_SOURCE_SECOND = 20;
+
+const STALL_CHECK_MS = 5_000;
+
+/** Minimum gap between job progress writes while a preview renders. */
+const PROGRESS_REPORT_INTERVAL_MS = 5_000;
+
+type RunProcessOptions = {
+  /** Total run time limit; defaults to MEDIA_RENDER_TIMEOUT_SECONDS. */
+  timeoutMs?: number;
+  /**
+   * For FFmpeg run with FFMPEG_PROGRESS_ARGS: kill it once its position has not advanced for
+   * this long, and pass each new position (seconds of output written) to `onProgress`.
+   */
+  stallMs?: number;
+  onProgress?: (outputSeconds: number) => void;
+};
+
 @Injectable()
 export class MediaProcessingService {
   private readonly logger = new Logger(MediaProcessingService.name);
@@ -97,6 +131,111 @@ export class MediaProcessingService {
     if (!claimed.affected) {
       return;
     }
+    // Keeps updated_at fresh while this worker is alive, so recoverStaleJobs can tell a
+    // long FFmpeg run from a job whose worker died.
+    const heartbeat = setInterval(() => void this.touchJob(job.id), JOB_HEARTBEAT_MS);
+    try {
+      await this.runClaimedJob(job, assetId, queueJobId);
+    } finally {
+      clearInterval(heartbeat);
+    }
+  }
+
+  /**
+   * Handles `processing` jobs whose worker stopped heartbeating (killed for memory, restarted
+   * by a deploy). Their BullMQ job is gone or cannot re-claim them, so without this they stay
+   * `processing` forever. Jobs that already used every attempt fail; the rest go back to
+   * `queued` and are returned for the caller to re-enqueue.
+   */
+  async recoverStaleJobs(): Promise<Array<{ id: string; assetId: string }>> {
+    const staleBefore = new Date(Date.now() - STALE_JOB_MS);
+    const maxAttempts = this.config.getOrThrow<number>('MEDIA_JOB_ATTEMPTS');
+    const exhausted = await this.jobRepository
+      .createQueryBuilder()
+      .update(MediaRenderJobEntity)
+      .set({
+        status: 'failed',
+        progressMessage: 'Media processing failed',
+        errorCode: 'WORKER_LOST',
+        errorMessage:
+          'The worker stopped while processing this file (it may have run out of memory)',
+        finishedAt: new Date(),
+      })
+      .where('status = :status AND updated_at < :staleBefore AND attempt_count >= :maxAttempts', {
+        status: 'processing',
+        staleBefore,
+        maxAttempts,
+      })
+      .returning(['id', 'assetId', 'renderBatchId'])
+      .execute();
+    const failedRows = exhausted.raw as Array<{ asset_id: string; render_batch_id: string | null }>;
+    for (const row of failedRows) {
+      await this.assetRepository.update(row.asset_id, {
+        processingStatus: 'failed',
+        processingError: 'The worker stopped while processing this file',
+      });
+    }
+    for (const batchId of new Set(failedRows.map((row) => row.render_batch_id))) {
+      await this.refreshRenderBatch(batchId);
+    }
+
+    const requeued = await this.jobRepository
+      .createQueryBuilder()
+      .update(MediaRenderJobEntity)
+      .set({
+        status: 'queued',
+        progressPercent: 0,
+        progressMessage: 'Queued again after the worker stopped',
+      })
+      .where('status = :status AND updated_at < :staleBefore', {
+        status: 'processing',
+        staleBefore,
+      })
+      .returning(['id', 'assetId'])
+      .execute();
+    const requeuedRows = requeued.raw as Array<{ id: string; asset_id: string }>;
+    if (failedRows.length > 0 || requeuedRows.length > 0) {
+      this.logger.warn(
+        `Recovered stale render jobs: ${requeuedRows.length} re-queued, ${failedRows.length} failed`,
+      );
+    }
+    return requeuedRows.map((row) => ({ id: row.id, assetId: row.asset_id }));
+  }
+
+  /** Marks a job re-queued by recoverStaleJobs as failed when it could not be enqueued. */
+  async failUnqueuedJob(jobId: string, message: string): Promise<void> {
+    await this.jobRepository.update(
+      { id: jobId, status: 'queued' },
+      {
+        status: 'failed',
+        progressMessage: 'Media processing failed',
+        errorCode: 'ENQUEUE_FAILED',
+        errorMessage: message.slice(0, 4000),
+        finishedAt: new Date(),
+      },
+    );
+  }
+
+  private async touchJob(jobId: string): Promise<void> {
+    try {
+      await this.jobRepository
+        .createQueryBuilder()
+        .update(MediaRenderJobEntity)
+        .set({ updatedAt: () => 'NOW()' })
+        .where('id = :id AND status = :status', { id: jobId, status: 'processing' })
+        .execute();
+    } catch (error) {
+      this.logger.warn(
+        `Render job ${jobId} heartbeat failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async runClaimedJob(
+    job: MediaRenderJobEntity,
+    assetId: string,
+    queueJobId?: string,
+  ): Promise<void> {
     if (queueJobId) {
       await this.jobRepository.update(job.id, { queueJobId });
     }
@@ -345,16 +484,26 @@ export class MediaProcessingService {
 
     const largestArea = Math.max(...renderSizes.map((size) => size.width * size.height));
     for (const [index, size] of renderSizes.entries()) {
-      await report(this.progressFor(index + 1, steps), `Rendering ${size.width}px video preview`);
-      codes.push(
-        await this.createVideoPreview(
-          asset,
-          inputPath,
-          size,
-          this.getVideoBitrate(profile, (size.width * size.height) / largestArea),
-          profile,
-        ),
+      const message = `Rendering ${size.width}px video preview`;
+      await report(this.progressFor(index + 1, steps), message);
+      const stepProgress = this.throttledProgress(report, message, (fraction) =>
+        this.progressFor(index + 1 + fraction, steps),
       );
+      try {
+        codes.push(
+          await this.createVideoPreview(
+            asset,
+            inputPath,
+            size,
+            this.getVideoBitrate(profile, (size.width * size.height) / largestArea),
+            profile,
+            durationSeconds,
+            stepProgress.update,
+          ),
+        );
+      } finally {
+        await stepProgress.settled();
+      }
     }
     await this.removeStaleVariants(asset, codes);
 
@@ -380,6 +529,7 @@ export class MediaProcessingService {
     try {
       await this.runProcess(ffmpegPath, [
         '-y',
+        ...this.ffmpegThreadArgs(),
         '-i',
         inputPath,
         '-frames:v',
@@ -417,6 +567,8 @@ export class MediaProcessingService {
     size: { width: number; height: number },
     bitrate: number | null,
     profile: RenderProfileEntity | null,
+    durationSeconds: number | undefined,
+    onFraction: (fraction: number) => void,
   ): Promise<string> {
     const variantCode = previewVariantCode(size.width);
     const previewKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${variantCode}.mp4`;
@@ -429,8 +581,10 @@ export class MediaProcessingService {
         await fs.writeFile(watermarkPath, watermark.buffer);
       }
       const scale = `[0:v]scale=${size.width}:${size.height}`;
-      await this.runProcess(ffmpegPath, [
+      const args = [
         '-y',
+        ...FFMPEG_PROGRESS_ARGS,
+        ...this.ffmpegThreadArgs(),
         '-i',
         inputPath,
         ...(watermark ? ['-i', watermarkPath] : []),
@@ -444,6 +598,8 @@ export class MediaProcessingService {
         '0:a?',
         '-c:v',
         'libx264',
+        '-threads',
+        String(this.config.getOrThrow<number>('MEDIA_FFMPEG_THREADS')),
         '-preset',
         'veryfast',
         ...(bitrate
@@ -467,9 +623,26 @@ export class MediaProcessingService {
         '-f',
         'mp4',
         previewPath,
-      ]);
-      const preview = await fs.readFile(previewPath);
-      const previewHead = await this.storage.putObject(previewKey, preview, 'video/mp4');
+      ];
+      await this.runProcess(ffmpegPath, args, {
+        // A long source renders for minutes while advancing steadily; only a stuck FFmpeg
+        // should be killed early.
+        timeoutMs: this.renderTimeoutMs(durationSeconds),
+        stallMs: RENDER_STALL_MS,
+        onProgress: (outputSeconds) => {
+          if (durationSeconds) {
+            onFraction(Math.min(1, outputSeconds / durationSeconds));
+          }
+        },
+      });
+      // Streamed so a long preview never sits in the Node heap as one Buffer.
+      const { size: previewSize } = await fs.stat(previewPath);
+      const previewHead = await this.storage.putObject(
+        previewKey,
+        createReadStream(previewPath),
+        'video/mp4',
+        previewSize,
+      );
       await this.saveVariant(
         asset,
         variantCode,
@@ -794,41 +967,160 @@ export class MediaProcessingService {
     });
   }
 
+  /**
+   * Input-side thread caps. FFmpeg sizes its thread pools from the host's cores, not the
+   * container's CPU limit, and each decoder thread holds its own frames, which for 4K
+   * sources is what pushes the worker past its memory limit.
+   */
+  private ffmpegThreadArgs(): string[] {
+    const threads = String(this.config.getOrThrow<number>('MEDIA_FFMPEG_THREADS'));
+    return ['-threads', threads, '-filter_threads', threads, '-filter_complex_threads', threads];
+  }
+
+  /**
+   * Total budget for one preview render. Scales with the source length, since a long 4K
+   * source renders for minutes while making steady progress; hangs are caught by the stall
+   * check instead.
+   */
+  private renderTimeoutMs(durationSeconds: number | undefined): number {
+    const minimumSeconds = this.config.getOrThrow<number>('MEDIA_RENDER_TIMEOUT_SECONDS');
+    return (
+      Math.max(minimumSeconds, (durationSeconds ?? 0) * RENDER_SECONDS_PER_SOURCE_SECOND) * 1000
+    );
+  }
+
+  /**
+   * Turns FFmpeg's frequent position reports into at most one job update per
+   * PROGRESS_REPORT_INTERVAL_MS. `settled` waits for the queued updates, so a late one cannot
+   * overwrite the next step's (or the final) progress.
+   */
+  private throttledProgress(
+    report: ProgressReporter,
+    message: string,
+    toPercent: (fraction: number) => number,
+  ): { update: (fraction: number) => void; settled: () => Promise<void> } {
+    let lastAt = 0;
+    let lastPercent = -1;
+    let pending: Promise<void> = Promise.resolve();
+    return {
+      update: (fraction) => {
+        const percent = toPercent(fraction);
+        const now = Date.now();
+        if (percent === lastPercent || now - lastAt < PROGRESS_REPORT_INTERVAL_MS) {
+          return;
+        }
+        lastAt = now;
+        lastPercent = percent;
+        pending = pending
+          .then(() => report(percent, message))
+          .catch((error: unknown) => {
+            this.logger.warn(
+              `Progress update failed: ${error instanceof Error ? error.message : String(error)}`,
+            );
+          });
+      },
+      settled: () => pending,
+    };
+  }
+
   private runProcess(
     command: string | null,
     args: string[],
+    options: RunProcessOptions = {},
   ): Promise<{ stdout: string; stderr: string }> {
     if (!command) {
       return Promise.reject(new Error('FFmpeg binary is not available'));
     }
-    const timeoutMs = this.config.getOrThrow<number>('MEDIA_RENDER_TIMEOUT_SECONDS') * 1000;
+    const timeoutMs =
+      options.timeoutMs ?? this.config.getOrThrow<number>('MEDIA_RENDER_TIMEOUT_SECONDS') * 1000;
+    const { stallMs, onProgress } = options;
     return new Promise((resolve, reject) => {
       const child = spawn(command, args, { windowsHide: true });
       let stdout = '';
       let stderr = '';
-      const timer = setTimeout(() => {
+      // Why this method killed the command; reported instead of the bare signal.
+      let failure: string | undefined;
+      const kill = (reason: string) => {
+        failure ??= reason;
         child.kill('SIGKILL');
-        reject(new Error('Media processing timed out'));
-      }, timeoutMs);
+      };
+      const timer = setTimeout(() => kill('Media processing timed out'), timeoutMs);
+      let lastAdvanceAt = Date.now();
+      const stallTimer = stallMs
+        ? setInterval(
+            () => {
+              if (Date.now() - lastAdvanceAt > stallMs) {
+                kill(`Media processing stalled: no progress for ${Math.round(stallMs / 1000)}s`);
+              }
+            },
+            Math.min(STALL_CHECK_MS, stallMs),
+          )
+        : undefined;
+      const stopTimers = () => {
+        clearTimeout(timer);
+        clearInterval(stallTimer);
+      };
+
+      // With FFMPEG_PROGRESS_ARGS, stdout is a stream of `key=value` lines; each block ends
+      // with `progress=continue|end`.
+      let partialLine = '';
+      let frame = '';
+      let outTimeUs = '';
+      let position = '';
       child.stdout.on('data', (chunk: Buffer) => {
-        stdout += chunk.toString();
+        if (!stallMs) {
+          stdout += chunk.toString();
+          return;
+        }
+        const lines = (partialLine + chunk.toString()).split('\n');
+        partialLine = lines.pop() ?? '';
+        for (const line of lines) {
+          const separator = line.indexOf('=');
+          const key = line.slice(0, separator).trim();
+          const value = line.slice(separator + 1).trim();
+          if (key === 'frame') {
+            frame = value;
+          } else if (key === 'out_time_us') {
+            outTimeUs = value;
+          } else if (key === 'progress' && `${frame}|${outTimeUs}` !== position) {
+            position = `${frame}|${outTimeUs}`;
+            lastAdvanceAt = Date.now();
+            const micros = Number(outTimeUs);
+            if (Number.isFinite(micros) && micros >= 0) {
+              onProgress?.(micros / 1_000_000);
+            }
+          }
+        }
       });
       child.stderr.on('data', (chunk: Buffer) => {
-        stderr += chunk.toString();
+        // Only the tail is ever reported.
+        stderr = (stderr + chunk.toString()).slice(-STDERR_TAIL_CHARS);
       });
       child.once('error', (error) => {
-        clearTimeout(timer);
+        stopTimers();
         reject(error);
       });
-      child.once('close', (code) => {
-        clearTimeout(timer);
+      child.once('close', (code, signal) => {
+        stopTimers();
         if (code === 0) {
           resolve({ stdout, stderr });
-        } else {
-          // FFmpeg prints its banner first and the actual error last; keep the end.
-          const detail = stderr.trim().slice(-STDERR_TAIL_CHARS);
-          reject(new Error(detail || `Media command exited with code ${code ?? 'unknown'}`));
+          return;
         }
+        // FFmpeg prints its banner first and the actual error last; keep the end.
+        const detail = stderr.trim().slice(-STDERR_TAIL_CHARS);
+        // A killed FFmpeg never prints an error, so its stderr alone looks like a normal run.
+        const reason =
+          failure ??
+          (signal === 'SIGKILL'
+            ? 'Media command was killed (SIGKILL), most likely out of memory'
+            : signal
+              ? `Media command was killed (${signal})`
+              : undefined);
+        if (reason) {
+          reject(new Error(detail ? `${reason}\n${detail}` : reason));
+          return;
+        }
+        reject(new Error(detail || `Media command exited with code ${code ?? 'unknown'}`));
       });
     });
   }

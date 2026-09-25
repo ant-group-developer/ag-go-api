@@ -255,3 +255,62 @@ describe('MediaProcessingService image variants', () => {
     expect(variantRepository.delete).toHaveBeenCalledWith('legacy');
   });
 });
+
+describe('MediaProcessingService runProcess', () => {
+  type RunProcess = (
+    command: string,
+    args: string[],
+    options: { timeoutMs?: number; stallMs?: number; onProgress?: (seconds: number) => void },
+  ) => Promise<{ stdout: string; stderr: string }>;
+
+  // Stands in for `ffmpeg -progress pipe:1`: one report block per tick, then `progress=end`.
+  function fakeFfmpeg(ticks: number, thenHang = false): string[] {
+    return [
+      '-e',
+      `let frame = 0;
+      const timer = setInterval(() => {
+        frame += 1;
+        process.stdout.write('frame=' + frame + '\\nout_time_us=' + frame * 100000 + '\\nprogress=continue\\n');
+        if (frame === ${ticks}) {
+          clearInterval(timer);
+          if (${thenHang}) { setInterval(() => undefined, 1000); } else { process.stdout.write('progress=end\\n'); }
+        }
+      }, 20);`,
+    ];
+  }
+
+  const runProcess = () => {
+    const service = new MediaProcessingService(
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { getOrThrow: () => 60 } as unknown as ConfigService,
+    );
+    return (service as unknown as { runProcess: RunProcess }).runProcess.bind(service);
+  };
+
+  it('keeps a command running while its position advances, reporting each position', async () => {
+    const positions: number[] = [];
+    await runProcess()(process.execPath, fakeFfmpeg(20), {
+      stallMs: 300,
+      onProgress: (seconds) => positions.push(seconds),
+    });
+    expect(positions).toHaveLength(20);
+    expect(positions.at(-1)).toBeCloseTo(2);
+  });
+
+  it('kills a command whose position stops advancing', async () => {
+    await expect(
+      runProcess()(process.execPath, fakeFfmpeg(3, true), { stallMs: 300 }),
+    ).rejects.toThrow('Media processing stalled');
+  });
+
+  it('still enforces the total limit on a command that keeps advancing', async () => {
+    await expect(
+      runProcess()(process.execPath, fakeFfmpeg(1000), { stallMs: 300, timeoutMs: 400 }),
+    ).rejects.toThrow('Media processing timed out');
+  });
+});
