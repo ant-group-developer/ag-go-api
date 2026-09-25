@@ -8,6 +8,7 @@ import { DownloadJobEntity } from '../../database/entities/download-job.entity';
 import { DownloadLogEntity } from '../../database/entities/download-log.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
+import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { QueueModule } from '../../infra/queue/queue.module';
 import { AccountModule } from '../account/account.module';
 import { StorageModule } from '../assets/storage/storage.module';
@@ -30,6 +31,7 @@ import { DownloadsService } from './downloads.service';
       ProjectEntity,
       AssetEntity,
       AssetVariantEntity,
+      RenderProfileEntity,
     ]),
   ],
   controllers: [DownloadsController],

@@ -19,10 +19,12 @@ import { DownloadJobEntity } from '../../database/entities/download-job.entity';
 import { DownloadLogEntity } from '../../database/entities/download-log.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
+import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { DownloadQueueService } from '../../infra/queue/download-queue.service';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateDownloadDto } from './dto/create-download.dto';
+import { findRenderedVariant } from './rendered-variant';
 
 type RequestMetadata = {
   ipAddress?: string;
@@ -47,6 +49,8 @@ export class DownloadsService {
     private readonly assetRepository: Repository<AssetEntity>,
     @InjectRepository(AssetVariantEntity)
     private readonly variantRepository: Repository<AssetVariantEntity>,
+    @InjectRepository(RenderProfileEntity)
+    private readonly profileRepository: Repository<RenderProfileEntity>,
     private readonly folderAccess: FolderAccessService,
     private readonly config: ConfigService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
@@ -280,14 +284,11 @@ export class DownloadsService {
   }
 
   private async resolveRenderedVariant(assetId: string) {
-    const variant = await this.variantRepository.findOne({
-      where: [
-        { assetId, variantCode: 'preview', status: 'ready' },
-        { assetId, variantCode: 'preview_720p', status: 'ready' },
-        { assetId, variantCode: 'thumbnail', status: 'ready' },
-      ],
-      order: { variantCode: 'ASC' },
-    });
+    const variant = await findRenderedVariant(
+      this.variantRepository,
+      this.profileRepository,
+      assetId,
+    );
     if (!variant) {
       throw new ConflictException('Rendered variant is not ready');
     }
