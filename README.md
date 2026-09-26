@@ -81,6 +81,15 @@ docker compose run --rm api node node_modules/typeorm/cli.js migration:run -d di
 docker compose up -d
 ```
 
+Khi deploy lại trên VPS, dùng `deploy.sh` thay cho `docker compose up -d` (chạy trong
+`tmux`/`screen`). Script build, chạy migration, thay `api` trước rồi mới thay worker, nên
+API không phải ngừng trong lúc worker cũ chờ job đang chạy xong (tối đa
+`WORKER_STOP_GRACE_PERIOD`). Đặt `SKIP_MIGRATION=1` để bỏ qua migration.
+
+```bash
+./deploy.sh
+```
+
 Xem log hoặc dừng service:
 
 ```bash
