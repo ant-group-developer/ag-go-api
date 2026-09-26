@@ -732,6 +732,26 @@ paths:
             type: array
             items:
               type: string
+        - name: evaluationStatuses
+          required: false
+          in: query
+          description: Comma-separated evaluation statuses; matches any.
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - draft
+                - pending
+                - completed
+                - partially_completed
+                - failed
+        - name: mine
+          required: false
+          in: query
+          description: Only projects owned by the current user.
+          schema:
+            type: boolean
       responses:
         "200":
           description: ""
@@ -1687,7 +1707,7 @@ paths:
       operationId: GoogleDriveController_listImports
       parameters:
         - name: projectId
-          required: false
+          required: true
           in: query
           schema:
             type: string
