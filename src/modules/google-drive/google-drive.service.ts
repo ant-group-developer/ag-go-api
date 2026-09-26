@@ -12,7 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import Redis from 'ioredis';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, Not, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
@@ -693,7 +693,8 @@ export class GoogleDriveService implements OnModuleDestroy {
     item.errorCode = null;
     item.errorMessage = null;
     await this.itemRepository.save(item);
-    await this.batchRepository.update(id, { status: 'processing' });
+    // `processing` is set by the worker once the job starts; other batches wait for such a batch.
+    await this.batchRepository.update({ id, status: Not('processing') }, { status: 'queued' });
     const queueJobId = await this.importQueue.addJob({ batchId: batch.id, userId });
     await this.batchRepository.update(id, { queueJobId });
     return item;
