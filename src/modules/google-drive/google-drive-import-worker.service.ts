@@ -4,7 +4,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { Job, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { Readable } from 'node:stream';
-import { DataSource, Not, Repository } from 'typeorm';
+import { DataSource, In, Not, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { AssetImportEntity } from '../../database/entities/asset-import.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
@@ -18,7 +18,12 @@ import {
   type ImportQueueJobData,
 } from '../../infra/queue/import-queue.service';
 import { MediaQueueService } from '../../infra/queue/media-queue.service';
-import { IMPORT_JOB, IMPORT_QUEUE } from '../../infra/queue/queue.constants';
+import {
+  IMPORT_DISCOVERY_JOB,
+  IMPORT_DISCOVERY_QUEUE,
+  IMPORT_JOB,
+  IMPORT_QUEUE,
+} from '../../infra/queue/queue.constants';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { refreshProjectMediaSummary } from '../media/project-media-summary';
 import { DriveAccessToken, DriveAuthError, driveFetch, withIdleTimeout } from './drive-http';
@@ -54,12 +59,23 @@ const MAX_ITEM_ATTEMPTS = 3;
 const DOWNLOAD_RESPONSE_TIMEOUT_MS = 30_000;
 /** A download (or its upload to R2) that moves no data for this long is treated as stalled. */
 const DOWNLOAD_IDLE_TIMEOUT_MS = 60_000;
+/** Batches whose folders are listed at once, ahead of their import. */
+const DISCOVERY_CONCURRENCY = 3;
+/** A discovery lock not renewed for this long belongs to a worker that died. */
+const DISCOVERY_LOCK_MS = 60_000;
+/** How often the import job checks whether the discovery job released the batch. */
+const DISCOVERY_LOCK_POLL_MS = 2_000;
+const RENEW_LOCK_SCRIPT =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end; return 0";
+const RELEASE_LOCK_SCRIPT =
+  "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end; return 0";
 
 @Injectable()
 export class GoogleDriveImportWorkerService implements OnModuleDestroy {
   private readonly logger = new Logger(GoogleDriveImportWorkerService.name);
   private connection?: Redis;
   private worker?: Worker<ImportQueueJobData>;
+  private discoveryWorker?: Worker<ImportQueueJobData>;
   private sweepTimer?: NodeJS.Timeout;
 
   constructor(
@@ -103,6 +119,24 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     this.worker.on('failed', (job, error) => {
       this.logger.error(`Import job ${job?.id ?? 'unknown'} failed: ${error.message}`);
     });
+    this.discoveryWorker = new Worker<ImportQueueJobData>(
+      IMPORT_DISCOVERY_QUEUE,
+      async (job) => {
+        if (job.name !== IMPORT_DISCOVERY_JOB) {
+          throw new Error(`Unsupported import discovery job ${job.name}`);
+        }
+        await this.discover(job);
+      },
+      {
+        connection: this.connection,
+        prefix: this.config.getOrThrow<string>('QUEUE_PREFIX'),
+        concurrency: DISCOVERY_CONCURRENCY,
+      },
+    );
+    this.discoveryWorker.on('failed', (job, error) => {
+      // The import job lists the folders again when it starts.
+      this.logger.warn(`Import discovery job ${job?.id ?? 'unknown'} failed: ${error.message}`);
+    });
 
     this.sweepTimer = setInterval(() => void this.recoverStaleImports(), STALE_SWEEP_MS);
     this.sweepTimer.unref();
@@ -114,6 +148,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       clearInterval(this.sweepTimer);
     }
     await this.worker?.close();
+    await this.discoveryWorker?.close();
     await this.connection?.quit();
   }
 
@@ -176,6 +211,10 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     try {
       if (batch.queueJobId && (await this.importQueue.hasPendingJob(batch.queueJobId))) {
         // Waiting behind other imports, or running; BullMQ moves a stalled active job back itself.
+        // A waiting batch whose folders were never listed (its discovery job was lost) gets one.
+        if (batch.status === 'queued' && (await this.findUndiscoveredRoots(batch.id)).length > 0) {
+          await this.importQueue.addDiscoveryJob({ batchId: batch.id, userId: batch.createdBy });
+        }
         return;
       }
       // Claims the batch, so several worker replicas sweeping at once enqueue it only once.
@@ -237,7 +276,8 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     const batch = await this.batchRepository.findOne({
       where: { id: job.data.batchId, createdBy: job.data.userId },
     });
-    if (!batch || ['completed', 'cancelled'].includes(batch.status)) {
+    // A paused batch gets a new job when it is resumed.
+    if (!batch || ['completed', 'cancelled', 'paused'].includes(batch.status)) {
       return;
     }
     const heartbeat = this.startHeartbeat('import_batches', batch.id);
@@ -248,8 +288,79 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Lists the folders of a batch still waiting for the import worker, so its file count and
+   * size show before its turn. A batch already running lists them in its own job.
+   */
+  private async discover(job: Job<ImportQueueJobData>): Promise<void> {
+    const batch = await this.batchRepository.findOne({
+      where: { id: job.data.batchId, createdBy: job.data.userId },
+    });
+    if (
+      !batch?.connectionId ||
+      !['queued', 'paused'].includes(batch.status) ||
+      (await this.findUndiscoveredRoots(batch.id)).length === 0
+    ) {
+      return;
+    }
+    const connectionId = batch.connectionId;
+    const token = new DriveAccessToken(() =>
+      this.googleDrive.refreshDriveAccessToken(connectionId, job.data.userId),
+    );
+    await this.withDiscoveryLock(batch.id, false, async () => {
+      if (await this.discoverFolders(batch, token)) {
+        await this.refreshBatchProgress(batch.id);
+      }
+    });
+  }
+
+  /**
+   * Runs folder discovery of a batch under its Redis lock, so the discovery job and the import
+   * job never expand the same folder at once (which would add its files twice). With `wait`
+   * the caller polls until the lock is free; without it, it gives up and returns undefined.
+   */
+  private async withDiscoveryLock<T>(
+    batchId: string,
+    wait: boolean,
+    run: () => Promise<T>,
+  ): Promise<T | undefined> {
+    const redis = this.connection;
+    if (!redis) {
+      throw new Error('Import worker is not started');
+    }
+    const key = `${this.config.getOrThrow<string>('QUEUE_PREFIX')}:import-discovery-lock:${batchId}`;
+    const owner = uuidv7();
+    while (!(await redis.set(key, owner, 'PX', DISCOVERY_LOCK_MS, 'NX'))) {
+      if (!wait) {
+        return undefined;
+      }
+      await new Promise((resolve) => setTimeout(resolve, DISCOVERY_LOCK_POLL_MS));
+    }
+    const renewal = setInterval(() => {
+      redis
+        .eval(RENEW_LOCK_SCRIPT, 1, key, owner, DISCOVERY_LOCK_MS)
+        .catch((error: unknown) =>
+          this.logger.warn(
+            `Import discovery lock renewal for ${batchId} failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          ),
+        );
+    }, HEARTBEAT_MS);
+    renewal.unref();
+    try {
+      return await run();
+    } finally {
+      clearInterval(renewal);
+      await redis.eval(RELEASE_LOCK_SCRIPT, 1, key, owner).catch(() => undefined);
+    }
+  }
+
   private async runBatch(job: Job<ImportQueueJobData>, batch: ImportBatchEntity): Promise<void> {
-    await this.batchRepository.update(batch.id, { status: 'processing' });
+    await this.batchRepository.update(
+      { id: batch.id, status: Not(In(['cancelled', 'paused'])) },
+      { status: 'processing' },
+    );
     try {
       const connection = batch.connectionId
         ? await this.connectionRepository.findOne({ where: { id: batch.connectionId } })
@@ -263,7 +374,9 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       // Retries the batch early when Drive cannot be reached at all.
       await token.get();
 
-      if (!(await this.discoverFolders(batch, token))) {
+      if (
+        !(await this.withDiscoveryLock(batch.id, true, () => this.discoverFolders(batch, token)))
+      ) {
         return;
       }
       await this.refreshBatchProgress(batch.id);
@@ -295,7 +408,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
           });
         }
         if (!claimed) {
-          if (await this.isCancelled(batch.id)) {
+          if (await this.isStopped(batch.id)) {
             break;
           }
           continue;
@@ -307,7 +420,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       const attempts = job.opts.attempts ?? 1;
       const willRetry = job.attemptsMade + 1 < attempts;
       await this.batchRepository.update(
-        { id: batch.id, status: Not('cancelled') },
+        { id: batch.id, status: Not(In(['cancelled', 'paused'])) },
         {
           status: willRetry ? 'queued' : 'failed',
           errorMessage: error instanceof Error ? error.message.slice(0, 4000) : 'Import failed',
@@ -326,17 +439,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     batch: ImportBatchEntity,
     token: DriveAccessToken,
   ): Promise<boolean> {
-    // Files picked directly and files found in a folder already carry their MIME type, so a
-    // resumed batch does not look up thousands of files again just to find its folders.
-    const roots = await this.itemRepository
-      .createQueryBuilder('item')
-      .where('item.batch_id = :batchId AND item.status = :status', {
-        batchId: batch.id,
-        status: 'queued',
-      })
-      .andWhere("(item.source_mime_type IS NULL OR item.source_mime_type LIKE '%folder%')")
-      .orderBy('item.created_at', 'ASC')
-      .getMany();
+    const roots = await this.findUndiscoveredRoots(batch.id);
     for (const root of roots) {
       if (await this.isCancelled(batch.id)) {
         break;
@@ -372,14 +475,36 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     return true;
   }
 
+  /**
+   * Sources of the batch that may still be folders to expand. Files picked directly and files
+   * found in a folder already carry their MIME type, so a resumed batch does not look up
+   * thousands of files again just to find its folders.
+   */
+  private findUndiscoveredRoots(batchId: string): Promise<AssetImportEntity[]> {
+    return this.itemRepository
+      .createQueryBuilder('item')
+      .where('item.batch_id = :batchId AND item.status = :status', { batchId, status: 'queued' })
+      .andWhere("(item.source_mime_type IS NULL OR item.source_mime_type LIKE '%folder%')")
+      .orderBy('item.created_at', 'ASC')
+      .getMany();
+  }
+
   private async isCancelled(batchId: string): Promise<boolean> {
     return this.batchRepository.exists({ where: { id: batchId, status: 'cancelled' } });
+  }
+
+  /** Cancelled or paused: the worker must not start another file of the batch. */
+  private async isStopped(batchId: string): Promise<boolean> {
+    return this.batchRepository.exists({
+      where: { id: batchId, status: In(['cancelled', 'paused']) },
+    });
   }
 
   /**
    * Recounts the batch from its items in one query. An expanded folder is not a file of its
    * own, a folder still waiting to be expanded is pending and one that could not be read
-   * counts as failed. A cancelled batch keeps its status.
+   * counts as failed. A cancelled batch keeps its status, and so does a queued or paused one
+   * while it still has files left (its folders can be listed before its turn).
    */
   private async refreshBatchProgress(batchId: string): Promise<void> {
     const [counts] = (await this.dataSource.query(
@@ -399,7 +524,10 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     await this.dataSource.query(
       `UPDATE import_batches
        SET total_items = $2, completed_items = $3, failed_items = $4, progress_percent = $5,
-         status = CASE WHEN status = 'cancelled' THEN status ELSE $6::varchar END,
+         status = CASE
+           WHEN status = 'cancelled' OR (status IN ('queued', 'paused') AND $7::boolean) THEN status
+           ELSE $6::varchar
+         END,
          updated_at = now()
        WHERE id = $1`,
       [
@@ -409,11 +537,12 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         failed,
         total ? Math.round(((completed + failed) / total) * 100) : 100,
         status,
+        active > 0,
       ],
     );
   }
 
-  /** Imports one file. Returns false when it was not claimed: another job took it, or it was cancelled. */
+  /** Imports one file. Returns false when it was not claimed: another job took it, or the batch was cancelled or paused. */
   private async importItem(
     batch: ImportBatchEntity,
     item: AssetImportEntity,
@@ -432,7 +561,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       })
       .where('id = :id AND status = :status', { id: item.id, status: 'queued' })
       .andWhere(
-        "NOT EXISTS (SELECT 1 FROM import_batches b WHERE b.id = batch_id AND b.status = 'cancelled')",
+        "NOT EXISTS (SELECT 1 FROM import_batches b WHERE b.id = batch_id AND b.status IN ('cancelled', 'paused'))",
       )
       .execute();
     if (!claimed.affected) {

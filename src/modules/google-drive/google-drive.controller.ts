@@ -111,6 +111,20 @@ export class GoogleDriveController {
     return this.googleDrive.cancelImport(batchId, context.userId, context.userType);
   }
 
+  @Post('imports/:batchId/pause')
+  @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
+  pause(@Param('batchId') batchId: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.googleDrive.pauseImport(batchId, context.userId, context.userType);
+  }
+
+  @Post('imports/:batchId/resume')
+  @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
+  resume(@Param('batchId') batchId: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.googleDrive.resumeImport(batchId, context.userId, context.userType);
+  }
+
   @Get('imports/:batchId/items')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
   items(@Param('batchId') batchId: string, @Req() request: Request) {
