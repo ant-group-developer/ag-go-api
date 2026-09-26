@@ -420,9 +420,23 @@ export class GoogleDriveService implements OnModuleDestroy {
       );
       return batch;
     });
+    await this.enqueueDiscovery(batch.id, userId);
     const queueJobId = await this.importQueue.addJob({ batchId: batch.id, userId });
     await this.batchRepository.update(batch.id, { queueJobId });
     return batch;
+  }
+
+  /** Best effort: the import job lists the folders itself when it starts. */
+  private async enqueueDiscovery(batchId: string, userId: string): Promise<void> {
+    try {
+      await this.importQueue.addDiscoveryJob({ batchId, userId });
+    } catch (error) {
+      this.logger.warn(
+        `Import batch ${batchId} discovery could not be queued: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   async getDriveAccessToken(connectionId: string, userId: string): Promise<string> {
@@ -630,10 +644,40 @@ export class GoogleDriveService implements OnModuleDestroy {
   }
 
   async cancelImport(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
-    const batch = await this.assertBatchOwner(id, userId, userType);
-    if (!['completed', 'failed', 'cancelled'].includes(batch.status)) {
-      await this.batchRepository.update(id, { status: 'cancelled' });
+    await this.assertBatchOwner(id, userId, userType);
+    const cancelled = await this.batchRepository.update(
+      { id, status: In(['queued', 'processing', 'paused']) },
+      { status: 'cancelled' },
+    );
+    if (cancelled.affected) {
       await this.itemRepository.update({ batchId: id, status: 'queued' }, { status: 'cancelled' });
+    }
+    return this.batchRepository.findOneOrFail({ where: { id } });
+  }
+
+  /**
+   * Stops the worker from starting more files of the batch; the file being downloaded finishes.
+   * Folder discovery keeps going, so a paused batch still shows its file count and size.
+   */
+  async pauseImport(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    await this.assertBatchOwner(id, userId, userType);
+    await this.batchRepository.update(
+      { id, status: In(['queued', 'processing']) },
+      { status: 'paused' },
+    );
+    return this.batchRepository.findOneOrFail({ where: { id } });
+  }
+
+  /** Queues a paused batch again; its new job continues with the files not imported yet. */
+  async resumeImport(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    const batch = await this.assertBatchOwner(id, userId, userType);
+    const resumed = await this.batchRepository.update(
+      { id, status: 'paused' },
+      { status: 'queued', errorMessage: null },
+    );
+    if (resumed.affected) {
+      const queueJobId = await this.importQueue.addJob({ batchId: id, userId: batch.createdBy });
+      await this.batchRepository.update(id, { queueJobId });
     }
     return this.batchRepository.findOneOrFail({ where: { id } });
   }

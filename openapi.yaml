@@ -1756,6 +1756,42 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a27
       tags: *a28
+  /google-drive/imports/{batchId}/pause:
+    post:
+      operationId: GoogleDriveController_pause
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a27
+      tags: *a28
+  /google-drive/imports/{batchId}/resume:
+    post:
+      operationId: GoogleDriveController_resume
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a27
+      tags: *a28
   /google-drive/imports/{batchId}/items:
     get:
       operationId: GoogleDriveController_items
