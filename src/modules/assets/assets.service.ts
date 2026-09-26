@@ -24,6 +24,7 @@ import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
 import { refreshProjectMediaSummary } from '../media/project-media-summary';
+import { cancelSupersededRenderJobs } from '../render/render-job-lifecycle';
 import { isPreviewVariantCode, pickPreviewVariant } from '../render/render-sizes';
 import {
   findActiveRenderProfile,
@@ -511,6 +512,9 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
           createdBy: userId,
         }),
       );
+      // This retry renders with the active profile; earlier jobs of the file must not finish
+      // after it and overwrite its previews.
+      await cancelSupersededRenderJobs(manager, [assetId], [job.id]);
       const event = await manager.save(
         this.outboxService.create(manager, {
           eventType: 'asset.processing.requested',

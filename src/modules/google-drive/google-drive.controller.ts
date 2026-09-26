@@ -97,9 +97,11 @@ export class GoogleDriveController {
 
   @Get('imports')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
-  listImports(@Query('projectId') projectId: string, @Req() request: Request) {
+  listImports(@Req() request: Request, @Query('projectId') projectId?: string) {
     const context = this.authContext.getContext(request);
-    return this.googleDrive.listImports(projectId, context.userId, context.userType);
+    return projectId
+      ? this.googleDrive.listImports(projectId, context.userId, context.userType)
+      : this.googleDrive.listAllImports(context.userId, context.userType);
   }
 
   @Post('imports/:batchId/cancel')

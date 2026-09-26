@@ -1687,7 +1687,7 @@ paths:
       operationId: GoogleDriveController_listImports
       parameters:
         - name: projectId
-          required: true
+          required: false
           in: query
           schema:
             type: string
