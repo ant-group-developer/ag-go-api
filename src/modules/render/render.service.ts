@@ -26,6 +26,7 @@ import {
   RerenderWatermarkScope,
 } from './dto/rerender-watermark.dto';
 import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
+import { cancelSupersededRenderJobs, hasNewerRenderJob } from './render-job-lifecycle';
 import { normalizePreviewWidths, PREVIEW_VARIANT_SQL } from './render-sizes';
 import { normalizeWatermarkConfig } from './watermark-config';
 
@@ -194,26 +195,34 @@ export class RenderService {
         }),
       );
 
-      await manager.insert(
-        MediaRenderJobEntity,
-        jobsToQueue.map((item) => ({
-          id: uuidv7(),
-          assetId: item.assetId,
-          renderProfileId: profile.id,
-          renderBatchId: savedBatch.id,
-          renderVersion: profile.profileVersion,
-          queueJobId: null,
-          dedupeKey: `${item.assetId}:${profile.id}:${profile.profileVersion}`,
-          status: 'queued' as const,
-          progressPercent: 0,
-          progressMessage: 'Queued for batch rendering',
-          attemptCount: 0,
-          errorCode: null,
-          errorMessage: null,
-          startedAt: null,
-          finishedAt: null,
-          createdBy: userId,
-        })),
+      const newJobs = jobsToQueue.map((item) => ({
+        id: uuidv7(),
+        assetId: item.assetId,
+        renderProfileId: profile.id,
+        renderBatchId: savedBatch.id,
+        renderVersion: profile.profileVersion,
+        queueJobId: null,
+        dedupeKey: `${item.assetId}:${profile.id}:${profile.profileVersion}`,
+        status: 'queued' as const,
+        progressPercent: 0,
+        progressMessage: 'Queued for batch rendering',
+        attemptCount: 0,
+        errorCode: null,
+        errorMessage: null,
+        startedAt: null,
+        finishedAt: null,
+        createdBy: userId,
+      }));
+      await manager.insert(MediaRenderJobEntity, newJobs);
+      // Only this profile's render may still run for these files: an older profile's job
+      // finishing later would overwrite the new previews.
+      await cancelSupersededRenderJobs(
+        manager,
+        media.map((item) => item.assetId),
+        [
+          ...newJobs.map((job) => job.id),
+          ...existingJobs.filter((job) => job.status !== 'completed').map((job) => job.id),
+        ],
       );
       return savedBatch;
     });
@@ -546,6 +555,9 @@ export class RenderService {
     }
     if (job.status !== 'failed') {
       throw new ConflictException('Only failed render jobs can be retried');
+    }
+    if (await hasNewerRenderJob(this.dataSource.manager, job)) {
+      throw new ConflictException('A newer render of this file exists; retry that one instead');
     }
     await this.jobRepository.update(id, {
       status: 'queued',

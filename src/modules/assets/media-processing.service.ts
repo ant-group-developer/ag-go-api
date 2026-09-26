@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import ffmpegPath from 'ffmpeg-static';
 import { path as ffprobePath } from 'ffprobe-static';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn } from 'node:child_process';
 import { createReadStream, createWriteStream, promises as fs, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,8 +15,8 @@ import { v7 as uuidv7 } from 'uuid';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
-import { RenderBatchEntity } from '../../database/entities/render-batch.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
+import { refreshRenderBatch } from '../render/render-job-lifecycle';
 import {
   normalizeRenderSizes,
   previewVariantCode,
@@ -55,6 +56,9 @@ const STDERR_TAIL_CHARS = 2000;
 /** How often a running job refreshes its updated_at. */
 const JOB_HEARTBEAT_MS = 30_000;
 
+/** How often a running job checks whether it was cancelled (e.g. superseded by a newer render). */
+const CANCEL_CHECK_MS = 5_000;
+
 /** A `processing` job with no heartbeat for this long has lost its worker. */
 const STALE_JOB_MS = 3 * 60_000;
 
@@ -81,6 +85,16 @@ const VIDEO_THUMBNAIL_SHARE = 0.1;
 /** Minimum gap between job progress writes while a preview renders. */
 const PROGRESS_REPORT_INTERVAL_MS = 5_000;
 
+/** Thrown inside a render whose job was cancelled; the job is left as `cancelled`. */
+class RenderJobCancelledError extends Error {
+  constructor() {
+    super('Render job was cancelled');
+  }
+}
+
+/** The job a render call chain belongs to; lets deep helpers stop when it is cancelled. */
+type ActiveRender = { jobId: string; controller: AbortController };
+
 type RunProcessOptions = {
   /** Total run time limit; defaults to MEDIA_RENDER_TIMEOUT_SECONDS. */
   timeoutMs?: number;
@@ -95,6 +109,7 @@ type RunProcessOptions = {
 @Injectable()
 export class MediaProcessingService {
   private readonly logger = new Logger(MediaProcessingService.name);
+  private readonly activeRender = new AsyncLocalStorage<ActiveRender>();
 
   constructor(
     @InjectRepository(AssetEntity)
@@ -105,8 +120,6 @@ export class MediaProcessingService {
     private readonly jobRepository: Repository<MediaRenderJobEntity>,
     @InjectRepository(RenderProfileEntity)
     private readonly renderProfileRepository: Repository<RenderProfileEntity>,
-    @InjectRepository(RenderBatchEntity)
-    private readonly renderBatchRepository: Repository<RenderBatchEntity>,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     private readonly config: ConfigService,
   ) {}
@@ -140,10 +153,15 @@ export class MediaProcessingService {
     // Keeps updated_at fresh while this worker is alive, so recoverStaleJobs can tell a
     // long FFmpeg run from a job whose worker died.
     const heartbeat = setInterval(() => void this.touchJob(job.id), JOB_HEARTBEAT_MS);
+    // A newer render of the same file cancels this job (see cancelSupersededRenderJobs); stop
+    // FFmpeg instead of rendering previews that would be thrown away or overwrite newer ones.
+    const render: ActiveRender = { jobId: job.id, controller: new AbortController() };
+    const cancelWatch = setInterval(() => void this.isJobActive(render), CANCEL_CHECK_MS);
     try {
-      await this.runClaimedJob(job, assetId, queueJobId);
+      await this.activeRender.run(render, () => this.runClaimedJob(job, assetId, queueJobId));
     } finally {
       clearInterval(heartbeat);
+      clearInterval(cancelWatch);
     }
   }
 
@@ -182,7 +200,7 @@ export class MediaProcessingService {
       });
     }
     for (const batchId of new Set(failedRows.map((row) => row.render_batch_id))) {
-      await this.refreshRenderBatch(batchId);
+      await refreshRenderBatch(this.jobRepository.manager, batchId);
     }
 
     const requeued = await this.jobRepository
@@ -302,13 +320,18 @@ export class MediaProcessingService {
         });
 
         const report: ProgressReporter = async (progressPercent, progressMessage) => {
-          await this.jobRepository.update(job.id, { progressPercent, progressMessage });
+          // Never overwrite the message of a job cancelled meanwhile.
+          await this.jobRepository.update(
+            { id: job.id, status: 'processing' },
+            { progressPercent, progressMessage },
+          );
         };
         const metadata =
           asset.assetType === 'image'
             ? await this.processImage(asset, tempPath, profile, report)
             : await this.processVideo(asset, tempPath, profile, report);
 
+        await this.assertRenderActive();
         await this.assetRepository.update(asset.id, {
           processingStatus: 'ready',
           processingError: null,
@@ -317,64 +340,87 @@ export class MediaProcessingService {
             ...metadata,
           },
         });
-        await this.jobRepository.update(job.id, {
-          status: 'completed',
-          progressPercent: 100,
-          progressMessage: 'Media variants are ready',
-          finishedAt: new Date(),
-          errorCode: null,
-          errorMessage: null,
-        });
-        await this.refreshRenderBatch(job.renderBatchId);
+        await this.jobRepository.update(
+          { id: job.id, status: 'processing' },
+          {
+            status: 'completed',
+            progressPercent: 100,
+            progressMessage: 'Media variants are ready',
+            finishedAt: new Date(),
+            errorCode: null,
+            errorMessage: null,
+          },
+        );
+        await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
       } finally {
         await this.removeTempFile(tempPath);
       }
     } catch (error) {
+      if (
+        error instanceof RenderJobCancelledError ||
+        this.activeRender.getStore()?.controller.signal.aborted
+      ) {
+        // The job stays `cancelled`, and the asset belongs to the render that replaced it.
+        // Returning (not throwing) keeps BullMQ from retrying it.
+        this.logger.log(`Render job ${job.id} was cancelled, stopped rendering asset ${assetId}`);
+        await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Media processing failed';
       this.logger.error(`Asset ${assetId} processing failed: ${message}`);
       await this.assetRepository.update(assetId, {
         processingStatus: 'failed',
         processingError: message.slice(0, 4000),
       });
-      await this.jobRepository.update(job.id, {
-        status: 'failed',
-        progressMessage: 'Media processing failed',
-        errorCode: 'PROCESSING_FAILED',
-        errorMessage: message.slice(0, 4000),
-        finishedAt: new Date(),
-      });
-      await this.refreshRenderBatch(job.renderBatchId);
+      await this.jobRepository.update(
+        { id: job.id, status: 'processing' },
+        {
+          status: 'failed',
+          progressMessage: 'Media processing failed',
+          errorCode: 'PROCESSING_FAILED',
+          errorMessage: message.slice(0, 4000),
+          finishedAt: new Date(),
+        },
+      );
+      await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
       throw error;
     }
   }
 
-  private async refreshRenderBatch(batchId: string | null): Promise<void> {
-    if (!batchId) {
-      return;
+  /**
+   * Whether the job being rendered is still `processing`; aborts the render once it is not
+   * (cancelled because a newer render of the file was requested).
+   */
+  private async isJobActive(render: ActiveRender): Promise<boolean> {
+    if (render.controller.signal.aborted) {
+      return false;
     }
-    const jobs = await this.jobRepository.find({ where: { renderBatchId: batchId } });
-    if (jobs.length === 0) {
-      return;
+    try {
+      const job = await this.jobRepository.findOne({
+        select: { id: true, status: true },
+        where: { id: render.jobId },
+      });
+      if (job && job.status !== 'processing') {
+        render.controller.abort();
+        return false;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Render job ${render.jobId} cancel check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-    const completed = jobs.filter((item) => item.status === 'completed').length;
-    const failed = jobs.filter((item) => item.status === 'failed').length;
-    const cancelled = jobs.filter((item) => item.status === 'cancelled').length;
-    const terminal = completed + failed + cancelled;
-    const status =
-      terminal < jobs.length
-        ? 'processing'
-        : failed > 0 || cancelled > 0
-          ? completed > 0
-            ? 'partial'
-            : 'failed'
-          : 'completed';
-    await this.renderBatchRepository.update(batchId, {
-      status,
-      totalJobs: jobs.length,
-      completedJobs: completed,
-      failedJobs: failed,
-      progressPercent: Math.round((terminal / jobs.length) * 100),
-    });
+    return true;
+  }
+
+  /**
+   * Called before every write of a render's output, so a cancelled job never overwrites the
+   * previews of the render that replaced it. No-op outside a job (tests call helpers directly).
+   */
+  private async assertRenderActive(): Promise<void> {
+    const render = this.activeRender.getStore();
+    if (render && !(await this.isJobActive(render))) {
+      throw new RenderJobCancelledError();
+    }
   }
 
   private async processImage(
@@ -412,6 +458,7 @@ export class MediaProcessingService {
         profile,
       ),
     );
+    await this.assertRenderActive();
     await this.removeStaleVariants(asset, codes);
 
     return {
@@ -447,6 +494,7 @@ export class MediaProcessingService {
     const variantCode =
       kind === 'preview' ? previewVariantCode(output.info.width) : THUMBNAIL_VARIANT_CODE;
     const storageKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${variantCode}.webp`;
+    await this.assertRenderActive();
     const head = await this.storage.putObject(storageKey, output.data, 'image/webp');
     await this.saveVariant(
       asset,
@@ -534,6 +582,7 @@ export class MediaProcessingService {
     } finally {
       await renderProgress.settled();
     }
+    await this.assertRenderActive();
     await this.removeStaleVariants(asset, codes);
 
     return {
@@ -571,6 +620,7 @@ export class MediaProcessingService {
         .jpeg({ quality: quality.thumbnail })
         .toBuffer({ resolveWithObject: true });
       const posterKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${THUMBNAIL_VARIANT_CODE}.jpg`;
+      await this.assertRenderActive();
       const posterHead = await this.storage.putObject(posterKey, poster.data, 'image/jpeg');
       await this.saveVariant(
         asset,
@@ -713,6 +763,7 @@ export class MediaProcessingService {
       const codes: string[] = [];
       for (const [index, output] of outputs.entries()) {
         const previewKey = `${prefix}/variants/${asset.id}/${output.variantCode}.mp4`;
+        await this.assertRenderActive();
         // Streamed so a long preview never sits in the Node heap as one Buffer.
         const { size: previewSize } = await fs.stat(output.previewPath);
         const previewHead = await this.storage.putObject(
@@ -1131,6 +1182,10 @@ export class MediaProcessingService {
     const timeoutMs =
       options.timeoutMs ?? this.config.getOrThrow<number>('MEDIA_RENDER_TIMEOUT_SECONDS') * 1000;
     const { stallMs, onProgress } = options;
+    const signal = this.activeRender.getStore()?.controller.signal;
+    if (signal?.aborted) {
+      return Promise.reject(new RenderJobCancelledError());
+    }
     return new Promise((resolve, reject) => {
       const child = spawn(command, args, { windowsHide: true });
       let stdout = '';
@@ -1153,9 +1208,12 @@ export class MediaProcessingService {
             Math.min(STALL_CHECK_MS, stallMs),
           )
         : undefined;
+      const onAbort = () => kill('cancelled');
+      signal?.addEventListener('abort', onAbort, { once: true });
       const stopTimers = () => {
         clearTimeout(timer);
         clearInterval(stallTimer);
+        signal?.removeEventListener('abort', onAbort);
       };
 
       // With FFMPEG_PROGRESS_ARGS, stdout is a stream of `key=value` lines; each block ends
@@ -1197,8 +1255,12 @@ export class MediaProcessingService {
         stopTimers();
         reject(error);
       });
-      child.once('close', (code, signal) => {
+      child.once('close', (code, exitSignal) => {
         stopTimers();
+        if (failure === 'cancelled') {
+          reject(new RenderJobCancelledError());
+          return;
+        }
         if (code === 0) {
           resolve({ stdout, stderr });
           return;
@@ -1208,10 +1270,10 @@ export class MediaProcessingService {
         // A killed FFmpeg never prints an error, so its stderr alone looks like a normal run.
         const reason =
           failure ??
-          (signal === 'SIGKILL'
+          (exitSignal === 'SIGKILL'
             ? 'Media command was killed (SIGKILL), most likely out of memory'
-            : signal
-              ? `Media command was killed (${signal})`
+            : exitSignal
+              ? `Media command was killed (${exitSignal})`
               : undefined);
         if (reason) {
           reject(new Error(detail ? `${reason}\n${detail}` : reason));
