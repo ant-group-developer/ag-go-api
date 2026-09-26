@@ -259,6 +259,130 @@ describe('MediaProcessingService image variants', () => {
   });
 });
 
+describe('MediaProcessingService video variants', () => {
+  type SavedVariant = { variantCode: string; width: number; height: number; hasWatermark: boolean };
+  const settings: Record<string, number> = {
+    MEDIA_FFMPEG_THREADS: 2,
+    MEDIA_RENDER_TIMEOUT_SECONDS: 60,
+    MEDIA_PREVIEW_MAX_WIDTH: 1920,
+    MEDIA_THUMBNAIL_MAX_WIDTH: 320,
+  };
+  let dir: string;
+  let source: string;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'media-video-spec-'));
+    source = join(dir, 'source.mp4');
+    const { default: ffmpegPath } = await import('ffmpeg-static');
+    const { execFileSync } = await import('node:child_process');
+    execFileSync(ffmpegPath as unknown as string, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=640x360:rate=30',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440',
+      '-t',
+      '2',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-c:a',
+      'aac',
+      '-shortest',
+      source,
+    ]);
+  }, 60_000);
+
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('renders every preview size in a single FFmpeg run', async () => {
+    const logo = await sharp({
+      create: { width: 64, height: 64, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } },
+    })
+      .png()
+      .toBuffer();
+    const saved: SavedVariant[] = [];
+    const uploaded = new Map<string, number>();
+    const storage = {
+      readObject: jest.fn(() => Readable.from([logo])),
+      putObject: jest.fn(async (key: string, body: Buffer | Readable) => {
+        let size = 0;
+        for await (const chunk of Buffer.isBuffer(body) ? [body] : body) {
+          size += (chunk as Buffer).length;
+        }
+        uploaded.set(key, size);
+        return { sizeBytes: size };
+      }),
+    };
+    const service = new MediaProcessingService(
+      {
+        findOne: jest.fn().mockResolvedValue({
+          id: LOGO_ID,
+          originalStorageKey: 'logo.png',
+          mimeType: 'image/png',
+        }),
+      } as never,
+      {
+        findOne: jest.fn().mockResolvedValue(null),
+        create: jest.fn((value: SavedVariant) => value),
+        save: jest.fn(async (value: SavedVariant) => saved.push(value)),
+        find: jest.fn().mockResolvedValue([]),
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      storage as never,
+      { getOrThrow: (key: string) => settings[key] } as unknown as ConfigService,
+    );
+    const internals = service as unknown as {
+      runProcess: (...args: unknown[]) => Promise<unknown>;
+      processVideo: (
+        asset: unknown,
+        input: string,
+        profile: unknown,
+        report: () => Promise<void>,
+      ) => Promise<{ width?: number; height?: number }>;
+    };
+    const runProcess = jest.spyOn(internals, 'runProcess');
+
+    const metadata = await internals.processVideo(
+      { id: 'asset-1', originalStorageKey: 'projects/p1/originals/a.mp4' },
+      source,
+      {
+        id: 'profile',
+        profileVersion: 2,
+        watermarkEnabled: true,
+        watermarkConfig: { text: '', logoAssetId: LOGO_ID },
+        renderSizes: { previewWidths: [160, 320, 640], thumbnailWidth: 120 },
+      },
+      async () => undefined,
+    );
+
+    expect(metadata).toMatchObject({ width: 640, height: 360 });
+    const previews = saved.filter((variant) => variant.variantCode.startsWith('preview_'));
+    expect(previews.map((variant) => [variant.variantCode, variant.width, variant.height])).toEqual(
+      [
+        ['preview_160', 160, 90],
+        ['preview_320', 320, 180],
+        ['preview_640', 640, 360],
+      ],
+    );
+    expect(previews.every((variant) => variant.hasWatermark)).toBe(true);
+    for (const width of [160, 320, 640]) {
+      expect(uploaded.get(`projects/p1/variants/asset-1/preview_${width}.mp4`)).toBeGreaterThan(0);
+    }
+    // ffprobe, the thumbnail frame, then one run for all previews.
+    expect(runProcess).toHaveBeenCalledTimes(3);
+  }, 60_000);
+});
+
 describe('MediaProcessingService runProcess', () => {
   type RunProcess = (
     command: string,

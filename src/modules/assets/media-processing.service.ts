@@ -75,6 +75,9 @@ const RENDER_SECONDS_PER_SOURCE_SECOND = 20;
 
 const STALL_CHECK_MS = 5_000;
 
+/** Share of a video job's render progress given to the (quick) thumbnail step. */
+const VIDEO_THUMBNAIL_SHARE = 0.1;
+
 /** Minimum gap between job progress writes while a preview renders. */
 const PROGRESS_REPORT_INTERVAL_MS = 5_000;
 
@@ -324,7 +327,7 @@ export class MediaProcessingService {
         });
         await this.refreshRenderBatch(job.renderBatchId);
       } finally {
-        await fs.rm(tempPath, { force: true });
+        await this.removeTempFile(tempPath);
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Media processing failed';
@@ -504,36 +507,32 @@ export class MediaProcessingService {
         getVideoRenderSize(width, height, { maxWidth: previewWidth })!,
       ),
     );
-    const steps = renderSizes.length + 1;
     const codes: string[] = [];
 
-    await report(this.progressFor(0, steps), 'Rendering video thumbnail');
+    await report(this.progressFor(0, 1), 'Rendering video thumbnail');
     codes.push(
       await this.createVideoThumbnail(asset, inputPath, sizes.thumbnailWidth, quality, profile),
     );
 
-    const largestArea = Math.max(...renderSizes.map((size) => size.width * size.height));
-    for (const [index, size] of renderSizes.entries()) {
-      const message = `Rendering ${size.width}px video preview`;
-      await report(this.progressFor(index + 1, steps), message);
-      const stepProgress = this.throttledProgress(report, message, (fraction) =>
-        this.progressFor(index + 1 + fraction, steps),
+    // The thumbnail is quick; the previews take the rest of the 30-95% range.
+    const message = `Rendering ${renderSizes.map((size) => size.width).join(', ')}px video previews`;
+    await report(this.progressFor(VIDEO_THUMBNAIL_SHARE, 1), message);
+    const renderProgress = this.throttledProgress(report, message, (fraction) =>
+      this.progressFor(VIDEO_THUMBNAIL_SHARE + (1 - VIDEO_THUMBNAIL_SHARE) * fraction, 1),
+    );
+    try {
+      codes.push(
+        ...(await this.createVideoPreviews(
+          asset,
+          inputPath,
+          renderSizes,
+          profile,
+          durationSeconds,
+          renderProgress.update,
+        )),
       );
-      try {
-        codes.push(
-          await this.createVideoPreview(
-            asset,
-            inputPath,
-            size,
-            this.getVideoBitrate(profile, (size.width * size.height) / largestArea),
-            profile,
-            durationSeconds,
-            stepProgress.update,
-          ),
-        );
-      } finally {
-        await stepProgress.settled();
-      }
+    } finally {
+      await renderProgress.settled();
     }
     await this.removeStaleVariants(asset, codes);
 
@@ -586,73 +585,118 @@ export class MediaProcessingService {
       );
       return THUMBNAIL_VARIANT_CODE;
     } finally {
-      await fs.rm(posterPath, { force: true });
+      await this.removeTempFile(posterPath);
     }
   }
 
-  /** H.264 preview at `size` (even dimensions), watermarked when the profile has one. */
-  private async createVideoPreview(
+  /**
+   * H.264 previews at every `sizes` entry (even dimensions), watermarked when the profile has
+   * one. A single FFmpeg run decodes the source once and encodes every size from it: decoding
+   * 4K HEVC is most of the work, and one run per size took about twice as long.
+   */
+  private async createVideoPreviews(
     asset: AssetEntity,
     inputPath: string,
-    size: { width: number; height: number },
-    bitrate: number | null,
+    sizes: Array<{ width: number; height: number }>,
     profile: RenderProfileEntity | null,
     durationSeconds: number | undefined,
     onFraction: (fraction: number) => void,
-  ): Promise<string> {
-    const variantCode = previewVariantCode(size.width);
-    const previewKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${variantCode}.mp4`;
-    const stamp = `${asset.id}-${size.width}-${Date.now()}`;
-    const previewPath = join(tmpdir(), `${TEMP_FILE_PREFIX}preview-${stamp}.mp4`);
-    const watermarkPath = join(tmpdir(), `${TEMP_FILE_PREFIX}watermark-${stamp}.png`);
+  ): Promise<string[]> {
+    const prefix = this.projectPrefix(asset.originalStorageKey, asset.id);
+    const stamp = `${asset.id}-${Date.now()}`;
+    const area = (size: { width: number; height: number }) => size.width * size.height;
+    const largestArea = Math.max(...sizes.map(area));
+    const outputs = sizes.map((size) => ({
+      size,
+      variantCode: previewVariantCode(size.width),
+      previewPath: join(tmpdir(), `${TEMP_FILE_PREFIX}preview-${stamp}-${size.width}.mp4`),
+      watermarkPath: join(tmpdir(), `${TEMP_FILE_PREFIX}watermark-${stamp}-${size.width}.png`),
+      bitrate: this.getVideoBitrate(profile, area(size) / largestArea),
+    }));
     try {
-      const watermark = await this.createWatermark(size.width, size.height, profile);
-      if (watermark) {
-        await fs.writeFile(watermarkPath, watermark.buffer);
+      const watermarks: Array<Awaited<ReturnType<typeof this.createWatermark>>> = [];
+      for (const output of outputs) {
+        const watermark = await this.createWatermark(
+          output.size.width,
+          output.size.height,
+          profile,
+        );
+        if (watermark) {
+          await fs.writeFile(output.watermarkPath, watermark.buffer);
+        }
+        watermarks.push(watermark);
       }
-      const scale = `[0:v]scale=${size.width}:${size.height}`;
+
+      // Scale the 4K source once to the largest size; smaller sizes are scaled from that.
+      const largest = outputs.find((output) => area(output.size) === largestArea)!;
+      const filters = [
+        `[0:v]scale=${largest.size.width}:${largest.size.height},split=${outputs.length}${outputs
+          .map((_, index) => `[s${index}]`)
+          .join('')}`,
+      ];
+      const watermarkArgs: string[] = [];
+      for (const [index, output] of outputs.entries()) {
+        let label = `[s${index}]`;
+        if (output !== largest) {
+          filters.push(`${label}scale=${output.size.width}:${output.size.height}[r${index}]`);
+          label = `[r${index}]`;
+        }
+        const watermark = watermarks[index];
+        if (watermark) {
+          watermarkArgs.push('-i', output.watermarkPath);
+          // Input 0 is the source; watermark inputs follow in order.
+          const input = watermarkArgs.length / 2;
+          filters.push(
+            `${label}[${input}:v]overlay=${watermark.left}:${watermark.top}:format=auto,format=yuv420p[v${index}]`,
+          );
+        } else {
+          filters.push(`${label}format=yuv420p[v${index}]`);
+        }
+      }
+
+      const threads = String(this.config.getOrThrow<number>('MEDIA_FFMPEG_THREADS'));
       const args = [
         '-y',
         ...FFMPEG_PROGRESS_ARGS,
         ...this.ffmpegThreadArgs(),
         '-i',
         inputPath,
-        ...(watermark ? ['-i', watermarkPath] : []),
+        ...watermarkArgs,
         '-filter_complex',
-        watermark
-          ? `${scale}[base];[base][1:v]overlay=${watermark.left}:${watermark.top}:format=auto,format=yuv420p[v]`
-          : `${scale},format=yuv420p[v]`,
-        '-map',
-        '[v]',
-        '-map',
-        '0:a?',
-        '-c:v',
-        'libx264',
-        '-threads',
-        String(this.config.getOrThrow<number>('MEDIA_FFMPEG_THREADS')),
-        '-preset',
-        'veryfast',
-        ...(bitrate
-          ? [
-              '-b:v',
-              String(bitrate),
-              '-maxrate',
-              String(Math.round(bitrate * 1.5)),
-              '-bufsize',
-              String(bitrate * 2),
-            ]
-          : ['-crf', '23']),
-        '-c:a',
-        'aac',
-        '-b:a',
-        '128k',
-        '-sn',
-        '-dn',
-        '-movflags',
-        '+faststart',
-        '-f',
-        'mp4',
-        previewPath,
+        filters.join(';'),
+        ...outputs.flatMap((output, index) => [
+          '-map',
+          `[v${index}]`,
+          '-map',
+          '0:a?',
+          '-c:v',
+          'libx264',
+          '-threads',
+          threads,
+          '-preset',
+          'veryfast',
+          ...(output.bitrate
+            ? [
+                '-b:v',
+                String(output.bitrate),
+                '-maxrate',
+                String(Math.round(output.bitrate * 1.5)),
+                '-bufsize',
+                String(output.bitrate * 2),
+              ]
+            : ['-crf', '23']),
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-sn',
+          '-dn',
+          '-movflags',
+          '+faststart',
+          '-f',
+          'mp4',
+          output.previewPath,
+        ]),
       ];
       await this.runProcess(ffmpegPath, args, {
         // A long source renders for minutes while advancing steadily; only a stuck FFmpeg
@@ -665,29 +709,52 @@ export class MediaProcessingService {
           }
         },
       });
-      // Streamed so a long preview never sits in the Node heap as one Buffer.
-      const { size: previewSize } = await fs.stat(previewPath);
-      const previewHead = await this.storage.putObject(
-        previewKey,
-        createReadStream(previewPath),
-        'video/mp4',
-        previewSize,
-      );
-      await this.saveVariant(
-        asset,
-        variantCode,
-        previewKey,
-        'video/mp4',
-        previewHead.sizeBytes,
-        size.width,
-        size.height,
-        Boolean(watermark),
-        profile,
-      );
-      return variantCode;
+
+      const codes: string[] = [];
+      for (const [index, output] of outputs.entries()) {
+        const previewKey = `${prefix}/variants/${asset.id}/${output.variantCode}.mp4`;
+        // Streamed so a long preview never sits in the Node heap as one Buffer.
+        const { size: previewSize } = await fs.stat(output.previewPath);
+        const previewHead = await this.storage.putObject(
+          previewKey,
+          createReadStream(output.previewPath),
+          'video/mp4',
+          previewSize,
+        );
+        await this.saveVariant(
+          asset,
+          output.variantCode,
+          previewKey,
+          'video/mp4',
+          previewHead.sizeBytes,
+          output.size.width,
+          output.size.height,
+          Boolean(watermarks[index]),
+          profile,
+        );
+        codes.push(output.variantCode);
+      }
+      return codes;
     } finally {
-      await fs.rm(previewPath, { force: true });
-      await fs.rm(watermarkPath, { force: true });
+      for (const output of outputs) {
+        await this.removeTempFile(output.previewPath);
+        await this.removeTempFile(output.watermarkPath);
+      }
+    }
+  }
+
+  /**
+   * Best-effort temp file cleanup. A file still locked by a just-exited FFmpeg (EBUSY on
+   * Windows) must not fail a render that already finished; removeLeftoverTempFiles catches it
+   * on the next start.
+   */
+  private async removeTempFile(path: string): Promise<void> {
+    try {
+      await fs.rm(path, { force: true, maxRetries: 5, retryDelay: 200 });
+    } catch (error) {
+      this.logger.warn(
+        `Temp file ${path} could not be removed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
