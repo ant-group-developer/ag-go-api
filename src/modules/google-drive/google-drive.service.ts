@@ -521,6 +521,36 @@ export class GoogleDriveService implements OnModuleDestroy {
       order: { createdAt: 'DESC' },
       take: 50,
     });
+    return this.enrichImportBatches(batches);
+  }
+
+  /**
+   * Import jobs across all projects, newest first. Admins see every batch; other users see the
+   * batches they started (the same rule `getImport` applies, so the detail drawer can open them).
+   */
+  async listAllImports(userId: string, userType?: 'ADMIN' | 'USER') {
+    const batches = await this.batchRepository.find({
+      where: isAdminUserType(userType) ? {} : { createdBy: userId },
+      order: { createdAt: 'DESC' },
+      take: 500,
+    });
+    const enriched = await this.enrichImportBatches(batches);
+    const projectIds = [...new Set(batches.map((batch) => batch.projectId))];
+    const projects = projectIds.length
+      ? await this.projectRepository.find({
+          select: { id: true, name: true },
+          where: { id: In(projectIds) },
+        })
+      : [];
+    const projectNames = new Map(projects.map((project) => [project.id, project.name]));
+    return enriched.map((batch, index) => ({
+      ...batch,
+      projectName: projectNames.get(batches[index].projectId) ?? null,
+    }));
+  }
+
+  /** Adds per-batch file stats, source folders and the creator the import history tables show. */
+  private async enrichImportBatches(batches: ImportBatchEntity[]) {
     if (!batches.length) {
       return [];
     }
