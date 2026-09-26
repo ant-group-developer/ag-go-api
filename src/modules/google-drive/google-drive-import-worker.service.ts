@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { Job, Worker } from 'bullmq';
+import { DelayedError, Job, Worker } from 'bullmq';
 import Redis from 'ioredis';
 import { Readable } from 'node:stream';
 import { DataSource, In, Not, Repository } from 'typeorm';
@@ -65,6 +65,8 @@ const DISCOVERY_CONCURRENCY = 3;
 const DISCOVERY_LOCK_MS = 60_000;
 /** How often the import job checks whether the discovery job released the batch. */
 const DISCOVERY_LOCK_POLL_MS = 2_000;
+/** How long an import job waits before checking again whether the batch ahead of it finished. */
+const BATCH_AHEAD_POLL_MS = 5_000;
 const RENEW_LOCK_SCRIPT =
   "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end; return 0";
 const RELEASE_LOCK_SCRIPT =
@@ -77,6 +79,8 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
   private worker?: Worker<ImportQueueJobData>;
   private discoveryWorker?: Worker<ImportQueueJobData>;
   private sweepTimer?: NodeJS.Timeout;
+  /** Set on shutdown: the running batch stops after its current file and hands its job back. */
+  private stopping = false;
 
   constructor(
     private readonly config: ConfigService,
@@ -104,11 +108,11 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     });
     this.worker = new Worker<ImportQueueJobData>(
       IMPORT_QUEUE,
-      async (job) => {
+      async (job, token) => {
         if (job.name !== IMPORT_JOB) {
           throw new Error(`Unsupported import job ${job.name}`);
         }
-        await this.process(job);
+        await this.process(job, token);
       },
       {
         connection: this.connection,
@@ -144,6 +148,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.stopping = true;
     if (this.sweepTimer) {
       clearInterval(this.sweepTimer);
     }
@@ -272,7 +277,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     return timer;
   }
 
-  private async process(job: Job<ImportQueueJobData>): Promise<void> {
+  private async process(job: Job<ImportQueueJobData>, token?: string): Promise<void> {
     const batch = await this.batchRepository.findOne({
       where: { id: job.data.batchId, createdBy: job.data.userId },
     });
@@ -280,12 +285,50 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     if (!batch || ['completed', 'cancelled', 'paused'].includes(batch.status)) {
       return;
     }
+    // After a restart the job of the interrupted batch only becomes runnable once BullMQ sees it
+    // stalled, so the next waiting job would start first and two batches would run side by side.
+    if (await this.hasBatchAhead(batch)) {
+      await this.postpone(job, token, BATCH_AHEAD_POLL_MS);
+    }
     const heartbeat = this.startHeartbeat('import_batches', batch.id);
+    let interrupted: boolean;
     try {
-      await this.runBatch(job, batch);
+      interrupted = await this.runBatch(job, batch);
     } finally {
       clearInterval(heartbeat);
     }
+    if (interrupted) {
+      // The batch stays `processing`, so the next worker continues it before any other batch.
+      this.logger.log(`Import batch ${batch.id} stopped for shutdown; its job resumes on restart`);
+      await this.postpone(job, token, 0);
+    }
+  }
+
+  /**
+   * Another batch was started and has not finished, e.g. one cut off by a restart whose job is
+   * waiting to run again. It goes first, so imports keep running one at a time. Between two
+   * started batches the older one goes first, so they never keep deferring to each other.
+   */
+  private async hasBatchAhead(batch: ImportBatchEntity): Promise<boolean> {
+    const query = this.batchRepository
+      .createQueryBuilder('batch')
+      .where("batch.status = 'processing' AND batch.id <> :id", { id: batch.id });
+    if (batch.status === 'processing') {
+      query.andWhere('(batch.created_at, batch.id) < (:createdAt, :id)', {
+        createdAt: batch.createdAt,
+      });
+    }
+    return query.getExists();
+  }
+
+  /** Hands the job back to the queue without using up an attempt. */
+  private async postpone(
+    job: Job<ImportQueueJobData>,
+    token: string | undefined,
+    delayMs: number,
+  ): Promise<never> {
+    await job.moveToDelayed(Date.now() + delayMs, token);
+    throw new DelayedError();
   }
 
   /**
@@ -356,7 +399,9 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     }
   }
 
-  private async runBatch(job: Job<ImportQueueJobData>, batch: ImportBatchEntity): Promise<void> {
+  /** Returns true when the worker is shutting down and the batch still has files left. */
+  private async runBatch(job: Job<ImportQueueJobData>, batch: ImportBatchEntity): Promise<boolean> {
+    let interrupted = false;
     await this.batchRepository.update(
       { id: batch.id, status: Not(In(['cancelled', 'paused'])) },
       { status: 'processing' },
@@ -377,7 +422,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       if (
         !(await this.withDiscoveryLock(batch.id, true, () => this.discoverFolders(batch, token)))
       ) {
-        return;
+        return false;
       }
       await this.refreshBatchProgress(batch.id);
       const queuedItems = await this.itemRepository.find({
@@ -387,6 +432,10 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       for (const item of queuedItems) {
         if (this.isFolderMimeType(item.sourceMimeType)) {
           continue;
+        }
+        if (this.stopping) {
+          interrupted = true;
+          break;
         }
         let claimed = true;
         try {
@@ -416,6 +465,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         await this.refreshBatchProgress(batch.id);
       }
       await this.refreshBatchProgress(batch.id);
+      return interrupted;
     } catch (error) {
       const attempts = job.opts.attempts ?? 1;
       const willRetry = job.attemptsMade + 1 < attempts;
