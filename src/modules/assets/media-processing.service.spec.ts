@@ -43,7 +43,6 @@ async function createService(logoAvailable = true) {
     {} as never,
     {} as never,
     {} as never,
-    {} as never,
     storage,
     {} as ConfigService,
   );
@@ -194,7 +193,6 @@ describe('MediaProcessingService image variants', () => {
       variantRepository as never,
       {} as never,
       {} as never,
-      {} as never,
       storage as never,
       { getOrThrow: () => 1920 } as unknown as ConfigService,
     );
@@ -259,6 +257,129 @@ describe('MediaProcessingService image variants', () => {
   });
 });
 
+describe('MediaProcessingService video variants', () => {
+  type SavedVariant = { variantCode: string; width: number; height: number; hasWatermark: boolean };
+  const settings: Record<string, number> = {
+    MEDIA_FFMPEG_THREADS: 2,
+    MEDIA_RENDER_TIMEOUT_SECONDS: 60,
+    MEDIA_PREVIEW_MAX_WIDTH: 1920,
+    MEDIA_THUMBNAIL_MAX_WIDTH: 320,
+  };
+  let dir: string;
+  let source: string;
+
+  beforeAll(async () => {
+    dir = mkdtempSync(join(tmpdir(), 'media-video-spec-'));
+    source = join(dir, 'source.mp4');
+    const { default: ffmpegPath } = await import('ffmpeg-static');
+    const { execFileSync } = await import('node:child_process');
+    execFileSync(ffmpegPath as unknown as string, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=640x360:rate=30',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440',
+      '-t',
+      '2',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-c:a',
+      'aac',
+      '-shortest',
+      source,
+    ]);
+  }, 60_000);
+
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('renders every preview size in a single FFmpeg run', async () => {
+    const logo = await sharp({
+      create: { width: 64, height: 64, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } },
+    })
+      .png()
+      .toBuffer();
+    const saved: SavedVariant[] = [];
+    const uploaded = new Map<string, number>();
+    const storage = {
+      readObject: jest.fn(() => Readable.from([logo])),
+      putObject: jest.fn(async (key: string, body: Buffer | Readable) => {
+        let size = 0;
+        for await (const chunk of Buffer.isBuffer(body) ? [body] : body) {
+          size += (chunk as Buffer).length;
+        }
+        uploaded.set(key, size);
+        return { sizeBytes: size };
+      }),
+    };
+    const service = new MediaProcessingService(
+      {
+        findOne: jest.fn().mockResolvedValue({
+          id: LOGO_ID,
+          originalStorageKey: 'logo.png',
+          mimeType: 'image/png',
+        }),
+      } as never,
+      {
+        findOne: jest.fn().mockResolvedValue(null),
+        create: jest.fn((value: SavedVariant) => value),
+        save: jest.fn(async (value: SavedVariant) => saved.push(value)),
+        find: jest.fn().mockResolvedValue([]),
+      } as never,
+      {} as never,
+      {} as never,
+      storage as never,
+      { getOrThrow: (key: string) => settings[key] } as unknown as ConfigService,
+    );
+    const internals = service as unknown as {
+      runProcess: (...args: unknown[]) => Promise<unknown>;
+      processVideo: (
+        asset: unknown,
+        input: string,
+        profile: unknown,
+        report: () => Promise<void>,
+      ) => Promise<{ width?: number; height?: number }>;
+    };
+    const runProcess = jest.spyOn(internals, 'runProcess');
+
+    const metadata = await internals.processVideo(
+      { id: 'asset-1', originalStorageKey: 'projects/p1/originals/a.mp4' },
+      source,
+      {
+        id: 'profile',
+        profileVersion: 2,
+        watermarkEnabled: true,
+        watermarkConfig: { text: '', logoAssetId: LOGO_ID },
+        renderSizes: { previewWidths: [160, 320, 640], thumbnailWidth: 120 },
+      },
+      async () => undefined,
+    );
+
+    expect(metadata).toMatchObject({ width: 640, height: 360 });
+    const previews = saved.filter((variant) => variant.variantCode.startsWith('preview_'));
+    expect(previews.map((variant) => [variant.variantCode, variant.width, variant.height])).toEqual(
+      [
+        ['preview_160', 160, 90],
+        ['preview_320', 320, 180],
+        ['preview_640', 640, 360],
+      ],
+    );
+    expect(previews.every((variant) => variant.hasWatermark)).toBe(true);
+    for (const width of [160, 320, 640]) {
+      expect(uploaded.get(`projects/p1/variants/asset-1/preview_${width}.mp4`)).toBeGreaterThan(0);
+    }
+    // ffprobe, the thumbnail frame, then one run for all previews.
+    expect(runProcess).toHaveBeenCalledTimes(3);
+  }, 60_000);
+});
+
 describe('MediaProcessingService runProcess', () => {
   type RunProcess = (
     command: string,
@@ -284,7 +405,6 @@ describe('MediaProcessingService runProcess', () => {
 
   const runProcess = () => {
     const service = new MediaProcessingService(
-      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -316,6 +436,68 @@ describe('MediaProcessingService runProcess', () => {
       runProcess()(process.execPath, fakeFfmpeg(1000), { stallMs: 300, timeoutMs: 400 }),
     ).rejects.toThrow('Media processing timed out');
   });
+
+  it('stops a render whose job gets cancelled by a newer render of the file', async () => {
+    const job = { id: 'job-1', assetId: 'asset-1', renderProfileId: null, renderBatchId: null };
+    const updateChain = {
+      update: () => updateChain,
+      set: () => updateChain,
+      where: () => updateChain,
+      execute: jest.fn().mockResolvedValue({ affected: 1 }),
+    };
+    const jobRepository = {
+      // The lookup, then the cancel checks see the job cancelled (as cancelSupersededRenderJobs leaves it).
+      findOne: jest
+        .fn()
+        .mockResolvedValueOnce(job)
+        .mockResolvedValue({ id: job.id, status: 'cancelled' }),
+      createQueryBuilder: () => updateChain,
+      update: jest.fn(),
+    };
+    const assetRepository = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'asset-1',
+        assetType: 'video',
+        originalStorageKey: 'projects/p1/originals/a.mp4',
+      }),
+      update: jest.fn(),
+    };
+    const service = new MediaProcessingService(
+      assetRepository as never,
+      {} as never,
+      jobRepository as never,
+      { findOne: jest.fn().mockResolvedValue(null) } as never,
+      {
+        headObject: jest.fn().mockResolvedValue({}),
+        readObject: jest.fn(() => Readable.from([Buffer.from('source')])),
+      } as never,
+      { getOrThrow: () => 600 } as unknown as ConfigService,
+    );
+    const internals = service as unknown as {
+      runProcess: RunProcess;
+      processVideo: () => Promise<unknown>;
+    };
+    // A render that would run for about 20 s.
+    jest
+      .spyOn(internals, 'processVideo')
+      .mockImplementation(() =>
+        internals.runProcess(process.execPath, fakeFfmpeg(1000), { stallMs: 60_000 }),
+      );
+
+    const startedAt = Date.now();
+    await expect(service.processJobById(job.id, job.assetId)).resolves.toBeUndefined();
+
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    const statuses = jobRepository.update.mock.calls.map(
+      ([, values]) => (values as { status?: string }).status,
+    );
+    expect(statuses).not.toContain('failed');
+    expect(statuses).not.toContain('completed');
+    expect(assetRepository.update).not.toHaveBeenCalledWith(
+      'asset-1',
+      expect.objectContaining({ processingStatus: 'failed' }),
+    );
+  }, 20_000);
 });
 
 describe('MediaProcessingService removeLeftoverTempFiles', () => {
@@ -330,7 +512,6 @@ describe('MediaProcessingService removeLeftoverTempFiles', () => {
       writeFileSync(join(dir, name), 'x');
     }
     const service = new MediaProcessingService(
-      {} as never,
       {} as never,
       {} as never,
       {} as never,

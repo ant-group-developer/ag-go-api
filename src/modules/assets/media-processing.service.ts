@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import ffmpegPath from 'ffmpeg-static';
 import { path as ffprobePath } from 'ffprobe-static';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { spawn } from 'node:child_process';
 import { createReadStream, createWriteStream, promises as fs, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,8 +15,8 @@ import { v7 as uuidv7 } from 'uuid';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
-import { RenderBatchEntity } from '../../database/entities/render-batch.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
+import { refreshRenderBatch } from '../render/render-job-lifecycle';
 import {
   normalizeRenderSizes,
   previewVariantCode,
@@ -55,6 +56,9 @@ const STDERR_TAIL_CHARS = 2000;
 /** How often a running job refreshes its updated_at. */
 const JOB_HEARTBEAT_MS = 30_000;
 
+/** How often a running job checks whether it was cancelled (e.g. superseded by a newer render). */
+const CANCEL_CHECK_MS = 5_000;
+
 /** A `processing` job with no heartbeat for this long has lost its worker. */
 const STALE_JOB_MS = 3 * 60_000;
 
@@ -75,8 +79,21 @@ const RENDER_SECONDS_PER_SOURCE_SECOND = 20;
 
 const STALL_CHECK_MS = 5_000;
 
+/** Share of a video job's render progress given to the (quick) thumbnail step. */
+const VIDEO_THUMBNAIL_SHARE = 0.1;
+
 /** Minimum gap between job progress writes while a preview renders. */
 const PROGRESS_REPORT_INTERVAL_MS = 5_000;
+
+/** Thrown inside a render whose job was cancelled; the job is left as `cancelled`. */
+class RenderJobCancelledError extends Error {
+  constructor() {
+    super('Render job was cancelled');
+  }
+}
+
+/** The job a render call chain belongs to; lets deep helpers stop when it is cancelled. */
+type ActiveRender = { jobId: string; controller: AbortController };
 
 type RunProcessOptions = {
   /** Total run time limit; defaults to MEDIA_RENDER_TIMEOUT_SECONDS. */
@@ -92,6 +109,7 @@ type RunProcessOptions = {
 @Injectable()
 export class MediaProcessingService {
   private readonly logger = new Logger(MediaProcessingService.name);
+  private readonly activeRender = new AsyncLocalStorage<ActiveRender>();
 
   constructor(
     @InjectRepository(AssetEntity)
@@ -102,8 +120,6 @@ export class MediaProcessingService {
     private readonly jobRepository: Repository<MediaRenderJobEntity>,
     @InjectRepository(RenderProfileEntity)
     private readonly renderProfileRepository: Repository<RenderProfileEntity>,
-    @InjectRepository(RenderBatchEntity)
-    private readonly renderBatchRepository: Repository<RenderBatchEntity>,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     private readonly config: ConfigService,
   ) {}
@@ -137,10 +153,15 @@ export class MediaProcessingService {
     // Keeps updated_at fresh while this worker is alive, so recoverStaleJobs can tell a
     // long FFmpeg run from a job whose worker died.
     const heartbeat = setInterval(() => void this.touchJob(job.id), JOB_HEARTBEAT_MS);
+    // A newer render of the same file cancels this job (see cancelSupersededRenderJobs); stop
+    // FFmpeg instead of rendering previews that would be thrown away or overwrite newer ones.
+    const render: ActiveRender = { jobId: job.id, controller: new AbortController() };
+    const cancelWatch = setInterval(() => void this.isJobActive(render), CANCEL_CHECK_MS);
     try {
-      await this.runClaimedJob(job, assetId, queueJobId);
+      await this.activeRender.run(render, () => this.runClaimedJob(job, assetId, queueJobId));
     } finally {
       clearInterval(heartbeat);
+      clearInterval(cancelWatch);
     }
   }
 
@@ -179,7 +200,7 @@ export class MediaProcessingService {
       });
     }
     for (const batchId of new Set(failedRows.map((row) => row.render_batch_id))) {
-      await this.refreshRenderBatch(batchId);
+      await refreshRenderBatch(this.jobRepository.manager, batchId);
     }
 
     const requeued = await this.jobRepository
@@ -299,13 +320,18 @@ export class MediaProcessingService {
         });
 
         const report: ProgressReporter = async (progressPercent, progressMessage) => {
-          await this.jobRepository.update(job.id, { progressPercent, progressMessage });
+          // Never overwrite the message of a job cancelled meanwhile.
+          await this.jobRepository.update(
+            { id: job.id, status: 'processing' },
+            { progressPercent, progressMessage },
+          );
         };
         const metadata =
           asset.assetType === 'image'
             ? await this.processImage(asset, tempPath, profile, report)
             : await this.processVideo(asset, tempPath, profile, report);
 
+        await this.assertRenderActive();
         await this.assetRepository.update(asset.id, {
           processingStatus: 'ready',
           processingError: null,
@@ -314,64 +340,87 @@ export class MediaProcessingService {
             ...metadata,
           },
         });
-        await this.jobRepository.update(job.id, {
-          status: 'completed',
-          progressPercent: 100,
-          progressMessage: 'Media variants are ready',
-          finishedAt: new Date(),
-          errorCode: null,
-          errorMessage: null,
-        });
-        await this.refreshRenderBatch(job.renderBatchId);
+        await this.jobRepository.update(
+          { id: job.id, status: 'processing' },
+          {
+            status: 'completed',
+            progressPercent: 100,
+            progressMessage: 'Media variants are ready',
+            finishedAt: new Date(),
+            errorCode: null,
+            errorMessage: null,
+          },
+        );
+        await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
       } finally {
-        await fs.rm(tempPath, { force: true });
+        await this.removeTempFile(tempPath);
       }
     } catch (error) {
+      if (
+        error instanceof RenderJobCancelledError ||
+        this.activeRender.getStore()?.controller.signal.aborted
+      ) {
+        // The job stays `cancelled`, and the asset belongs to the render that replaced it.
+        // Returning (not throwing) keeps BullMQ from retrying it.
+        this.logger.log(`Render job ${job.id} was cancelled, stopped rendering asset ${assetId}`);
+        await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Media processing failed';
       this.logger.error(`Asset ${assetId} processing failed: ${message}`);
       await this.assetRepository.update(assetId, {
         processingStatus: 'failed',
         processingError: message.slice(0, 4000),
       });
-      await this.jobRepository.update(job.id, {
-        status: 'failed',
-        progressMessage: 'Media processing failed',
-        errorCode: 'PROCESSING_FAILED',
-        errorMessage: message.slice(0, 4000),
-        finishedAt: new Date(),
-      });
-      await this.refreshRenderBatch(job.renderBatchId);
+      await this.jobRepository.update(
+        { id: job.id, status: 'processing' },
+        {
+          status: 'failed',
+          progressMessage: 'Media processing failed',
+          errorCode: 'PROCESSING_FAILED',
+          errorMessage: message.slice(0, 4000),
+          finishedAt: new Date(),
+        },
+      );
+      await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
       throw error;
     }
   }
 
-  private async refreshRenderBatch(batchId: string | null): Promise<void> {
-    if (!batchId) {
-      return;
+  /**
+   * Whether the job being rendered is still `processing`; aborts the render once it is not
+   * (cancelled because a newer render of the file was requested).
+   */
+  private async isJobActive(render: ActiveRender): Promise<boolean> {
+    if (render.controller.signal.aborted) {
+      return false;
     }
-    const jobs = await this.jobRepository.find({ where: { renderBatchId: batchId } });
-    if (jobs.length === 0) {
-      return;
+    try {
+      const job = await this.jobRepository.findOne({
+        select: { id: true, status: true },
+        where: { id: render.jobId },
+      });
+      if (job && job.status !== 'processing') {
+        render.controller.abort();
+        return false;
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Render job ${render.jobId} cancel check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
-    const completed = jobs.filter((item) => item.status === 'completed').length;
-    const failed = jobs.filter((item) => item.status === 'failed').length;
-    const cancelled = jobs.filter((item) => item.status === 'cancelled').length;
-    const terminal = completed + failed + cancelled;
-    const status =
-      terminal < jobs.length
-        ? 'processing'
-        : failed > 0 || cancelled > 0
-          ? completed > 0
-            ? 'partial'
-            : 'failed'
-          : 'completed';
-    await this.renderBatchRepository.update(batchId, {
-      status,
-      totalJobs: jobs.length,
-      completedJobs: completed,
-      failedJobs: failed,
-      progressPercent: Math.round((terminal / jobs.length) * 100),
-    });
+    return true;
+  }
+
+  /**
+   * Called before every write of a render's output, so a cancelled job never overwrites the
+   * previews of the render that replaced it. No-op outside a job (tests call helpers directly).
+   */
+  private async assertRenderActive(): Promise<void> {
+    const render = this.activeRender.getStore();
+    if (render && !(await this.isJobActive(render))) {
+      throw new RenderJobCancelledError();
+    }
   }
 
   private async processImage(
@@ -409,6 +458,7 @@ export class MediaProcessingService {
         profile,
       ),
     );
+    await this.assertRenderActive();
     await this.removeStaleVariants(asset, codes);
 
     return {
@@ -444,6 +494,7 @@ export class MediaProcessingService {
     const variantCode =
       kind === 'preview' ? previewVariantCode(output.info.width) : THUMBNAIL_VARIANT_CODE;
     const storageKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${variantCode}.webp`;
+    await this.assertRenderActive();
     const head = await this.storage.putObject(storageKey, output.data, 'image/webp');
     await this.saveVariant(
       asset,
@@ -504,37 +555,34 @@ export class MediaProcessingService {
         getVideoRenderSize(width, height, { maxWidth: previewWidth })!,
       ),
     );
-    const steps = renderSizes.length + 1;
     const codes: string[] = [];
 
-    await report(this.progressFor(0, steps), 'Rendering video thumbnail');
+    await report(this.progressFor(0, 1), 'Rendering video thumbnail');
     codes.push(
       await this.createVideoThumbnail(asset, inputPath, sizes.thumbnailWidth, quality, profile),
     );
 
-    const largestArea = Math.max(...renderSizes.map((size) => size.width * size.height));
-    for (const [index, size] of renderSizes.entries()) {
-      const message = `Rendering ${size.width}px video preview`;
-      await report(this.progressFor(index + 1, steps), message);
-      const stepProgress = this.throttledProgress(report, message, (fraction) =>
-        this.progressFor(index + 1 + fraction, steps),
+    // The thumbnail is quick; the previews take the rest of the 30-95% range.
+    const message = `Rendering ${renderSizes.map((size) => size.width).join(', ')}px video previews`;
+    await report(this.progressFor(VIDEO_THUMBNAIL_SHARE, 1), message);
+    const renderProgress = this.throttledProgress(report, message, (fraction) =>
+      this.progressFor(VIDEO_THUMBNAIL_SHARE + (1 - VIDEO_THUMBNAIL_SHARE) * fraction, 1),
+    );
+    try {
+      codes.push(
+        ...(await this.createVideoPreviews(
+          asset,
+          inputPath,
+          renderSizes,
+          profile,
+          durationSeconds,
+          renderProgress.update,
+        )),
       );
-      try {
-        codes.push(
-          await this.createVideoPreview(
-            asset,
-            inputPath,
-            size,
-            this.getVideoBitrate(profile, (size.width * size.height) / largestArea),
-            profile,
-            durationSeconds,
-            stepProgress.update,
-          ),
-        );
-      } finally {
-        await stepProgress.settled();
-      }
+    } finally {
+      await renderProgress.settled();
     }
+    await this.assertRenderActive();
     await this.removeStaleVariants(asset, codes);
 
     return {
@@ -572,6 +620,7 @@ export class MediaProcessingService {
         .jpeg({ quality: quality.thumbnail })
         .toBuffer({ resolveWithObject: true });
       const posterKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${THUMBNAIL_VARIANT_CODE}.jpg`;
+      await this.assertRenderActive();
       const posterHead = await this.storage.putObject(posterKey, poster.data, 'image/jpeg');
       await this.saveVariant(
         asset,
@@ -586,73 +635,118 @@ export class MediaProcessingService {
       );
       return THUMBNAIL_VARIANT_CODE;
     } finally {
-      await fs.rm(posterPath, { force: true });
+      await this.removeTempFile(posterPath);
     }
   }
 
-  /** H.264 preview at `size` (even dimensions), watermarked when the profile has one. */
-  private async createVideoPreview(
+  /**
+   * H.264 previews at every `sizes` entry (even dimensions), watermarked when the profile has
+   * one. A single FFmpeg run decodes the source once and encodes every size from it: decoding
+   * 4K HEVC is most of the work, and one run per size took about twice as long.
+   */
+  private async createVideoPreviews(
     asset: AssetEntity,
     inputPath: string,
-    size: { width: number; height: number },
-    bitrate: number | null,
+    sizes: Array<{ width: number; height: number }>,
     profile: RenderProfileEntity | null,
     durationSeconds: number | undefined,
     onFraction: (fraction: number) => void,
-  ): Promise<string> {
-    const variantCode = previewVariantCode(size.width);
-    const previewKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${variantCode}.mp4`;
-    const stamp = `${asset.id}-${size.width}-${Date.now()}`;
-    const previewPath = join(tmpdir(), `${TEMP_FILE_PREFIX}preview-${stamp}.mp4`);
-    const watermarkPath = join(tmpdir(), `${TEMP_FILE_PREFIX}watermark-${stamp}.png`);
+  ): Promise<string[]> {
+    const prefix = this.projectPrefix(asset.originalStorageKey, asset.id);
+    const stamp = `${asset.id}-${Date.now()}`;
+    const area = (size: { width: number; height: number }) => size.width * size.height;
+    const largestArea = Math.max(...sizes.map(area));
+    const outputs = sizes.map((size) => ({
+      size,
+      variantCode: previewVariantCode(size.width),
+      previewPath: join(tmpdir(), `${TEMP_FILE_PREFIX}preview-${stamp}-${size.width}.mp4`),
+      watermarkPath: join(tmpdir(), `${TEMP_FILE_PREFIX}watermark-${stamp}-${size.width}.png`),
+      bitrate: this.getVideoBitrate(profile, area(size) / largestArea),
+    }));
     try {
-      const watermark = await this.createWatermark(size.width, size.height, profile);
-      if (watermark) {
-        await fs.writeFile(watermarkPath, watermark.buffer);
+      const watermarks: Array<Awaited<ReturnType<typeof this.createWatermark>>> = [];
+      for (const output of outputs) {
+        const watermark = await this.createWatermark(
+          output.size.width,
+          output.size.height,
+          profile,
+        );
+        if (watermark) {
+          await fs.writeFile(output.watermarkPath, watermark.buffer);
+        }
+        watermarks.push(watermark);
       }
-      const scale = `[0:v]scale=${size.width}:${size.height}`;
+
+      // Scale the 4K source once to the largest size; smaller sizes are scaled from that.
+      const largest = outputs.find((output) => area(output.size) === largestArea)!;
+      const filters = [
+        `[0:v]scale=${largest.size.width}:${largest.size.height},split=${outputs.length}${outputs
+          .map((_, index) => `[s${index}]`)
+          .join('')}`,
+      ];
+      const watermarkArgs: string[] = [];
+      for (const [index, output] of outputs.entries()) {
+        let label = `[s${index}]`;
+        if (output !== largest) {
+          filters.push(`${label}scale=${output.size.width}:${output.size.height}[r${index}]`);
+          label = `[r${index}]`;
+        }
+        const watermark = watermarks[index];
+        if (watermark) {
+          watermarkArgs.push('-i', output.watermarkPath);
+          // Input 0 is the source; watermark inputs follow in order.
+          const input = watermarkArgs.length / 2;
+          filters.push(
+            `${label}[${input}:v]overlay=${watermark.left}:${watermark.top}:format=auto,format=yuv420p[v${index}]`,
+          );
+        } else {
+          filters.push(`${label}format=yuv420p[v${index}]`);
+        }
+      }
+
+      const threads = String(this.config.getOrThrow<number>('MEDIA_FFMPEG_THREADS'));
       const args = [
         '-y',
         ...FFMPEG_PROGRESS_ARGS,
         ...this.ffmpegThreadArgs(),
         '-i',
         inputPath,
-        ...(watermark ? ['-i', watermarkPath] : []),
+        ...watermarkArgs,
         '-filter_complex',
-        watermark
-          ? `${scale}[base];[base][1:v]overlay=${watermark.left}:${watermark.top}:format=auto,format=yuv420p[v]`
-          : `${scale},format=yuv420p[v]`,
-        '-map',
-        '[v]',
-        '-map',
-        '0:a?',
-        '-c:v',
-        'libx264',
-        '-threads',
-        String(this.config.getOrThrow<number>('MEDIA_FFMPEG_THREADS')),
-        '-preset',
-        'veryfast',
-        ...(bitrate
-          ? [
-              '-b:v',
-              String(bitrate),
-              '-maxrate',
-              String(Math.round(bitrate * 1.5)),
-              '-bufsize',
-              String(bitrate * 2),
-            ]
-          : ['-crf', '23']),
-        '-c:a',
-        'aac',
-        '-b:a',
-        '128k',
-        '-sn',
-        '-dn',
-        '-movflags',
-        '+faststart',
-        '-f',
-        'mp4',
-        previewPath,
+        filters.join(';'),
+        ...outputs.flatMap((output, index) => [
+          '-map',
+          `[v${index}]`,
+          '-map',
+          '0:a?',
+          '-c:v',
+          'libx264',
+          '-threads',
+          threads,
+          '-preset',
+          'veryfast',
+          ...(output.bitrate
+            ? [
+                '-b:v',
+                String(output.bitrate),
+                '-maxrate',
+                String(Math.round(output.bitrate * 1.5)),
+                '-bufsize',
+                String(output.bitrate * 2),
+              ]
+            : ['-crf', '23']),
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-sn',
+          '-dn',
+          '-movflags',
+          '+faststart',
+          '-f',
+          'mp4',
+          output.previewPath,
+        ]),
       ];
       await this.runProcess(ffmpegPath, args, {
         // A long source renders for minutes while advancing steadily; only a stuck FFmpeg
@@ -665,29 +759,53 @@ export class MediaProcessingService {
           }
         },
       });
-      // Streamed so a long preview never sits in the Node heap as one Buffer.
-      const { size: previewSize } = await fs.stat(previewPath);
-      const previewHead = await this.storage.putObject(
-        previewKey,
-        createReadStream(previewPath),
-        'video/mp4',
-        previewSize,
-      );
-      await this.saveVariant(
-        asset,
-        variantCode,
-        previewKey,
-        'video/mp4',
-        previewHead.sizeBytes,
-        size.width,
-        size.height,
-        Boolean(watermark),
-        profile,
-      );
-      return variantCode;
+
+      const codes: string[] = [];
+      for (const [index, output] of outputs.entries()) {
+        const previewKey = `${prefix}/variants/${asset.id}/${output.variantCode}.mp4`;
+        await this.assertRenderActive();
+        // Streamed so a long preview never sits in the Node heap as one Buffer.
+        const { size: previewSize } = await fs.stat(output.previewPath);
+        const previewHead = await this.storage.putObject(
+          previewKey,
+          createReadStream(output.previewPath),
+          'video/mp4',
+          previewSize,
+        );
+        await this.saveVariant(
+          asset,
+          output.variantCode,
+          previewKey,
+          'video/mp4',
+          previewHead.sizeBytes,
+          output.size.width,
+          output.size.height,
+          Boolean(watermarks[index]),
+          profile,
+        );
+        codes.push(output.variantCode);
+      }
+      return codes;
     } finally {
-      await fs.rm(previewPath, { force: true });
-      await fs.rm(watermarkPath, { force: true });
+      for (const output of outputs) {
+        await this.removeTempFile(output.previewPath);
+        await this.removeTempFile(output.watermarkPath);
+      }
+    }
+  }
+
+  /**
+   * Best-effort temp file cleanup. A file still locked by a just-exited FFmpeg (EBUSY on
+   * Windows) must not fail a render that already finished; removeLeftoverTempFiles catches it
+   * on the next start.
+   */
+  private async removeTempFile(path: string): Promise<void> {
+    try {
+      await fs.rm(path, { force: true, maxRetries: 5, retryDelay: 200 });
+    } catch (error) {
+      this.logger.warn(
+        `Temp file ${path} could not be removed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 
@@ -1064,6 +1182,10 @@ export class MediaProcessingService {
     const timeoutMs =
       options.timeoutMs ?? this.config.getOrThrow<number>('MEDIA_RENDER_TIMEOUT_SECONDS') * 1000;
     const { stallMs, onProgress } = options;
+    const signal = this.activeRender.getStore()?.controller.signal;
+    if (signal?.aborted) {
+      return Promise.reject(new RenderJobCancelledError());
+    }
     return new Promise((resolve, reject) => {
       const child = spawn(command, args, { windowsHide: true });
       let stdout = '';
@@ -1086,9 +1208,12 @@ export class MediaProcessingService {
             Math.min(STALL_CHECK_MS, stallMs),
           )
         : undefined;
+      const onAbort = () => kill('cancelled');
+      signal?.addEventListener('abort', onAbort, { once: true });
       const stopTimers = () => {
         clearTimeout(timer);
         clearInterval(stallTimer);
+        signal?.removeEventListener('abort', onAbort);
       };
 
       // With FFMPEG_PROGRESS_ARGS, stdout is a stream of `key=value` lines; each block ends
@@ -1130,8 +1255,12 @@ export class MediaProcessingService {
         stopTimers();
         reject(error);
       });
-      child.once('close', (code, signal) => {
+      child.once('close', (code, exitSignal) => {
         stopTimers();
+        if (failure === 'cancelled') {
+          reject(new RenderJobCancelledError());
+          return;
+        }
         if (code === 0) {
           resolve({ stdout, stderr });
           return;
@@ -1141,10 +1270,10 @@ export class MediaProcessingService {
         // A killed FFmpeg never prints an error, so its stderr alone looks like a normal run.
         const reason =
           failure ??
-          (signal === 'SIGKILL'
+          (exitSignal === 'SIGKILL'
             ? 'Media command was killed (SIGKILL), most likely out of memory'
-            : signal
-              ? `Media command was killed (${signal})`
+            : exitSignal
+              ? `Media command was killed (${exitSignal})`
               : undefined);
         if (reason) {
           reject(new Error(detail ? `${reason}\n${detail}` : reason));

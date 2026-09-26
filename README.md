@@ -50,7 +50,7 @@ khi chạy API.
 | Runtime | `PORT`, `API_PREFIX`, `FRONTEND_ORIGIN` | Origin phải khớp URL frontend để CORS hoạt động. |
 | Database/queue | `DATABASE_URL`, `DATABASE_SCHEMA`, `REDIS_URL` | Bắt buộc cho API, worker và migration. |
 | Auth | `AUTH0_ISSUER_URL`, `AUTH0_AUDIENCE`, `AUTH0_CLIENT_ID`, `AUTH0_JWKS_URL` | Auth0 JWT là bắt buộc ở mọi môi trường. |
-| Storage | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT` | Dùng cho upload và preview media. |
+| Storage | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT` | Dùng cho upload và preview media. |
 | Account API | `ACCOUNT_API_URL`, `ACCOUNT_API_KEY` | Tùy chọn; API key chỉ nằm ở backend, không gửi ra browser. |
 | Google Drive | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FRONTEND_ORIGIN`, `GOOGLE_TOKEN_ENCRYPTION_KEY` | Cần khi bật kết nối và import Google Drive. Callback sẽ quay lại URL của trang khởi tạo kết nối. |
 

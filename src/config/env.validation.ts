@@ -49,12 +49,9 @@ export const envValidationSchema = Joi.object({
   // grows with the source length (a stuck preview render is killed by its stall check instead).
   MEDIA_RENDER_TIMEOUT_SECONDS: Joi.number().integer().min(1).required(),
   MEDIA_THUMBNAIL_MAX_WIDTH: Joi.number().integer().min(1).required(),
-  MEDIA_THUMBNAIL_MAX_HEIGHT: Joi.number().integer().min(1).required(),
   MEDIA_PREVIEW_MAX_WIDTH: Joi.number().integer().min(1).required(),
-  MEDIA_PREVIEW_MAX_HEIGHT: Joi.number().integer().min(1).required(),
 
   // Cloudflare R2
-  R2_ACCOUNT_ID: requiredString,
   R2_ACCESS_KEY_ID: requiredString,
   R2_SECRET_ACCESS_KEY: requiredString,
   R2_BUCKET: requiredString,
