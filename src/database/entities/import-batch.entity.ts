@@ -24,7 +24,7 @@ export class ImportBatchEntity {
   duplicatePolicy!: 'create_new' | 'reuse_existing' | 'overwrite_existing';
 
   @Column({ type: 'varchar', length: 20, default: 'queued' })
-  status!: 'queued' | 'processing' | 'completed' | 'partial' | 'failed' | 'cancelled';
+  status!: 'queued' | 'processing' | 'paused' | 'completed' | 'partial' | 'failed' | 'cancelled';
 
   @Column({ name: 'total_items', type: 'integer', default: 0 })
   totalItems!: number;
