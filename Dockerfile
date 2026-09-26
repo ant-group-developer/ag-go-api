@@ -26,6 +26,14 @@ FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
+# The slim image ships no fonts, so sharp/librsvg draws watermark text as missing-glyph boxes.
+# Liberation is metric-compatible with Arial/Times New Roman/Courier New (fontconfig aliases them);
+# DejaVu is the fallback for the other families. Both cover Vietnamese.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends fontconfig fonts-liberation fonts-dejavu-core \
+  && fc-cache -f \
+  && rm -rf /var/lib/apt/lists/*
+
 COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY package.json ./
 COPY --from=build /app/dist ./dist
