@@ -1,7 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsArray, IsIn, IsOptional, IsUUID } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsUUID } from 'class-validator';
 import { BaseKeywordQueryDto } from '../../../common/dto/base-keyword-query.dto';
+import {
+  PROJECT_EVALUATION_STATUSES,
+  type ProjectEvaluationStatus,
+} from '../../media/evaluation-status';
 
 export const PROJECT_SORT_FIELDS = ['name', 'createdAt', 'updatedAt'] as const;
 export type ProjectSortField = (typeof PROJECT_SORT_FIELDS)[number];
@@ -46,4 +50,21 @@ export class ListProjectsQueryDto extends BaseKeywordQueryDto {
   @IsArray()
   @IsUUID('all', { each: true })
   tagIds?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    enum: PROJECT_EVALUATION_STATUSES,
+    description: 'Comma-separated evaluation statuses; matches any.',
+  })
+  @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
+  @IsOptional()
+  @IsArray()
+  @IsIn(PROJECT_EVALUATION_STATUSES, { each: true })
+  evaluationStatuses?: ProjectEvaluationStatus[];
+
+  @ApiPropertyOptional({ type: Boolean, description: 'Only projects owned by the current user.' })
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsOptional()
+  @IsBoolean()
+  mine?: boolean;
 }

@@ -77,6 +77,14 @@ export class ProjectsService {
     if (query.categoryId) {
       projectQuery.andWhere('project.categoryId = :categoryId', { categoryId: query.categoryId });
     }
+    if (query.mine) {
+      projectQuery.andWhere('project.ownerUserId = :ownerUserId', { ownerUserId: userId });
+    }
+    if (query.evaluationStatuses?.length) {
+      projectQuery.andWhere('project.evaluationStatus IN (:...evaluationStatuses)', {
+        evaluationStatuses: query.evaluationStatuses,
+      });
+    }
     if (query.tagIds?.length) {
       projectQuery.andWhere(
         `EXISTS (
