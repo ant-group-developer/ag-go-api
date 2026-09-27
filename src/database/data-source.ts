@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
-import { envValidationSchema } from '../config/env.validation';
+import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from '../config/env.validation';
 import { AssetImportEntity } from './entities/asset-import.entity';
 import { AssetUploadSessionEntity } from './entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './entities/asset-variant.entity';
@@ -72,6 +72,7 @@ export const AppDataSource = new DataSource({
   url: validatedEnv.DATABASE_URL,
   schema: validatedEnv.DATABASE_SCHEMA,
   poolSize: validatedEnv.DATABASE_POOL_MAX,
+  connectTimeoutMS: DATABASE_CONNECT_TIMEOUT_MS,
   entities: [
     AssetEntity,
     AssetUploadSessionEntity,
