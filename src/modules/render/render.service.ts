@@ -30,8 +30,19 @@ import { cancelSupersededRenderJobs, hasNewerRenderJob } from './render-job-life
 import { normalizePreviewWidths, PREVIEW_VARIANT_SQL } from './render-sizes';
 import { normalizeWatermarkConfig } from './watermark-config';
 
-const AUTO_JOBS_DEFAULT_LIMIT = 200;
-const AUTO_JOBS_MAX_LIMIT = 500;
+const AUTO_JOBS_DEFAULT_PAGE_SIZE = 20;
+const AUTO_JOBS_MAX_PAGE_SIZE = 100;
+const ACTIVE_JOB_STATUSES = ['queued', 'processing'];
+
+/** Status tabs of the auto render job list; 'active' groups queued and processing jobs. */
+export const AUTO_JOB_STATUS_FILTERS = ['all', 'active', 'completed', 'failed'] as const;
+export type AutoJobStatusFilter = (typeof AUTO_JOB_STATUS_FILTERS)[number];
+
+export function isAutoJobStatusFilter(value: unknown): value is AutoJobStatusFilter {
+  return AUTO_JOB_STATUS_FILTERS.includes(value as AutoJobStatusFilter);
+}
+
+export type AutoJobCounts = Record<AutoJobStatusFilter, number>;
 
 export type RenderJobSource = 'batch' | 'upload' | 'import' | 'retry' | 'other';
 
@@ -432,22 +443,28 @@ export class RenderService {
 
   /**
    * Jobs queued automatically outside any batch: after an upload, a Google Drive import or a
-   * per-file retry. Newest first; non-admins only see jobs of projects they can view.
+   * per-file retry. Newest first, one page at a time; non-admins only see jobs of projects they
+   * can view. `counts` ignores the status filter (but not the search) so every tab shows its size.
    */
   async listAutoJobs(
     userId: string,
     userType?: 'ADMIN' | 'USER',
-    options: { projectId?: string; limit?: number } = {},
+    options: {
+      projectId?: string;
+      page?: number;
+      pageSize?: number;
+      status?: AutoJobStatusFilter;
+      search?: string;
+    } = {},
   ) {
-    const limit = Math.min(
-      Math.max(Math.trunc(options.limit ?? AUTO_JOBS_DEFAULT_LIMIT), 1),
-      AUTO_JOBS_MAX_LIMIT,
+    const page = Math.max(Math.trunc(options.page ?? 1) || 1, 1);
+    const pageSize = Math.min(
+      Math.max(Math.trunc(options.pageSize ?? AUTO_JOBS_DEFAULT_PAGE_SIZE) || 1, 1),
+      AUTO_JOBS_MAX_PAGE_SIZE,
     );
-    const query = this.jobRepository
-      .createQueryBuilder('job')
-      .where('job.render_batch_id IS NULL')
-      .orderBy('job.createdAt', 'DESC')
-      .take(limit);
+    const status = options.status ?? 'all';
+    const emptyCounts: AutoJobCounts = { all: 0, active: 0, completed: 0, failed: 0 };
+    const query = this.jobRepository.createQueryBuilder('job').where('job.render_batch_id IS NULL');
 
     if (options.projectId) {
       const project = await this.projectRepository.findOne({ where: { id: options.projectId } });
@@ -465,7 +482,7 @@ export class RenderService {
     } else if (!isAdminUserType(userType)) {
       const folderIds = await this.folderAccess.accessibleFolderIds(userId, userType);
       if (folderIds.length === 0) {
-        return [];
+        return { items: [], total: 0, page, pageSize, counts: emptyCounts };
       }
       query.andWhere(
         `EXISTS (SELECT 1 FROM project_media media
@@ -474,7 +491,52 @@ export class RenderService {
         { folderIds },
       );
     }
-    return this.describeJobs(await query.getMany());
+
+    const search = options.search?.trim();
+    if (search) {
+      // Matches the file name or the name of any project the file belongs to.
+      query.andWhere(
+        `(EXISTS (SELECT 1 FROM assets search_asset
+                  WHERE search_asset.id = job.asset_id
+                    AND search_asset.original_filename ILIKE :search ESCAPE '!')
+          OR EXISTS (SELECT 1 FROM project_media search_media
+                     INNER JOIN projects search_project ON search_project.id = search_media.project_id
+                     WHERE search_media.asset_id = job.asset_id
+                       AND search_project.name ILIKE :search ESCAPE '!'))`,
+        // '!' escapes LIKE wildcards typed by the user so they match literally.
+        { search: `%${search.replace(/[!%_]/g, (char) => `!${char}`)}%` },
+      );
+    }
+
+    const countRow = await query
+      .clone()
+      .select('COUNT(*)::int', 'all')
+      .addSelect(`COUNT(*) FILTER (WHERE job.status IN ('queued', 'processing'))::int`, 'active')
+      .addSelect(`COUNT(*) FILTER (WHERE job.status = 'completed')::int`, 'completed')
+      .addSelect(`COUNT(*) FILTER (WHERE job.status = 'failed')::int`, 'failed')
+      .getRawOne<AutoJobCounts>();
+    const counts = countRow ?? emptyCounts;
+
+    if (status === 'active') {
+      query.andWhere('job.status IN (:...activeStatuses)', {
+        activeStatuses: ACTIVE_JOB_STATUSES,
+      });
+    } else if (status !== 'all') {
+      query.andWhere('job.status = :status', { status });
+    }
+    const jobs = await query
+      .orderBy('job.createdAt', 'DESC')
+      .addOrderBy('job.id', 'DESC')
+      .offset((page - 1) * pageSize)
+      .limit(pageSize)
+      .getMany();
+    return {
+      items: await this.describeJobs(jobs),
+      total: counts[status],
+      page,
+      pageSize,
+      counts,
+    };
   }
 
   /**
