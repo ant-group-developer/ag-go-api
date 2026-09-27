@@ -30,9 +30,12 @@ describe('GoogleDriveImportWorkerService stale sweep', () => {
       {} as never,
       {} as never,
       {} as never,
+      {} as never,
     );
 
-    await (service as unknown as { recoverStaleImports: () => Promise<void> }).recoverStaleImports();
+    await (
+      service as unknown as { recoverStaleImports: () => Promise<void> }
+    ).recoverStaleImports();
 
     // Cancelled, exhausted and re-queued items.
     expect(query).toHaveBeenCalledTimes(3);
