@@ -4,9 +4,9 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   OnModuleDestroy,
-  OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
@@ -42,7 +42,8 @@ import {
 } from './upload-multipart';
 
 @Injectable()
-export class AssetsService implements OnModuleInit, OnModuleDestroy {
+export class AssetsService implements OnModuleDestroy {
+  private readonly logger = new Logger(AssetsService.name);
   private cleanupTimer?: NodeJS.Timeout;
 
   constructor(
@@ -65,12 +66,28 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
     private readonly outboxService: OutboxService,
   ) {}
 
-  onModuleInit(): void {
-    this.cleanupTimer = setInterval(() => {
-      void this.cleanupExpiredSessions();
-    }, 60_000);
+  /**
+   * Expires abandoned upload sessions every minute. Started by the API process only (main.ts):
+   * every process builds this service, and worker processes, possibly on other hosts with
+   * other clocks, must not expire (and delete) uploads the API is still completing.
+   */
+  startExpiredSessionCleanup(): void {
+    if (this.cleanupTimer) {
+      return;
+    }
+    this.cleanupTimer = setInterval(() => void this.runExpiredSessionCleanup(), 60_000);
     this.cleanupTimer.unref();
-    void this.cleanupExpiredSessions();
+    void this.runExpiredSessionCleanup();
+  }
+
+  private async runExpiredSessionCleanup(): Promise<void> {
+    try {
+      await this.cleanupExpiredSessions();
+    } catch (error) {
+      this.logger.error(
+        `Upload session cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   onModuleDestroy(): void {
@@ -532,15 +549,24 @@ export class AssetsService implements OnModuleInit, OnModuleDestroy {
       where: { status: In(['initiated', 'uploading']) },
     });
     const now = Date.now();
+    let count = 0;
     for (const session of expired) {
       if (session.expiresAt.getTime() >= now) {
         continue;
       }
-      await this.sessionRepository.update(session.id, { status: 'expired' });
+      // Only while still open: a session completed since the read keeps its upload.
+      const closed = await this.sessionRepository.update(
+        { id: session.id, status: In(['initiated', 'uploading']) },
+        { status: 'expired' },
+      );
+      if (!closed.affected) {
+        continue;
+      }
       await this.assetRepository.update(session.assetId, { processingStatus: 'cancelled' });
       await this.discardUploadedData(session);
+      count += 1;
     }
-    return expired.filter((session) => session.expiresAt.getTime() < now).length;
+    return count;
   }
 
   async getAsset(assetId: string): Promise<AssetEntity> {

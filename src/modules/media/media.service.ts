@@ -275,7 +275,7 @@ export class MediaService {
       if (!project) {
         throw new NotFoundException('Project not found');
       }
-      await this.requireProjectAccess(project, userId, 'editor', userType);
+      await this.requireProjectAccess(project, userId, 'editor', userType, manager);
       projectId = project.id;
       projectMediaId = media.id;
       previousEvaluationStatus = media.evaluationStatus;
@@ -421,17 +421,23 @@ export class MediaService {
     return media;
   }
 
+  /**
+   * Inside a transaction, pass its `manager`: the check then runs on the transaction's own
+   * connection instead of waiting for a second pooled one while the first stays held.
+   */
   private async requireProjectAccess(
     project: ProjectEntity,
     userId: string,
     minimum: FolderAccessLevel,
     userType?: 'ADMIN' | 'USER',
+    manager?: import('typeorm').EntityManager,
   ): Promise<void> {
     const allowed = await this.folderAccessService.canAccess(
       project.folderId,
       userId,
       minimum,
       userType,
+      manager,
     );
     if (!allowed) {
       throw new ForbiddenException('Insufficient project permission');

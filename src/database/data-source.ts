@@ -52,6 +52,8 @@ import { RenderSizesMigration1900000000000 } from './migrations/1900000000000-re
 import { BackfillImportedProjectStatusMigration1910000000000 } from './migrations/1910000000000-backfill-imported-project-status';
 import { OutboxDeadStatusMigration1920000000000 } from './migrations/1920000000000-outbox-dead-status';
 import { ImportBatchPausedStatusMigration1930000000000 } from './migrations/1930000000000-import-batch-paused-status';
+import { RenderJobClaimTokenMigration1940000000000 } from './migrations/1940000000000-render-job-claim-token';
+import { RenderJobBatchIndexMigration1950000000000 } from './migrations/1950000000000-render-job-batch-index';
 
 loadEnv();
 
@@ -68,6 +70,7 @@ export const AppDataSource = new DataSource({
   type: 'postgres',
   url: validatedEnv.DATABASE_URL,
   schema: validatedEnv.DATABASE_SCHEMA,
+  poolSize: validatedEnv.DATABASE_POOL_MAX,
   entities: [
     AssetEntity,
     AssetUploadSessionEntity,
@@ -121,6 +124,8 @@ export const AppDataSource = new DataSource({
     BackfillImportedProjectStatusMigration1910000000000,
     OutboxDeadStatusMigration1920000000000,
     ImportBatchPausedStatusMigration1930000000000,
+    RenderJobClaimTokenMigration1940000000000,
+    RenderJobBatchIndexMigration1950000000000,
   ],
   synchronize: false,
 });

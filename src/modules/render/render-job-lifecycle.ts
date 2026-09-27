@@ -34,13 +34,21 @@ export async function cancelSupersededRenderJobs(
   }
   const result = await query.returning(['id', 'renderBatchId']).execute();
   const rows = result.raw as Array<{ id: string; render_batch_id: string | null }>;
-  for (const batchId of new Set(rows.map((row) => row.render_batch_id))) {
+  // In a fixed order: each refresh locks its batch row until the caller's transaction ends,
+  // and two transactions locking the same batches in opposite orders would deadlock.
+  for (const batchId of [...new Set(rows.map((row) => row.render_batch_id))].sort()) {
     await refreshRenderBatch(manager, batchId);
   }
   return rows.map((row) => row.id);
 }
 
-/** Recomputes a render batch's counters and status from its jobs. */
+/**
+ * Recomputes a render batch's counters and status from its jobs. Workers, on one host or
+ * several, finish jobs of the same batch at the same time: counted without a lock, an older
+ * count could be written last and leave the batch short of done for good (546/547, still
+ * processing), since nothing recounts it afterwards. The batch row is locked first, so the
+ * refreshes run one after another and each counts every job committed before it.
+ */
 export async function refreshRenderBatch(
   manager: EntityManager,
   batchId: string | null,
@@ -48,21 +56,39 @@ export async function refreshRenderBatch(
   if (!batchId) {
     return;
   }
-  const jobs = await manager.find(MediaRenderJobEntity, {
-    select: { id: true, status: true },
-    where: { renderBatchId: batchId },
-  });
-  if (jobs.length === 0) {
+  // Inside a caller's transaction this becomes a savepoint, and the lock lasts until it ends.
+  await manager.transaction((transaction) => recountRenderBatch(transaction, batchId));
+}
+
+async function recountRenderBatch(manager: EntityManager, batchId: string): Promise<void> {
+  const locked = await manager
+    .createQueryBuilder(RenderBatchEntity, 'batch')
+    .select('batch.id')
+    .setLock('pessimistic_write')
+    .where('batch.id = :batchId', { batchId })
+    .getOne();
+  if (!locked) {
     return;
   }
-  const completed = jobs.filter((item) => item.status === 'completed').length;
-  const failed = jobs.filter((item) => item.status === 'failed').length;
-  const cancelled = jobs.filter((item) => item.status === 'cancelled').length;
+  // A new statement after the lock: under READ COMMITTED it sees every job committed so far.
+  // One indexed aggregate, since the lock is held while it runs.
+  const counts = await manager
+    .createQueryBuilder(MediaRenderJobEntity, 'job')
+    .select('COUNT(*)::int', 'total')
+    .addSelect("COUNT(*) FILTER (WHERE job.status = 'completed')::int", 'completed')
+    .addSelect("COUNT(*) FILTER (WHERE job.status = 'failed')::int", 'failed')
+    .addSelect("COUNT(*) FILTER (WHERE job.status = 'cancelled')::int", 'cancelled')
+    .where('job.render_batch_id = :batchId', { batchId })
+    .getRawOne<{ total: number; completed: number; failed: number; cancelled: number }>();
+  const { total = 0, completed = 0, failed = 0, cancelled = 0 } = counts ?? {};
+  if (total === 0) {
+    return;
+  }
   const terminal = completed + failed + cancelled;
   const status =
-    terminal < jobs.length
+    terminal < total
       ? 'processing'
-      : cancelled === jobs.length
+      : cancelled === total
         ? 'cancelled'
         : failed > 0 || cancelled > 0
           ? completed > 0
@@ -71,10 +97,10 @@ export async function refreshRenderBatch(
           : 'completed';
   await manager.update(RenderBatchEntity, batchId, {
     status,
-    totalJobs: jobs.length,
+    totalJobs: total,
     completedJobs: completed,
     failedJobs: failed,
-    progressPercent: Math.round((terminal / jobs.length) * 100),
+    progressPercent: Math.round((terminal / total) * 100),
   });
 }
 

@@ -32,6 +32,10 @@ export class MediaRenderJobEntity {
   @Column({ name: 'progress_message', type: 'varchar', length: 500, nullable: true })
   progressMessage!: string | null;
 
+  /** Set by the worker run that claimed the job; a run that no longer holds it stops rendering. */
+  @Column({ name: 'claim_token', type: 'uuid', nullable: true })
+  claimToken!: string | null;
+
   @Column({ name: 'attempt_count', type: 'smallint', default: 0 })
   attemptCount!: number;
 

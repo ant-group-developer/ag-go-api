@@ -1,3 +1,11 @@
+# Rotated container logs: Docker keeps them forever by default and fills the disk, on the
+# main host and on every worker host alike.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-50m}
+    max-file: '${LOG_MAX_FILE:-5}'
+
 services:
   api:
     image: ag-go-api:${TAG:-latest}
@@ -17,6 +25,7 @@ services:
         limits:
           cpus: '${API_CPUS:-2}'
           memory: ${API_MEMORY_LIMIT:-2g}
+    logging: *logging
     restart: unless-stopped
 
   # Workers are split by workload so they don't compete for the same CPU/RAM budget.
@@ -25,6 +34,8 @@ services:
   # On SIGTERM each worker finishes its running jobs first (a Drive download can take up
   # to 2 minutes). Anything cut off by SIGKILL is resumed by the stale-job sweeps on the
   # next start.
+  # Workers need few database connections, and every worker process on every host has its
+  # own pool: a smaller one keeps them all under Postgres' max_connections.
 
   # FFmpeg/Sharp rendering: the only CPU-heavy workload, sized and scaled on its own.
   worker-media:
@@ -34,6 +45,8 @@ services:
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-150s}
     env_file:
       - .env
+    environment:
+      DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-5}
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     mem_limit: ${WORKER_MEDIA_MEMORY_LIMIT:-2g}
@@ -43,6 +56,7 @@ services:
         limits:
           cpus: '${WORKER_MEDIA_CPUS:-2}'
           memory: ${WORKER_MEDIA_MEMORY_LIMIT:-2g}
+    logging: *logging
     restart: unless-stopped
 
   # Network-bound work: Google Drive imports, ZIP downloads (streamed straight to R2, so
@@ -54,6 +68,8 @@ services:
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-150s}
     env_file:
       - .env
+    environment:
+      DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-5}
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     mem_limit: ${WORKER_IO_MEMORY_LIMIT:-1g}
@@ -63,4 +79,5 @@ services:
         limits:
           cpus: '${WORKER_IO_CPUS:-1}'
           memory: ${WORKER_IO_MEMORY_LIMIT:-1g}
+    logging: *logging
     restart: unless-stopped

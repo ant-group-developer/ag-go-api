@@ -51,6 +51,11 @@ type DriveFile = {
 const HEARTBEAT_MS = 15_000;
 /** Rows untouched for this long belong to a worker that died (container restart, OOM, SIGKILL). */
 const STALE_MS = 2 * 60_000;
+/**
+ * STALE_MS as a Postgres interval. Staleness is compared with now() on the database, the clock
+ * the heartbeats write with, so workers on hosts whose clocks drift agree on it.
+ */
+const STALE_INTERVAL = `${STALE_MS} milliseconds`;
 /** How often the worker looks for imports whose worker died mid-run. */
 const STALE_SWEEP_MS = 60_000;
 /** An item that took down its worker this many times is failed instead of retried. */
@@ -165,28 +170,27 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
    */
   private async recoverStaleImports(): Promise<void> {
     try {
-      const staleBefore = new Date(Date.now() - STALE_MS);
       const cancelled = await this.dataSource.query(
         `UPDATE asset_imports item SET status = 'cancelled', finished_at = now(), updated_at = now()
          FROM import_batches batch
          WHERE batch.id = item.batch_id AND batch.status = 'cancelled'
-           AND item.status = 'importing' AND item.updated_at < $1
+           AND item.status = 'importing' AND item.updated_at < now() - $1::interval
          RETURNING item.id`,
-        [staleBefore],
+        [STALE_INTERVAL],
       );
       const exhausted = await this.dataSource.query(
         `UPDATE asset_imports SET status = 'failed', error_code = 'WORKER_LOST',
            error_message = 'The worker stopped while importing this file', finished_at = now(),
            updated_at = now()
-         WHERE status = 'importing' AND updated_at < $1 AND attempt_count >= $2
+         WHERE status = 'importing' AND updated_at < now() - $1::interval AND attempt_count >= $2
          RETURNING id`,
-        [staleBefore, MAX_ITEM_ATTEMPTS],
+        [STALE_INTERVAL, MAX_ITEM_ATTEMPTS],
       );
       const requeued = await this.dataSource.query(
         `UPDATE asset_imports SET status = 'queued', updated_at = now()
-         WHERE status = 'importing' AND updated_at < $1
+         WHERE status = 'importing' AND updated_at < now() - $1::interval
          RETURNING id`,
-        [staleBefore],
+        [STALE_INTERVAL],
       );
       const itemCounts = [cancelled, exhausted, requeued].map(
         (rows: unknown[][]) => rows[0].length,
@@ -200,10 +204,12 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       const batches = await this.batchRepository
         .createQueryBuilder('batch')
         .where('batch.status IN (:...statuses)', { statuses: ['queued', 'processing'] })
-        .andWhere('batch.updated_at < :staleBefore', { staleBefore })
+        .andWhere('batch.updated_at < now() - CAST(:staleAfter AS interval)', {
+          staleAfter: STALE_INTERVAL,
+        })
         .getMany();
       for (const batch of batches) {
-        await this.resumeBatch(batch, staleBefore);
+        await this.resumeBatch(batch);
       }
     } catch (error) {
       this.logger.error(
@@ -212,7 +218,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     }
   }
 
-  private async resumeBatch(batch: ImportBatchEntity, staleBefore: Date): Promise<void> {
+  private async resumeBatch(batch: ImportBatchEntity): Promise<void> {
     try {
       if (batch.queueJobId && (await this.importQueue.hasPendingJob(batch.queueJobId))) {
         // Waiting behind other imports, or running; BullMQ moves a stalled active job back itself.
@@ -227,11 +233,10 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         .createQueryBuilder()
         .update(ImportBatchEntity)
         .set({ updatedAt: () => 'now()' })
-        .where('id = :id AND status IN (:...statuses) AND updated_at < :staleBefore', {
-          id: batch.id,
-          statuses: ['queued', 'processing'],
-          staleBefore,
-        })
+        .where(
+          'id = :id AND status IN (:...statuses) AND updated_at < now() - CAST(:staleAfter AS interval)',
+          { id: batch.id, statuses: ['queued', 'processing'], staleAfter: STALE_INTERVAL },
+        )
         .execute();
       if (!claimed.affected) {
         return;

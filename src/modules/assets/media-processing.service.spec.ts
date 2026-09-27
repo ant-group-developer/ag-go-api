@@ -437,20 +437,30 @@ describe('MediaProcessingService runProcess', () => {
     ).rejects.toThrow('Media processing timed out');
   });
 
-  it('stops a render whose job gets cancelled by a newer render of the file', async () => {
+  it.each([
+    // As cancelSupersededRenderJobs leaves it.
+    ['gets cancelled by a newer render of the file', { status: 'cancelled' }],
+    // Re-queued as stale by a worker on another host, then claimed by a third one.
+    [
+      'is claimed by another worker after a stale re-queue',
+      { status: 'processing', claimToken: 'other-worker-token' },
+    ],
+  ])('stops a render whose job %s', async (_, currentJob) => {
     const job = { id: 'job-1', assetId: 'asset-1', renderProfileId: null, renderBatchId: null };
     const updateChain = {
       update: () => updateChain,
-      set: () => updateChain,
+      set: jest.fn().mockReturnThis(),
       where: () => updateChain,
       execute: jest.fn().mockResolvedValue({ affected: 1 }),
     };
     const jobRepository = {
-      // The lookup, then the cancel checks see the job cancelled (as cancelSupersededRenderJobs leaves it).
+      // The lookup, the check before the render starts (still held by this run's claim), then
+      // the periodic cancel checks see the job no longer held.
       findOne: jest
         .fn()
         .mockResolvedValueOnce(job)
-        .mockResolvedValue({ id: job.id, status: 'cancelled' }),
+        .mockResolvedValueOnce({ id: job.id, status: 'processing', claimToken: 'generated-uuid' })
+        .mockResolvedValue({ id: job.id, ...currentJob }),
       createQueryBuilder: () => updateChain,
       update: jest.fn(),
     };
@@ -488,6 +498,10 @@ describe('MediaProcessingService runProcess', () => {
     await expect(service.processJobById(job.id, job.assetId)).resolves.toBeUndefined();
 
     expect(Date.now() - startedAt).toBeLessThan(10_000);
+    // The claim recorded this run's token, which is what the cancel checks compare against.
+    expect(updateChain.set).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'processing', claimToken: 'generated-uuid' }),
+    );
     const statuses = jobRepository.update.mock.calls.map(
       ([, values]) => (values as { status?: string }).status,
     );
