@@ -72,10 +72,9 @@ function setup(rows: OutboxEventEntity[], deletePrefix: jest.Mock, addProcessing
 
 /** The retry delay SQL an update wrote, e.g. "NOW() + interval '40000 milliseconds'". */
 function availableAtSql(update: jest.Mock): string {
-  const [, values] = update.mock.calls.find(([, v]) => (v as { status?: string }).status === 'failed') as [
-    string,
-    { availableAt: () => string },
-  ];
+  const [, values] = update.mock.calls.find(
+    ([, v]) => (v as { status?: string }).status === 'failed',
+  ) as [string, { availableAt: () => string }];
   return values.availableAt();
 }
 
@@ -180,7 +179,11 @@ describe('OutboxDispatcherService', () => {
     const addProcessingJob = jest.fn().mockResolvedValue(undefined);
     // A purge of a large project that is still running.
     const deletePrefix = jest.fn(() => new Promise(() => undefined));
-    const { service, update } = setup([purgeEvent(0), renderEvent()], deletePrefix, addProcessingJob);
+    const { service, update } = setup(
+      [purgeEvent(0), renderEvent()],
+      deletePrefix,
+      addProcessingJob,
+    );
 
     void service.dispatchPending();
     await new Promise((resolve) => setImmediate(resolve));

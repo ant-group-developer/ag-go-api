@@ -20,7 +20,7 @@ import { CreateRenderBatchDto } from './dto/create-render-batch.dto';
 import { CreateWatermarkLogoUploadSessionDto } from './dto/create-watermark-logo-upload-session.dto';
 import { RerenderWatermarkDto } from './dto/rerender-watermark.dto';
 import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
-import { isAutoJobStatusFilter, RenderService } from './render.service';
+import { isAutoJobSortField, isAutoJobStatusFilter, RenderService } from './render.service';
 
 @ApiTags('render')
 @ApiBearerAuth()
@@ -129,17 +129,24 @@ export class RenderController {
     @Query('pageSize') pageSize: string | undefined,
     @Query('status') status: string | undefined,
     @Query('search') search: string | undefined,
+    @Query('sortBy') sortBy: string | undefined,
+    @Query('sortOrder') sortOrder: string | undefined,
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
     const parsedPage = page ? Number.parseInt(page, 10) : undefined;
     const parsedPageSize = pageSize ? Number.parseInt(pageSize, 10) : undefined;
+    const normalizedSortOrder = sortOrder?.toUpperCase();
     return this.renderService.listAutoJobs(context.userId, context.userType, {
       ...(projectId ? { projectId } : {}),
       ...(Number.isFinite(parsedPage) ? { page: parsedPage } : {}),
       ...(Number.isFinite(parsedPageSize) ? { pageSize: parsedPageSize } : {}),
       ...(isAutoJobStatusFilter(status) ? { status } : {}),
       ...(search?.trim() ? { search: search.trim().slice(0, 200) } : {}),
+      ...(isAutoJobSortField(sortBy) ? { sortBy } : {}),
+      ...(normalizedSortOrder === 'ASC' || normalizedSortOrder === 'DESC'
+        ? { sortOrder: normalizedSortOrder }
+        : {}),
     });
   }
 
