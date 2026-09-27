@@ -100,6 +100,48 @@ docker compose down
 Giới hạn tài nguyên được cấu hình qua `.env`: `API_MEMORY_LIMIT`, `API_CPUS` và
 `WORKER_{MEDIA,IO}_MEMORY_LIMIT` / `WORKER_{MEDIA,IO}_CPUS`.
 
+## Scaling workers (host phụ)
+
+Để tăng throughput, chạy các worker (`worker-media` và `worker-io`) trên thêm VPS riêng với cùng DB/Redis, bằng `deploy-worker-host.sh`. Lợi chính là render (`worker-media`). `worker-io` thêm được số ZIP download chạy song song; import Google Drive vẫn chạy lần lượt từng batch và outbox rất nhẹ, nên hai phần này chủ yếu thêm dự phòng khi host khác chết.
+
+Lần đầu trên VPS mới (đã cài Docker + plugin Compose và buildx, `util-linux` cho `flock`):
+
+```bash
+git clone <repo> && cd ag-go-api
+cp .env.example .env   # điền như .env của host chính, nhưng DATABASE_URL/REDIS_URL trỏ IP private của host chính
+```
+
+Mỗi lần deploy (sau khi host chính đã deploy cùng commit):
+
+```bash
+git pull --ff-only origin main && sudo bash ./deploy-worker-host.sh
+```
+
+Script:
+- Kiểm tra `.env` (URL không trỏ localhost/`host.docker.internal`, `MEDIA_WORKER_ENABLED=true`, CPU), từ chối nếu host có container `api` (host chính dùng `./deploy.sh`) hoặc đang có lần deploy khác chạy.
+- Build image `ag-go-api:<commit>` (không đọc được commit thì dừng, không lặng lẽ dùng `latest`).
+- Chạy thử image mới trước khi đụng worker đang chạy (`src/workers/worker-host-preflight.ts`, chỉ đọc): kết nối Postgres/Redis, đồng hồ lệch DB ≤ 5 phút, migration phải **khớp** DB (DB thiếu → deploy host chính trước; DB mới hơn → `git pull` đúng commit host chính), và `.env` dùng đúng giá trị của host chính: `QUEUE_PREFIX` (có queue trong Redis), R2 (thấy được object thật), Google key (giải mã được token đang lưu). Sai mấy giá trị này không chỉ làm lỗi mà gây hại: key Google sai làm kết nối Drive của user bị đánh dấu phải kết nối lại, R2 sai làm fail mọi file import trên host đó, prefix khác thì job render đi vào queue không ai đọc.
+- Thay `worker-media` và `worker-io` (worker cũ làm xong job đang chạy mới dừng; chạy trong tmux/screen), kiểm tra từng container sống; lỗi thì hướng dẫn dừng worker của host (host chính vẫn chạy), rollback chỉ khi host chính cũng chạy commit đó.
+- Giữ image hiện tại + image trước đó (để rollback), xóa các image cũ hơn.
+
+**Quy tắc:**
+- Host bổ sung chỉ chạy worker (`worker-media`, `worker-io`); không chạy `api`, không chạy migration.
+- An toàn khi chạy nhiều host: render job có `claim_token`; mọi lượt quét job treo (render, import) so với giờ DB; outbox giữ event đang publish bằng lease 5 phút (claim từng lượt, publish chạy nền nên purge dài không chặn render); chỉ process API dọn upload session hết hạn.
+- Rủi ro còn lại: hai host có thể bắt đầu hai batch import cùng lúc (không trùng file, chỉ không còn "lần lượt từng batch"); một host mất kết nối Postgres/Redis > 2 phút mà vẫn copy Drive→R2 có thể làm một file import hai lần; purge project chạy > 5 phút có thể bị một poll khác chạy lại song song (xóa trùng, vô hại).
+- Reach Redis/Postgres qua private network (WireGuard, Tailscale, or provider VPN); **không public**.
+- Chạy migration (từ một host) trước khi deploy version worker mới.
+- Nâng cấp mọi worker đang chạy (host chính: `./deploy.sh`) lên version này **trước** khi bật host bổ sung: worker cũ không kiểm tra `claim_token` và quét job treo theo giờ máy, chạy lẫn với worker mới vẫn có thể làm trùng.
+- Giữ NTP bật (`timedatectl status`): ký request R2 và delay/backoff của BullMQ vẫn dùng giờ máy; preflight từ chối lệch > 5 phút.
+
+**Tuning throughput:**
+- `MEDIA_WORKER_CONCURRENCY`: số job song song trên một worker (bắt buộc; `.env.example`: `2`)
+- `MEDIA_FFMPEG_THREADS`: thread cho FFmpeg mỗi job (keep: `concurrency × threads ≈ CPUs`)
+- `WORKER_MEDIA_CPUS` / `WORKER_MEDIA_MEMORY_LIMIT`: Docker resource limit (host phụ: tới số CPU − 1 − `WORKER_IO_CPUS`, chừa 1 CPU và 1–2 GB RAM cho OS và lúc build image cạnh worker đang chạy)
+- `WORKER_IO_CPUS` / `WORKER_IO_MEMORY_LIMIT`: cho `worker-io` (mặc định 1 CPU, 1g; chủ yếu chờ mạng)
+- `DATABASE_POOL_MAX` (api, mặc định 10) / `WORKER_DATABASE_POOL_MAX` (mỗi worker, mặc định 5): số kết nối Postgres mỗi process. Tổng mọi process trên mọi host phải < `max_connections` của Postgres (mặc định 100): host chính 10 + 5 + 5, mỗi host phụ thêm 10. Preflight cảnh báo khi host sắp thêm vượt giới hạn. Tăng `MEDIA_WORKER_CONCURRENCY` lớn (> ~6) thì tăng `WORKER_DATABASE_POOL_MAX` theo.
+- `LOG_MAX_SIZE` / `LOG_MAX_FILE`: log container xoay vòng (mặc định 50m × 5 file mỗi container).
+- `WORKER_STOP_GRACE_PERIOD`: host phụ không có API nên có thể đặt dài (vd. `20m`) để deploy không cắt ngang render 4K dài; job bị cắt sẽ được sweep đưa lại hàng đợi sau 3 phút và render lại từ đầu
+
 ## Lệnh thường dùng
 
 ```bash
