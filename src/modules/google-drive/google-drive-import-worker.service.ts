@@ -25,9 +25,11 @@ import {
   IMPORT_QUEUE,
 } from '../../infra/queue/queue.constants';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
+import { AuditService } from '../audit/audit.service';
 import { refreshProjectMediaSummary } from '../media/project-media-summary';
 import { DriveAccessToken, DriveAuthError, driveFetch, withIdleTimeout } from './drive-http';
 import { GoogleDriveService } from './google-drive.service';
+import { IMPORT_FINISHED_AUDIT_ACTIONS, recordImportAudit } from './import-batch-audit';
 
 type DriveFile = {
   id: string;
@@ -102,6 +104,7 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     private readonly mediaQueue: MediaQueueService,
     private readonly importQueue: ImportQueueService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
+    private readonly auditService: AuditService,
   ) {}
 
   start(): void {
@@ -576,15 +579,26 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     const { total, completed, failed, active } = counts;
     const status =
       active > 0 ? 'processing' : failed === 0 ? 'completed' : completed > 0 ? 'partial' : 'failed';
-    await this.dataSource.query(
-      `UPDATE import_batches
-       SET total_items = $2, completed_items = $3, failed_items = $4, progress_percent = $5,
-         status = CASE
-           WHEN status = 'cancelled' OR (status IN ('queued', 'paused') AND $7::boolean) THEN status
-           ELSE $6::varchar
-         END,
-         updated_at = now()
-       WHERE id = $1`,
+    // `previous` locks the row first, so when two jobs refresh the same batch at once the second
+    // one sees the status the first wrote and only one of them reports the finish.
+    const [transition] = (await this.dataSource.query(
+      `WITH previous AS (
+         SELECT id, status FROM import_batches WHERE id = $1 FOR UPDATE
+       ), updated AS (
+         UPDATE import_batches batch
+         SET total_items = $2, completed_items = $3, failed_items = $4, progress_percent = $5,
+           status = CASE
+             WHEN batch.status = 'cancelled' OR (batch.status IN ('queued', 'paused') AND $7::boolean)
+               THEN batch.status
+             ELSE $6::varchar
+           END,
+           updated_at = now()
+         FROM previous
+         WHERE batch.id = previous.id
+         RETURNING previous.status AS "previousStatus", batch.status, batch.project_id AS "projectId",
+           batch.created_by AS "createdBy"
+       )
+       SELECT * FROM updated`,
       [
         batchId,
         total,
@@ -594,7 +608,18 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
         status,
         active > 0,
       ],
-    );
+    )) as Array<{ previousStatus: string; status: string; projectId: string; createdBy: string }>;
+    const finishedAction = transition && IMPORT_FINISHED_AUDIT_ACTIONS[transition.status];
+    if (finishedAction && transition.previousStatus !== transition.status) {
+      await recordImportAudit(this.auditService, this.logger, {
+        projectId: transition.projectId,
+        batchId,
+        // The worker acts for the user who started the import.
+        actorUserId: transition.createdBy,
+        action: finishedAction,
+        data: { totalItems: total, completedItems: completed, failedItems: failed },
+      });
+    }
   }
 
   /** Imports one file. Returns false when it was not claimed: another job took it, or the batch was cancelled or paused. */

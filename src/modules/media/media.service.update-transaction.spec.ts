@@ -54,7 +54,7 @@ describe('MediaService.update', () => {
 
     await service.update('media', { caption: 'New caption' }, 'alice', ['go.project.edit'], 'USER');
 
-    expect(mediaQuery.setLock).toHaveBeenCalledWith('pessimistic_write');
+    expect(mediaQuery.setLock).toHaveBeenCalledWith('pessimistic_write', undefined, ['media']);
     expect(canAccess).toHaveBeenCalledWith('folder', 'alice', 'editor', 'USER', manager);
     expect(manager.save).toHaveBeenCalled();
   });

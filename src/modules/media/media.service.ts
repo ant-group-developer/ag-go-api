@@ -264,7 +264,8 @@ export class MediaService {
         .createQueryBuilder(ProjectMediaEntity, 'media')
         .leftJoinAndSelect('media.asset', 'asset')
         .where('media.id = :mediaId', { mediaId })
-        .setLock('pessimistic_write')
+        // Only the media row: Postgres rejects FOR UPDATE on the nullable side of a LEFT JOIN.
+        .setLock('pessimistic_write', undefined, ['media'])
         .getOne();
       if (!media) {
         throw new NotFoundException('Project media not found');

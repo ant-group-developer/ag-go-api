@@ -1551,10 +1551,31 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a23
       tags: *a24
-  /statistics/overview:
+  /statistics/summary:
     get:
-      operationId: StatisticsController_overview
-      parameters: []
+      operationId: StatisticsController_summary
+      parameters:
+        - name: from
+          required: true
+          in: query
+          description: Start of the period (inclusive)
+          schema:
+            example: 2026-09-01T00:00:00+07:00
+            type: string
+        - name: to
+          required: true
+          in: query
+          description: End of the period (exclusive)
+          schema:
+            example: 2026-10-01T00:00:00+07:00
+            type: string
+        - name: tz
+          required: false
+          in: query
+          description: IANA time zone used to group the trend by day or week
+          schema:
+            default: Asia/Ho_Chi_Minh
+            type: string
       responses:
         "200":
           description: ""
@@ -1566,10 +1587,139 @@ paths:
         - bearer: []
       tags: &a26
         - statistics
-  /statistics/rendering:
+  /statistics/trend:
     get:
-      operationId: StatisticsController_rendering
-      parameters: []
+      operationId: StatisticsController_trend
+      parameters:
+        - name: from
+          required: true
+          in: query
+          description: Start of the period (inclusive)
+          schema:
+            example: 2026-09-01T00:00:00+07:00
+            type: string
+        - name: to
+          required: true
+          in: query
+          description: End of the period (exclusive)
+          schema:
+            example: 2026-10-01T00:00:00+07:00
+            type: string
+        - name: tz
+          required: false
+          in: query
+          description: IANA time zone used to group the trend by day or week
+          schema:
+            default: Asia/Ho_Chi_Minh
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /statistics/progress:
+    get:
+      operationId: StatisticsController_progress
+      parameters:
+        - name: limit
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 50
+            type: number
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /statistics/team:
+    get:
+      operationId: StatisticsController_team
+      parameters:
+        - name: from
+          required: true
+          in: query
+          description: Start of the period (inclusive)
+          schema:
+            example: 2026-09-01T00:00:00+07:00
+            type: string
+        - name: to
+          required: true
+          in: query
+          description: End of the period (exclusive)
+          schema:
+            example: 2026-10-01T00:00:00+07:00
+            type: string
+        - name: tz
+          required: false
+          in: query
+          description: IANA time zone used to group the trend by day or week
+          schema:
+            default: Asia/Ho_Chi_Minh
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /statistics/operations:
+    get:
+      operationId: StatisticsController_operations
+      parameters:
+        - name: from
+          required: true
+          in: query
+          description: Start of the period (inclusive)
+          schema:
+            example: 2026-09-01T00:00:00+07:00
+            type: string
+        - name: to
+          required: true
+          in: query
+          description: End of the period (exclusive)
+          schema:
+            example: 2026-10-01T00:00:00+07:00
+            type: string
+        - name: tz
+          required: false
+          in: query
+          description: IANA time zone used to group the trend by day or week
+          schema:
+            default: Asia/Ho_Chi_Minh
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a25
+      tags: *a26
+  /statistics/activity:
+    get:
+      operationId: StatisticsController_activity
+      parameters:
+        - name: limit
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 50
+            type: number
       responses:
         "200":
           description: ""
@@ -2122,6 +2272,12 @@ components:
           type: string
           format: uuid
           description: Project that owns this uploaded asset
+        uploadBatchId:
+          type: string
+          format: uuid
+          description:
+            Groups files uploaded together so the project audit log shows one
+            entry per batch. Without it the file is logged on its own.
       required:
         - assetType
         - originalFilename
@@ -2181,6 +2337,12 @@ components:
         expectedChecksumSha256:
           type: string
           pattern: ^[a-fA-F0-9]{64}$
+        uploadBatchId:
+          type: string
+          format: uuid
+          description:
+            Groups files uploaded together so the project audit log shows one
+            entry per batch. Without it the file is logged on its own.
         mimeType:
           type: string
           enum:

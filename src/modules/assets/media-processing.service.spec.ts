@@ -445,73 +445,77 @@ describe('MediaProcessingService runProcess', () => {
       'is claimed by another worker after a stale re-queue',
       { status: 'processing', claimToken: 'other-worker-token' },
     ],
-  ])('stops a render whose job %s', async (_, currentJob) => {
-    const job = { id: 'job-1', assetId: 'asset-1', renderProfileId: null, renderBatchId: null };
-    const updateChain = {
-      update: () => updateChain,
-      set: jest.fn().mockReturnThis(),
-      where: () => updateChain,
-      execute: jest.fn().mockResolvedValue({ affected: 1 }),
-    };
-    const jobRepository = {
-      // The lookup, the check before the render starts (still held by this run's claim), then
-      // the periodic cancel checks see the job no longer held.
-      findOne: jest
-        .fn()
-        .mockResolvedValueOnce(job)
-        .mockResolvedValueOnce({ id: job.id, status: 'processing', claimToken: 'generated-uuid' })
-        .mockResolvedValue({ id: job.id, ...currentJob }),
-      createQueryBuilder: () => updateChain,
-      update: jest.fn(),
-    };
-    const assetRepository = {
-      findOne: jest.fn().mockResolvedValue({
-        id: 'asset-1',
-        assetType: 'video',
-        originalStorageKey: 'projects/p1/originals/a.mp4',
-      }),
-      update: jest.fn(),
-    };
-    const service = new MediaProcessingService(
-      assetRepository as never,
-      {} as never,
-      jobRepository as never,
-      { findOne: jest.fn().mockResolvedValue(null) } as never,
-      {
-        headObject: jest.fn().mockResolvedValue({}),
-        readObject: jest.fn(() => Readable.from([Buffer.from('source')])),
-      } as never,
-      { getOrThrow: () => 600 } as unknown as ConfigService,
-    );
-    const internals = service as unknown as {
-      runProcess: RunProcess;
-      processVideo: () => Promise<unknown>;
-    };
-    // A render that would run for about 20 s.
-    jest
-      .spyOn(internals, 'processVideo')
-      .mockImplementation(() =>
-        internals.runProcess(process.execPath, fakeFfmpeg(1000), { stallMs: 60_000 }),
+  ])(
+    'stops a render whose job %s',
+    async (_, currentJob) => {
+      const job = { id: 'job-1', assetId: 'asset-1', renderProfileId: null, renderBatchId: null };
+      const updateChain = {
+        update: () => updateChain,
+        set: jest.fn().mockReturnThis(),
+        where: () => updateChain,
+        execute: jest.fn().mockResolvedValue({ affected: 1 }),
+      };
+      const jobRepository = {
+        // The lookup, the check before the render starts (still held by this run's claim), then
+        // the periodic cancel checks see the job no longer held.
+        findOne: jest
+          .fn()
+          .mockResolvedValueOnce(job)
+          .mockResolvedValueOnce({ id: job.id, status: 'processing', claimToken: 'generated-uuid' })
+          .mockResolvedValue({ id: job.id, ...currentJob }),
+        createQueryBuilder: () => updateChain,
+        update: jest.fn(),
+      };
+      const assetRepository = {
+        findOne: jest.fn().mockResolvedValue({
+          id: 'asset-1',
+          assetType: 'video',
+          originalStorageKey: 'projects/p1/originals/a.mp4',
+        }),
+        update: jest.fn(),
+      };
+      const service = new MediaProcessingService(
+        assetRepository as never,
+        {} as never,
+        jobRepository as never,
+        { findOne: jest.fn().mockResolvedValue(null) } as never,
+        {
+          headObject: jest.fn().mockResolvedValue({}),
+          readObject: jest.fn(() => Readable.from([Buffer.from('source')])),
+        } as never,
+        { getOrThrow: () => 600 } as unknown as ConfigService,
       );
+      const internals = service as unknown as {
+        runProcess: RunProcess;
+        processVideo: () => Promise<unknown>;
+      };
+      // A render that would run for about 20 s.
+      jest
+        .spyOn(internals, 'processVideo')
+        .mockImplementation(() =>
+          internals.runProcess(process.execPath, fakeFfmpeg(1000), { stallMs: 60_000 }),
+        );
 
-    const startedAt = Date.now();
-    await expect(service.processJobById(job.id, job.assetId)).resolves.toBeUndefined();
+      const startedAt = Date.now();
+      await expect(service.processJobById(job.id, job.assetId)).resolves.toBeUndefined();
 
-    expect(Date.now() - startedAt).toBeLessThan(10_000);
-    // The claim recorded this run's token, which is what the cancel checks compare against.
-    expect(updateChain.set).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'processing', claimToken: 'generated-uuid' }),
-    );
-    const statuses = jobRepository.update.mock.calls.map(
-      ([, values]) => (values as { status?: string }).status,
-    );
-    expect(statuses).not.toContain('failed');
-    expect(statuses).not.toContain('completed');
-    expect(assetRepository.update).not.toHaveBeenCalledWith(
-      'asset-1',
-      expect.objectContaining({ processingStatus: 'failed' }),
-    );
-  }, 20_000);
+      expect(Date.now() - startedAt).toBeLessThan(10_000);
+      // The claim recorded this run's token, which is what the cancel checks compare against.
+      expect(updateChain.set).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'processing', claimToken: 'generated-uuid' }),
+      );
+      const statuses = jobRepository.update.mock.calls.map(
+        ([, values]) => (values as { status?: string }).status,
+      );
+      expect(statuses).not.toContain('failed');
+      expect(statuses).not.toContain('completed');
+      expect(assetRepository.update).not.toHaveBeenCalledWith(
+        'asset-1',
+        expect.objectContaining({ processingStatus: 'failed' }),
+      );
+    },
+    20_000,
+  );
 });
 
 describe('MediaProcessingService removeLeftoverTempFiles', () => {
