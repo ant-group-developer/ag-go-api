@@ -361,8 +361,11 @@ export class ProjectsService {
     const storagePrefix = `projects/${id}/`;
     await this.dataSource.transaction(async (manager) => {
       // Planned before the delete, while this project's media rows still exist.
-      const { removableAssetIds, keepPrefixes, extraPurgePrefixes } =
-        await planProjectAssetCleanup(manager, id, storagePrefix);
+      const { removableAssetIds, keepPrefixes, extraPurgePrefixes } = await planProjectAssetCleanup(
+        manager,
+        id,
+        storagePrefix,
+      );
 
       await manager.delete(ProjectEntity, id);
       await deleteAssetsAndRefreshBatches(manager, removableAssetIds);

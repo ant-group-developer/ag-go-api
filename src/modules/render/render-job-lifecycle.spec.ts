@@ -146,6 +146,9 @@ describe('cancelSupersededRenderJobs', () => {
       'job-4',
     ]);
 
-    expect(steps.filter((step) => step.startsWith('lock'))).toEqual(['lock batch-a', 'lock batch-b']);
+    expect(steps.filter((step) => step.startsWith('lock'))).toEqual([
+      'lock batch-a',
+      'lock batch-b',
+    ]);
   });
 });

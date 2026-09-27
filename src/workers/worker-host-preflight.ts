@@ -38,7 +38,10 @@ function validatedPoolMax(): number {
 async function withTimeout<T>(work: Promise<T>, what: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} did not answer in ${TIMEOUT_MS} ms`)), TIMEOUT_MS);
+    timer = setTimeout(
+      () => reject(new Error(`${what} did not answer in ${TIMEOUT_MS} ms`)),
+      TIMEOUT_MS,
+    );
   });
   try {
     return await Promise.race([work, timeout]);
@@ -130,9 +133,11 @@ async function checkGoogleDrive(): Promise<string> {
     }
   }
   // Only the token decryption is used, which needs nothing but the config.
-  const drive = new (GoogleDriveService as unknown as new (config: ConfigService) => {
-    decrypt(value: string): string;
-  })(envConfig());
+  const drive = new (
+    GoogleDriveService as unknown as new (config: ConfigService) => {
+      decrypt(value: string): string;
+    }
+  )(envConfig());
   try {
     drive.decrypt(connection.encryptedRefreshToken);
   } catch (error) {
