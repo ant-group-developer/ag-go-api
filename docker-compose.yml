@@ -25,6 +25,8 @@ services:
   # On SIGTERM each worker finishes its running jobs first (a Drive download can take up
   # to 2 minutes). Anything cut off by SIGKILL is resumed by the stale-job sweeps on the
   # next start.
+  # Workers need few database connections, and every worker process on every host has its
+  # own pool: a smaller one keeps them all under Postgres' max_connections.
 
   # FFmpeg/Sharp rendering: the only CPU-heavy workload, sized and scaled on its own.
   worker-media:
@@ -34,6 +36,8 @@ services:
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-150s}
     env_file:
       - .env
+    environment:
+      DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-5}
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     mem_limit: ${WORKER_MEDIA_MEMORY_LIMIT:-2g}
@@ -54,6 +58,8 @@ services:
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-150s}
     env_file:
       - .env
+    environment:
+      DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-5}
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     mem_limit: ${WORKER_IO_MEMORY_LIMIT:-1g}

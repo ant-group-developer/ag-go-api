@@ -29,6 +29,10 @@ export const envValidationSchema = Joi.object({
     .trim()
     .pattern(/^[a-zA-Z_][a-zA-Z0-9_$]*$/)
     .required(),
+  // Connections per process. Every api and worker process on every host has its own pool,
+  // and together they must stay under Postgres' max_connections (docker-compose.yml gives
+  // the workers WORKER_DATABASE_POOL_MAX). Defaulted so existing .env files keep working.
+  DATABASE_POOL_MAX: Joi.number().integer().min(1).max(200).default(10),
   REDIS_URL: Joi.string()
     .trim()
     .uri({ scheme: ['redis', 'rediss'] })

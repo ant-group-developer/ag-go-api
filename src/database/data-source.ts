@@ -70,6 +70,7 @@ export const AppDataSource = new DataSource({
   type: 'postgres',
   url: validatedEnv.DATABASE_URL,
   schema: validatedEnv.DATABASE_SCHEMA,
+  poolSize: validatedEnv.DATABASE_POOL_MAX,
   entities: [
     AssetEntity,
     AssetUploadSessionEntity,

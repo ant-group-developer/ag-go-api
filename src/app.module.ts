@@ -73,6 +73,7 @@ import { TagsModule } from './modules/tags/tags.module';
         type: 'postgres',
         url: config.getOrThrow<string>('DATABASE_URL'),
         schema: config.getOrThrow<string>('DATABASE_SCHEMA'),
+        poolSize: config.getOrThrow<number>('DATABASE_POOL_MAX'),
         entities: [
           FolderEntity,
           FolderClosureEntity,
