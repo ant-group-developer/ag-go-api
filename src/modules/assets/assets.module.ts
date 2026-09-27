@@ -10,6 +10,7 @@ import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderBatchEntity } from '../../database/entities/render-batch.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { QueueModule } from '../../infra/queue/queue.module';
+import { AuditModule } from '../audit/audit.module';
 import { FoldersModule } from '../folders/folders.module';
 import { AssetsController } from './assets.controller';
 import { AssetsService } from './assets.service';
@@ -19,6 +20,7 @@ import { StorageModule } from './storage/storage.module';
 
 @Module({
   imports: [
+    AuditModule,
     FoldersModule,
     StorageModule,
     QueueModule,

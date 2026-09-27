@@ -2122,6 +2122,12 @@ components:
           type: string
           format: uuid
           description: Project that owns this uploaded asset
+        uploadBatchId:
+          type: string
+          format: uuid
+          description:
+            Groups files uploaded together so the project audit log shows one
+            entry per batch. Without it the file is logged on its own.
       required:
         - assetType
         - originalFilename
@@ -2181,6 +2187,12 @@ components:
         expectedChecksumSha256:
           type: string
           pattern: ^[a-fA-F0-9]{64}$
+        uploadBatchId:
+          type: string
+          format: uuid
+          description:
+            Groups files uploaded together so the project audit log shows one
+            entry per batch. Without it the file is logged on its own.
         mimeType:
           type: string
           enum:
