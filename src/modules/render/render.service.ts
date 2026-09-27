@@ -44,6 +44,25 @@ export function isAutoJobStatusFilter(value: unknown): value is AutoJobStatusFil
 
 export type AutoJobCounts = Record<AutoJobStatusFilter, number>;
 
+/**
+ * Sortable columns of the auto render job list: when the job was queued, when processing
+ * started, and how long processing took (finished - started).
+ */
+export const AUTO_JOB_SORT_FIELDS = ['createdAt', 'startedAt', 'elapsed'] as const;
+export type AutoJobSortField = (typeof AUTO_JOB_SORT_FIELDS)[number];
+export type AutoJobSortOrder = 'ASC' | 'DESC';
+
+export function isAutoJobSortField(value: unknown): value is AutoJobSortField {
+  return AUTO_JOB_SORT_FIELDS.includes(value as AutoJobSortField);
+}
+
+/** SQL expression per sort field; jobs not started / not finished yet sort last either way. */
+const AUTO_JOB_SORT_EXPRESSIONS: Record<AutoJobSortField, string> = {
+  createdAt: 'job.created_at',
+  startedAt: 'job.started_at',
+  elapsed: '(job.finished_at - job.started_at)',
+};
+
 export type RenderJobSource = 'batch' | 'upload' | 'import' | 'retry' | 'other';
 
 @Injectable()
@@ -443,8 +462,9 @@ export class RenderService {
 
   /**
    * Jobs queued automatically outside any batch: after an upload, a Google Drive import or a
-   * per-file retry. Newest first, one page at a time; non-admins only see jobs of projects they
-   * can view. `counts` ignores the status filter (but not the search) so every tab shows its size.
+   * per-file retry. Newest first unless `sortBy` / `sortOrder` say otherwise, one page at a time;
+   * non-admins only see jobs of projects they can view. `counts` ignores the status filter (but
+   * not the search) so every tab shows its size.
    */
   async listAutoJobs(
     userId: string,
@@ -455,6 +475,8 @@ export class RenderService {
       pageSize?: number;
       status?: AutoJobStatusFilter;
       search?: string;
+      sortBy?: AutoJobSortField;
+      sortOrder?: AutoJobSortOrder;
     } = {},
   ) {
     const page = Math.max(Math.trunc(options.page ?? 1) || 1, 1);
@@ -524,8 +546,14 @@ export class RenderService {
     } else if (status !== 'all') {
       query.andWhere('job.status = :status', { status });
     }
+    const sortBy = options.sortBy ?? 'createdAt';
+    const sortOrder = options.sortOrder ?? 'DESC';
+    query.orderBy(AUTO_JOB_SORT_EXPRESSIONS[sortBy], sortOrder, 'NULLS LAST');
+    if (sortBy !== 'createdAt') {
+      // Ties (e.g. every queued job has no start time) fall back to newest first.
+      query.addOrderBy('job.created_at', 'DESC');
+    }
     const jobs = await query
-      .orderBy('job.createdAt', 'DESC')
       .addOrderBy('job.id', 'DESC')
       .offset((page - 1) * pageSize)
       .limit(pageSize)
