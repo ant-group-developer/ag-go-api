@@ -63,7 +63,14 @@ export class FoldersService {
         throw new NotFoundException('Parent folder not found');
       }
       if (parent) {
-        const canManage = await this.accessService.canAccess(parent.id, userId, 'editor', userType);
+        // On the transaction's connection: a second pooled one could wait forever for a free slot.
+        const canManage = await this.accessService.canAccess(
+          parent.id,
+          userId,
+          'editor',
+          userType,
+          manager,
+        );
         if (!canManage) {
           throw new ForbiddenException('Insufficient folder permission');
         }
