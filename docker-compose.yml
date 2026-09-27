@@ -1,3 +1,11 @@
+# Rotated container logs: Docker keeps them forever by default and fills the disk, on the
+# main host and on every worker host alike.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-50m}
+    max-file: '${LOG_MAX_FILE:-5}'
+
 services:
   api:
     image: ag-go-api:${TAG:-latest}
@@ -17,6 +25,7 @@ services:
         limits:
           cpus: '${API_CPUS:-2}'
           memory: ${API_MEMORY_LIMIT:-2g}
+    logging: *logging
     restart: unless-stopped
 
   # Workers are split by workload so they don't compete for the same CPU/RAM budget.
@@ -47,6 +56,7 @@ services:
         limits:
           cpus: '${WORKER_MEDIA_CPUS:-2}'
           memory: ${WORKER_MEDIA_MEMORY_LIMIT:-2g}
+    logging: *logging
     restart: unless-stopped
 
   # Network-bound work: Google Drive imports, ZIP downloads (streamed straight to R2, so
@@ -69,4 +79,5 @@ services:
         limits:
           cpus: '${WORKER_IO_CPUS:-1}'
           memory: ${WORKER_IO_MEMORY_LIMIT:-1g}
+    logging: *logging
     restart: unless-stopped
