@@ -194,7 +194,7 @@ export class ProjectsService {
       throw new NotFoundException('Project not found');
     }
     await this.requireFolderAccess(project.folderId, userId, 'viewer', userType);
-    const [folder, country, province, category, tags] = await Promise.all([
+    const [folder, country, province, category, tags, renderedBytes] = await Promise.all([
       this.folderRepository.findOne({ where: { id: project.folderId } }),
       project.countryId
         ? this.countryRepository.findOne({ where: { id: project.countryId } })
@@ -213,11 +213,13 @@ export class ProjectsService {
          ORDER BY tag.normalized_name ASC`,
         [project.id],
       ) as Promise<Array<{ id: string; name: string }>>,
+      this.sumRenderedBytes(project.id),
     ]);
     const thumbnail = (await this.resolveThumbnails([project])).get(project.id);
     const [enrichedProject] = await this.actorEnrichment.enrich(
       [
         Object.assign(project, {
+          renderedBytes,
           folderPath: folder?.pathText ?? '',
           countryName: country?.name ?? null,
           countryFlagUrl: country?.flagUrl ?? null,
@@ -398,6 +400,24 @@ export class ProjectsService {
       beforeData: { name: project.name, folderId: project.folderId },
     });
     return { success: true };
+  }
+
+  /**
+   * Rendered storage of a project: sum of ready variants (thumbnail, preview, rendered sizes...)
+   * of its distinct assets. Computed live because variants are produced asynchronously by the
+   * media workers and `projects.rendered_bytes` is not maintained (same rule as statistics).
+   */
+  private async sumRenderedBytes(projectId: string): Promise<string> {
+    const rows = (await this.dataSource.query(
+      `SELECT COALESCE(SUM(variant.file_size_bytes), 0)::text AS "renderedBytes"
+       FROM asset_variants variant
+       WHERE variant.status = 'ready'
+         AND variant.asset_id IN (
+           SELECT media.asset_id FROM project_media media WHERE media.project_id = $1
+         )`,
+      [projectId],
+    )) as Array<{ renderedBytes: string }>;
+    return rows[0]?.renderedBytes ?? '0';
   }
 
   /**
