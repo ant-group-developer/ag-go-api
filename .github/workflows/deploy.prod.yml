@@ -13,6 +13,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    outputs:
+      # The commit the main host runs now; the worker hosts deploy the same one.
+      commit: ${{ steps.deploy.outputs.commit }}
     environment:
       name: production
     env:
@@ -31,6 +34,7 @@ jobs:
           ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
 
       - name: Deploy via SSH
+        id: deploy
         shell: bash
         run: |
           set -euo pipefail
@@ -42,4 +46,18 @@ jobs:
             sudo git pull --ff-only origin main
             TAG=\$(sudo git rev-parse --short HEAD)
             sudo env TAG=\$TAG bash ./deploy.sh
-          "
+            echo DEPLOYED_COMMIT=\$(sudo git rev-parse HEAD)
+          " | tee "$RUNNER_TEMP/deploy.log"
+          echo "commit=$(grep -m1 '^DEPLOYED_COMMIT=' "$RUNNER_TEMP/deploy.log" | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+  # Extra VPSs running only workers (see deploy-worker-hosts.yml), once the main host is up.
+  deploy-workers:
+    needs: deploy
+    if: ${{ vars.WORKER_HOSTS != '' && vars.WORKER_HOSTS != '[]' }}
+    uses: ./.github/workflows/deploy-worker-hosts.yml
+    with:
+      commit: ${{ needs.deploy.outputs.commit }}
+      hosts: ${{ vars.WORKER_HOSTS }}
+      default-key-secret: WORKER_SSH_KEY
+    # Each host reads its own key secret, named in the hosts JSON.
+    secrets: inherit

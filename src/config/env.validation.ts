@@ -1,5 +1,11 @@
 import Joi from 'joi';
 
+/**
+ * How long a query waits to connect or for a free pool slot before it fails. Without it a pool
+ * held up (for example by transactions each waiting for a second connection) hangs forever.
+ */
+export const DATABASE_CONNECT_TIMEOUT_MS = 10_000;
+
 const requiredString = Joi.string().trim().min(1).required();
 const httpUrl = Joi.string()
   .trim()

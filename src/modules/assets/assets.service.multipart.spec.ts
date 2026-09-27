@@ -66,6 +66,7 @@ function createService() {
     config,
     storage as unknown as StorageAdapter,
     {} as OutboxService,
+    {} as never,
   );
   return { service, storage, sessionRepository, dataSource };
 }

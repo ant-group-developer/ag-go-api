@@ -1,0 +1,81 @@
+name: Deploy worker hosts
+
+# Called by the deploy workflows once the main host is deployed. Every extra worker host is
+# checked out on the commit the main host runs (its preflight refuses any other: see
+# deploy-worker-host.sh) and deployed in parallel; one failing host does not stop the others.
+#
+# `hosts` is a JSON array, set as a repository variable (WORKER_HOSTS, WORKER_HOSTS_DEV):
+#   [{"name": "worker-1", "host": "203.0.113.10", "user": "deploy", "port": 22,
+#     "path": "/opt/ag-go-api", "ssh_key_secret": "WORKER_1_SSH_KEY"}]
+# ssh_key_secret names the repository secret holding that host's private key (a variable is
+# not encrypted, so keys never go in the JSON); without it the host uses the secret named by
+# `default-key-secret`. name, port, path and ssh_key_secret are optional. The callers pass
+# their secrets with `secrets: inherit`. Each host needs the one-time setup of README.md
+# (Scaling workers): the repo cloned at `path`, its .env, and its key authorized.
+on:
+  workflow_call:
+    inputs:
+      commit:
+        description: Full commit SHA the main host deployed
+        required: true
+        type: string
+      hosts:
+        description: JSON array of worker hosts
+        required: true
+        type: string
+      default-key-secret:
+        description: Secret holding the SSH key of hosts without ssh_key_secret
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    name: ${{ matrix.worker.name || matrix.worker.host }}
+    runs-on: ubuntu-latest
+    # Old workers finish their running jobs before they stop (WORKER_STOP_GRACE_PERIOD).
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        worker: ${{ fromJSON(inputs.hosts) }}
+    env:
+      WORKER_HOST: ${{ matrix.worker.host }}
+      WORKER_USER: ${{ matrix.worker.user }}
+      WORKER_PORT: ${{ matrix.worker.port || '22' }}
+      APP_PATH: ${{ matrix.worker.path || '/opt/ag-go-api' }}
+      COMMIT: ${{ inputs.commit }}
+      KEY_SECRET: ${{ matrix.worker.ssh_key_secret || inputs.default-key-secret }}
+
+    steps:
+      - name: Check SSH key
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets[matrix.worker.ssh_key_secret || inputs.default-key-secret] }}
+        run: |
+          if [[ -z "$SSH_KEY" ]]; then
+            echo "Secret $KEY_SECRET is missing or empty: add it under Settings > Secrets and variables > Actions" >&2
+            exit 1
+          fi
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets[matrix.worker.ssh_key_secret || inputs.default-key-secret] }}
+
+      - name: Deploy via SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$WORKER_HOST" || -z "$WORKER_USER" ]]; then
+            echo "Each worker host needs \"host\" and \"user\"" >&2
+            exit 1
+          fi
+          # Keepalives stop the connection being dropped while old workers drain silently.
+          ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -p "$WORKER_PORT" "$WORKER_USER@$WORKER_HOST" "
+            set -e
+            sudo git config --global --add safe.directory '$APP_PATH'
+            cd '$APP_PATH'
+            sudo git fetch --quiet origin
+            sudo git checkout --quiet --detach '$COMMIT'
+            sudo env TAG=\$(sudo git rev-parse --short HEAD) bash ./deploy-worker-host.sh
+          "

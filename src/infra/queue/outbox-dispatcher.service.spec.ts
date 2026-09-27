@@ -100,6 +100,41 @@ describe('OutboxDispatcherService', () => {
     );
   });
 
+  it('purges each folder of deleted assets stored outside a project prefix', async () => {
+    const deletePrefix = jest.fn().mockResolvedValue(1);
+    const event = {
+      ...purgeEvent(0),
+      eventType: 'asset.storage.purge',
+      payload: { prefixes: ['projects/p-old/originals/a.jpg', 'projects/p-old/variants/a/'] },
+    };
+    const { service, update } = setup([event], deletePrefix);
+
+    await expect(service.dispatchPending()).resolves.toBe(1);
+
+    expect(deletePrefix.mock.calls).toEqual([
+      ['projects/p-old/originals/a.jpg'],
+      ['projects/p-old/variants/a/'],
+    ]);
+    expect(update).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ status: 'published' }),
+    );
+  });
+
+  it('refuses an asset purge broader than one asset folder', async () => {
+    const deletePrefix = jest.fn().mockResolvedValue(1);
+    const event = {
+      ...purgeEvent(0),
+      eventType: 'asset.storage.purge',
+      payload: { prefixes: ['projects/p-old/variants/a/', 'projects/p-live/'] },
+    };
+    const { service } = setup([event], deletePrefix);
+
+    await expect(service.dispatchPending()).resolves.toBe(0);
+
+    expect(deletePrefix).not.toHaveBeenCalled();
+  });
+
   it('leases each claimed event on the database clock so no other poll publishes it again', async () => {
     const { service, manager } = setup([purgeEvent(0)], jest.fn().mockResolvedValue(0));
 

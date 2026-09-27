@@ -3,6 +3,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
+import { isAdminUserType } from '../../common/auth/user-type';
 import { ListResponseDto } from '../../common/dto/list-response.dto';
 import { OutboxService } from '../../common/outbox.service';
 import { CategoryEntity } from '../../database/entities/category.entity';
@@ -18,6 +19,11 @@ import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ListProjectsQueryDto } from './dto/list-projects-query.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
+import {
+  ASSET_STORAGE_PURGE_EVENT,
+  deleteAssetsAndRefreshBatches,
+  planProjectAssetCleanup,
+} from './project-asset-cleanup';
 
 @Injectable()
 export class ProjectsService {
@@ -51,6 +57,14 @@ export class ProjectsService {
     const projectQuery = this.projectRepository
       .createQueryBuilder('project')
       .where('project.folderId IN (:...accessibleFolderIds)', { accessibleFolderIds: folderIds });
+
+    // Only admins can list everyone's drafts; other users only see their own drafts.
+    if (!isAdminUserType(userType)) {
+      projectQuery.andWhere(
+        "(project.evaluationStatus <> 'draft' OR project.ownerUserId = :currentUserId)",
+        { currentUserId: userId },
+      );
+    }
 
     if (query.normalizedKeyword) {
       projectQuery.andWhere(
@@ -344,37 +358,12 @@ export class ProjectsService {
     await this.requireFolderAccess(project.folderId, userId, 'editor', userType);
     const storagePrefix = `projects/${id}/`;
     await this.dataSource.transaction(async (manager) => {
-      // Assets stored under this project's prefix; one attached to another project stays.
-      const ownedAssets = (await manager.query(
-        `SELECT asset.id, asset.original_storage_key AS "originalStorageKey",
-           EXISTS (
-             SELECT 1 FROM project_media media
-             WHERE media.asset_id = asset.id AND media.project_id <> $2
-           ) AS shared
-         FROM assets asset
-         WHERE asset.original_storage_key LIKE $1 || '%'`,
-        [storagePrefix, id],
-      )) as Array<{ id: string; originalStorageKey: string; shared: boolean }>;
-      const sharedAssets = ownedAssets.filter((asset) => asset.shared);
-      const keepPrefixes = [
-        ...sharedAssets.map((asset) => asset.originalStorageKey),
-        ...sharedAssets.map((asset) => `${storagePrefix}variants/${asset.id}/`),
-      ];
-      if (sharedAssets.length > 0) {
-        const variants = (await manager.query(
-          'SELECT storage_key AS "storageKey" FROM asset_variants WHERE asset_id = ANY($1::uuid[])',
-          [sharedAssets.map((asset) => asset.id)],
-        )) as Array<{ storageKey: string }>;
-        keepPrefixes.push(...variants.map((variant) => variant.storageKey));
-      }
+      // Planned before the delete, while this project's media rows still exist.
+      const { removableAssetIds, keepPrefixes, extraPurgePrefixes } =
+        await planProjectAssetCleanup(manager, id, storagePrefix);
 
       await manager.delete(ProjectEntity, id);
-      const removableAssetIds = ownedAssets
-        .filter((asset) => !asset.shared)
-        .map((asset) => asset.id);
-      if (removableAssetIds.length > 0) {
-        await manager.query('DELETE FROM assets WHERE id = ANY($1::uuid[])', [removableAssetIds]);
-      }
+      await deleteAssetsAndRefreshBatches(manager, removableAssetIds);
       // Their ZIP files live under the prefix too.
       await manager.query(
         `UPDATE download_jobs
@@ -383,6 +372,16 @@ export class ProjectsService {
          WHERE project_id = $1 AND status IN ('queued', 'processing', 'completed')`,
         [id],
       );
+      if (extraPurgePrefixes.length > 0) {
+        await manager.save(
+          this.outboxService.create(manager, {
+            eventType: ASSET_STORAGE_PURGE_EVENT,
+            aggregateType: 'project',
+            aggregateId: id,
+            payload: { prefixes: extraPurgePrefixes },
+          }),
+        );
+      }
       await manager.save(
         this.outboxService.create(manager, {
           eventType: 'project.storage.purge',

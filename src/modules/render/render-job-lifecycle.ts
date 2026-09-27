@@ -82,6 +82,14 @@ async function recountRenderBatch(manager: EntityManager, batchId: string): Prom
     .getRawOne<{ total: number; completed: number; failed: number; cancelled: number }>();
   const { total = 0, completed = 0, failed = 0, cancelled = 0 } = counts ?? {};
   if (total === 0) {
+    // Every job went with its asset (the project was deleted): nothing is left to render.
+    await manager.update(RenderBatchEntity, batchId, {
+      status: 'cancelled',
+      totalJobs: 0,
+      completedJobs: 0,
+      failedJobs: 0,
+      progressPercent: 100,
+    });
     return;
   }
   const terminal = completed + failed + cancelled;

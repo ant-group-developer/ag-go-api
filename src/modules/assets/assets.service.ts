@@ -22,6 +22,7 @@ import { MediaRenderJobEntity } from '../../database/entities/media-render-job.e
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
+import { AuditService } from '../audit/audit.service';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
 import { refreshProjectMediaSummary } from '../media/project-media-summary';
 import { cancelSupersededRenderJobs } from '../render/render-job-lifecycle';
@@ -64,6 +65,7 @@ export class AssetsService implements OnModuleDestroy {
     private readonly config: ConfigService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     private readonly outboxService: OutboxService,
+    private readonly auditService: AuditService,
   ) {}
 
   /**
@@ -112,6 +114,8 @@ export class AssetsService implements OnModuleDestroy {
         targetProjectId: project.id,
         keyPrefix: `projects/${project.id}/originals`,
         allowMultipart: true,
+        // Read back when the upload completes to group the audit entry (see recordUploadAudit).
+        ...(dto.uploadBatchId ? { sourceMetadata: { uploadBatchId: dto.uploadBatchId } } : {}),
       },
       idempotencyKey,
     );
@@ -279,6 +283,7 @@ export class AssetsService implements OnModuleDestroy {
     let renderJobId: string | null = null;
     let outboxEventId: string | null = null;
     let projectMediaId: string | null = null;
+    let mediaCreated = false;
     await this.dataSource.transaction(async (manager) => {
       await manager.update(AssetEntity, session.assetId, {
         checksumSha256: head.checksumSha256 ?? expectedChecksum ?? null,
@@ -302,6 +307,7 @@ export class AssetsService implements OnModuleDestroy {
             caption: null,
             createdBy: userId,
           });
+          mediaCreated = true;
           await refreshProjectMediaSummary(manager, session.targetProjectId);
         }
       }
@@ -351,6 +357,9 @@ export class AssetsService implements OnModuleDestroy {
         outboxEventId = savedEvent.id;
       }
     });
+    if (mediaCreated && session.targetProjectId) {
+      await this.recordUploadAudit(session.targetProjectId, userId, asset, session.id);
+    }
     return {
       ...(await this.getAsset(session.assetId)),
       uploadSessionId: session.id,
@@ -358,6 +367,38 @@ export class AssetsService implements OnModuleDestroy {
       outboxEventId,
       projectMediaId,
     };
+  }
+
+  /**
+   * Adds the file to the audit entry of its upload batch. A session opened without a batch id
+   * (e.g. a project thumbnail) is its own batch. Best effort: the upload already succeeded, so a
+   * failed audit write is only logged.
+   */
+  private async recordUploadAudit(
+    projectId: string,
+    userId: string,
+    asset: AssetEntity,
+    uploadSessionId: string,
+  ) {
+    const batchId = asset.sourceMetadata?.uploadBatchId;
+    try {
+      await this.auditService.recordMediaUpload({
+        projectId,
+        actorUserId: userId,
+        uploadBatchId: typeof batchId === 'string' && batchId ? batchId : uploadSessionId,
+        file: {
+          filename: asset.originalFilename,
+          assetType: asset.assetType === 'video' ? 'video' : 'image',
+          sizeBytes: Number(asset.fileSizeBytes) || 0,
+        },
+      });
+    } catch (error) {
+      this.logger.warn(
+        `Could not record upload audit for asset ${asset.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   async abortUpload(

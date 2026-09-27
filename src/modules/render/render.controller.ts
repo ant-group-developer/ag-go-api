@@ -20,7 +20,7 @@ import { CreateRenderBatchDto } from './dto/create-render-batch.dto';
 import { CreateWatermarkLogoUploadSessionDto } from './dto/create-watermark-logo-upload-session.dto';
 import { RerenderWatermarkDto } from './dto/rerender-watermark.dto';
 import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
-import { RenderService } from './render.service';
+import { isAutoJobStatusFilter, RenderService } from './render.service';
 
 @ApiTags('render')
 @ApiBearerAuth()
@@ -125,14 +125,21 @@ export class RenderController {
   @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
   listAutoJobs(
     @Query('projectId') projectId: string | undefined,
-    @Query('limit') limit: string | undefined,
+    @Query('page') page: string | undefined,
+    @Query('pageSize') pageSize: string | undefined,
+    @Query('status') status: string | undefined,
+    @Query('search') search: string | undefined,
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
-    const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
+    const parsedPage = page ? Number.parseInt(page, 10) : undefined;
+    const parsedPageSize = pageSize ? Number.parseInt(pageSize, 10) : undefined;
     return this.renderService.listAutoJobs(context.userId, context.userType, {
       ...(projectId ? { projectId } : {}),
-      ...(Number.isFinite(parsedLimit) ? { limit: parsedLimit } : {}),
+      ...(Number.isFinite(parsedPage) ? { page: parsedPage } : {}),
+      ...(Number.isFinite(parsedPageSize) ? { pageSize: parsedPageSize } : {}),
+      ...(isAutoJobStatusFilter(status) ? { status } : {}),
+      ...(search?.trim() ? { search: search.trim().slice(0, 200) } : {}),
     });
   }
 

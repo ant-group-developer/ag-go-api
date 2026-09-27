@@ -46,4 +46,14 @@ export class CreateUploadSessionDto {
   @ApiProperty({ format: 'uuid', description: 'Project that owns this uploaded asset' })
   @IsUUID()
   targetProjectId!: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Groups files uploaded together so the project audit log shows one entry per batch. ' +
+      'Without it the file is logged on its own.',
+  })
+  @IsUUID()
+  uploadBatchId?: string;
 }

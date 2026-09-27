@@ -23,9 +23,11 @@ import { ImportBatchEntity } from '../../database/entities/import-batch.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ImportQueueService } from '../../infra/queue/import-queue.service';
+import { AuditService } from '../audit/audit.service';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateImportDto } from './dto/create-import.dto';
 import type { SummarizeSourceDto } from './dto/summarize-sources.dto';
+import { IMPORT_AUDIT_ACTIONS, recordImportAudit } from './import-batch-audit';
 
 type OAuthState = {
   verifier: string;
@@ -72,6 +74,7 @@ export class GoogleDriveService implements OnModuleDestroy {
     private readonly folderAccess: FolderAccessService,
     private readonly importQueue: ImportQueueService,
     private readonly actorEnrichment: ActorEnrichmentService,
+    private readonly auditService: AuditService,
   ) {}
 
   async getConnection(userId: string) {
@@ -423,6 +426,22 @@ export class GoogleDriveService implements OnModuleDestroy {
     await this.enqueueDiscovery(batch.id, userId);
     const queueJobId = await this.importQueue.addJob({ batchId: batch.id, userId });
     await this.batchRepository.update(batch.id, { queueJobId });
+    await recordImportAudit(this.auditService, this.logger, {
+      projectId: batch.projectId,
+      batchId: batch.id,
+      actorUserId: userId,
+      action: IMPORT_AUDIT_ACTIONS.started,
+      data: {
+        duplicatePolicy: batch.duplicatePolicy,
+        sourceCount: sources.length,
+        // Enough names to recognise the import without storing a huge list.
+        sources: sources.slice(0, 10).map((source) => ({
+          fileId: source.fileId,
+          name: source.name ?? source.fileId,
+          mimeType: source.mimeType ?? null,
+        })),
+      },
+    });
     return batch;
   }
 
@@ -655,7 +674,11 @@ export class GoogleDriveService implements OnModuleDestroy {
     if (cancelled.affected) {
       await this.itemRepository.update({ batchId: id, status: 'queued' }, { status: 'cancelled' });
     }
-    return this.batchRepository.findOneOrFail({ where: { id } });
+    const batch = await this.batchRepository.findOneOrFail({ where: { id } });
+    if (cancelled.affected) {
+      await this.recordBatchAction(batch, userId, IMPORT_AUDIT_ACTIONS.cancelled);
+    }
+    return batch;
   }
 
   /**
@@ -664,11 +687,15 @@ export class GoogleDriveService implements OnModuleDestroy {
    */
   async pauseImport(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
     await this.assertBatchOwner(id, userId, userType);
-    await this.batchRepository.update(
+    const paused = await this.batchRepository.update(
       { id, status: In(['queued', 'processing']) },
       { status: 'paused' },
     );
-    return this.batchRepository.findOneOrFail({ where: { id } });
+    const batch = await this.batchRepository.findOneOrFail({ where: { id } });
+    if (paused.affected) {
+      await this.recordBatchAction(batch, userId, IMPORT_AUDIT_ACTIONS.paused);
+    }
+    return batch;
   }
 
   /** Queues a paused batch again; its new job continues with the files not imported yet. */
@@ -682,7 +709,30 @@ export class GoogleDriveService implements OnModuleDestroy {
       const queueJobId = await this.importQueue.addJob({ batchId: id, userId: batch.createdBy });
       await this.batchRepository.update(id, { queueJobId });
     }
-    return this.batchRepository.findOneOrFail({ where: { id } });
+    const updated = await this.batchRepository.findOneOrFail({ where: { id } });
+    if (resumed.affected) {
+      await this.recordBatchAction(updated, userId, IMPORT_AUDIT_ACTIONS.resumed);
+    }
+    return updated;
+  }
+
+  /** Audit entry for a user action on a batch, with its progress at that moment. */
+  private recordBatchAction(
+    batch: ImportBatchEntity,
+    userId: string,
+    action: (typeof IMPORT_AUDIT_ACTIONS)['paused' | 'resumed' | 'cancelled'],
+  ) {
+    return recordImportAudit(this.auditService, this.logger, {
+      projectId: batch.projectId,
+      batchId: batch.id,
+      actorUserId: userId,
+      action,
+      data: {
+        totalItems: batch.totalItems,
+        completedItems: batch.completedItems,
+        failedItems: batch.failedItems,
+      },
+    });
   }
 
   async retryItem(id: string, itemId: string, userId: string, userType?: 'ADMIN' | 'USER') {

@@ -104,6 +104,20 @@ describe('refreshRenderBatch', () => {
     );
   });
 
+  it('cancels a batch whose jobs were all deleted with their project', async () => {
+    const { manager, mock } = createManager(() => []);
+
+    await refreshRenderBatch(manager, 'batch-1');
+
+    expect(mock.update).toHaveBeenCalledWith(RenderBatchEntity, 'batch-1', {
+      status: 'cancelled',
+      totalJobs: 0,
+      completedJobs: 0,
+      failedJobs: 0,
+      progressPercent: 100,
+    });
+  });
+
   it('does nothing without a batch', async () => {
     const { manager, mock } = createManager(() => []);
 

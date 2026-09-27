@@ -9,6 +9,7 @@ import { RenderProfileEntity } from '../../database/entities/render-profile.enti
 import { QueueModule } from '../../infra/queue/queue.module';
 import { AccountModule } from '../account/account.module';
 import { StorageModule } from '../assets/storage/storage.module';
+import { AuditModule } from '../audit/audit.module';
 import { FoldersModule } from '../folders/folders.module';
 import { GoogleDriveImportWorkerService } from './google-drive-import-worker.service';
 import { GoogleDriveController } from './google-drive.controller';
@@ -17,6 +18,7 @@ import { GoogleDriveService } from './google-drive.service';
 @Module({
   imports: [
     AccountModule,
+    AuditModule,
     FoldersModule,
     QueueModule,
     StorageModule,

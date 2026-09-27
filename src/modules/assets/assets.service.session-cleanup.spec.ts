@@ -43,6 +43,7 @@ describe('AssetsService expired upload session cleanup', () => {
       {} as ConfigService,
       storage as unknown as StorageAdapter,
       {} as OutboxService,
+      {} as never,
     );
     return { service, sessionRepository, assetRepository, storage };
   }

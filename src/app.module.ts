@@ -9,7 +9,7 @@ import { Auth0Guard } from './common/auth/auth0.guard';
 import { PermissionsGuard } from './common/auth/permissions.guard';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
-import { envValidationSchema } from './config/env.validation';
+import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from './config/env.validation';
 import { AssetImportEntity } from './database/entities/asset-import.entity';
 import { AssetUploadSessionEntity } from './database/entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './database/entities/asset-variant.entity';
@@ -74,6 +74,7 @@ import { TagsModule } from './modules/tags/tags.module';
         url: config.getOrThrow<string>('DATABASE_URL'),
         schema: config.getOrThrow<string>('DATABASE_SCHEMA'),
         poolSize: config.getOrThrow<number>('DATABASE_POOL_MAX'),
+        connectTimeoutMS: DATABASE_CONNECT_TIMEOUT_MS,
         entities: [
           FolderEntity,
           FolderClosureEntity,

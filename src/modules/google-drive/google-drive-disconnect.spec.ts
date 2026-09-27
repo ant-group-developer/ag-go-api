@@ -4,6 +4,7 @@ import type { DataSource, Repository } from 'typeorm';
 import type { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import type { GoogleDriveConnectionEntity } from '../../database/entities/google-drive-connection.entity';
 import type { ImportQueueService } from '../../infra/queue/import-queue.service';
+import type { AuditService } from '../audit/audit.service';
 import type { FolderAccessService } from '../folders/folder-access.service';
 import { GoogleDriveService } from './google-drive.service';
 
@@ -33,6 +34,7 @@ function createService(connections: Partial<GoogleDriveConnectionEntity>[]) {
     {} as FolderAccessService,
     {} as ImportQueueService,
     {} as ActorEnrichmentService,
+    {} as AuditService,
   );
   const encrypt = (value: string) =>
     (service as unknown as { encrypt(value: string): string }).encrypt(value);

@@ -1,7 +1,7 @@
 import { config as loadEnv } from 'dotenv';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
-import { envValidationSchema } from '../config/env.validation';
+import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from '../config/env.validation';
 import { AssetImportEntity } from './entities/asset-import.entity';
 import { AssetUploadSessionEntity } from './entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './entities/asset-variant.entity';
@@ -54,6 +54,8 @@ import { OutboxDeadStatusMigration1920000000000 } from './migrations/19200000000
 import { ImportBatchPausedStatusMigration1930000000000 } from './migrations/1930000000000-import-batch-paused-status';
 import { RenderJobClaimTokenMigration1940000000000 } from './migrations/1940000000000-render-job-claim-token';
 import { RenderJobBatchIndexMigration1950000000000 } from './migrations/1950000000000-render-job-batch-index';
+import { StopOrphanRenderJobsMigration1960000000000 } from './migrations/1960000000000-stop-orphan-render-jobs';
+import { StatisticsIndexesMigration1970000000000 } from './migrations/1970000000000-statistics-indexes';
 
 loadEnv();
 
@@ -71,6 +73,7 @@ export const AppDataSource = new DataSource({
   url: validatedEnv.DATABASE_URL,
   schema: validatedEnv.DATABASE_SCHEMA,
   poolSize: validatedEnv.DATABASE_POOL_MAX,
+  connectTimeoutMS: DATABASE_CONNECT_TIMEOUT_MS,
   entities: [
     AssetEntity,
     AssetUploadSessionEntity,
@@ -126,6 +129,8 @@ export const AppDataSource = new DataSource({
     ImportBatchPausedStatusMigration1930000000000,
     RenderJobClaimTokenMigration1940000000000,
     RenderJobBatchIndexMigration1950000000000,
+    StopOrphanRenderJobsMigration1960000000000,
+    StatisticsIndexesMigration1970000000000,
   ],
   synchronize: false,
 });

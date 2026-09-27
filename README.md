@@ -111,7 +111,20 @@ git clone <repo> && cd ag-go-api
 cp .env.example .env   # điền như .env của host chính, nhưng DATABASE_URL/REDIS_URL trỏ IP private của host chính
 ```
 
-Mỗi lần deploy (sau khi host chính đã deploy cùng commit):
+Mỗi lần deploy, GitHub Actions tự làm: sau khi host chính deploy xong (`deploy.prod.yml` / `deploy.dev.yml`), job `deploy-workers` (`deploy-worker-hosts.yml`) SSH song song vào từng host phụ, checkout **đúng commit host chính vừa chạy** và chạy `deploy-worker-host.sh`. Một host lỗi không chặn các host khác.
+
+Cấu hình (GitHub → Settings → Secrets and variables → Actions):
+- Variable `WORKER_HOSTS` (prod) / `WORKER_HOSTS_DEV` (dev): mảng JSON, bỏ trống hoặc `[]` thì không deploy host phụ:
+  ```json
+  [
+    { "name": "worker-1", "host": "203.0.113.10", "user": "deploy", "port": 22, "path": "/opt/ag-go-api", "ssh_key_secret": "WORKER_1_SSH_KEY" },
+    { "name": "worker-2", "host": "203.0.113.11", "user": "deploy", "ssh_key_secret": "WORKER_2_SSH_KEY" }
+  ]
+  ```
+  `name`, `port` (mặc định 22), `path` (mặc định `/opt/ag-go-api`), `ssh_key_secret` không bắt buộc. Thêm/bớt host chỉ cần sửa biến này (và thêm secret key của host mới).
+- Secret SSH key cho từng host (repository secret, tab Secrets): tên tùy ý, ghi đúng tên đó vào `ssh_key_secret` của host (vd. `WORKER_1_SSH_KEY`), giá trị là private key đầy đủ. Không đưa key vào JSON: variable không mã hóa. Host không có `ssh_key_secret` dùng secret `WORKER_SSH_KEY` (prod) / `WORKER_SSH_KEY_DEV` (dev). Phải là **repository secret**, không phải environment secret (job deploy host phụ không chạy trong environment). Public key tương ứng nằm trong `authorized_keys` của `user`, và `user` chạy được `sudo` không cần mật khẩu. Thiếu secret thì job của host đó báo rõ tên secret thiếu.
+
+Deploy tay (vd. host mới, sau khi host chính đã deploy cùng commit):
 
 ```bash
 git pull --ff-only origin main && sudo bash ./deploy-worker-host.sh
