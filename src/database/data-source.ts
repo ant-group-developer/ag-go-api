@@ -55,6 +55,7 @@ import { ImportBatchPausedStatusMigration1930000000000 } from './migrations/1930
 import { RenderJobClaimTokenMigration1940000000000 } from './migrations/1940000000000-render-job-claim-token';
 import { RenderJobBatchIndexMigration1950000000000 } from './migrations/1950000000000-render-job-batch-index';
 import { StopOrphanRenderJobsMigration1960000000000 } from './migrations/1960000000000-stop-orphan-render-jobs';
+import { StatisticsIndexesMigration1970000000000 } from './migrations/1970000000000-statistics-indexes';
 
 loadEnv();
 
@@ -129,6 +130,7 @@ export const AppDataSource = new DataSource({
     RenderJobClaimTokenMigration1940000000000,
     RenderJobBatchIndexMigration1950000000000,
     StopOrphanRenderJobsMigration1960000000000,
+    StatisticsIndexesMigration1970000000000,
   ],
   synchronize: false,
 });
