@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { AssetsService } from './modules/assets/assets.service';
 import { createOpenApiDocument } from './openapi';
 
 async function bootstrap(): Promise<void> {
@@ -28,6 +29,9 @@ async function bootstrap(): Promise<void> {
   SwaggerModule.setup(`${prefix}/docs`, app, document, {
     jsonDocumentUrl: `${prefix}/openapi.json`,
   });
+
+  // Only the API expires upload sessions; the worker processes build AssetsService too.
+  app.get(AssetsService).startExpiredSessionCleanup();
 
   const port = config.getOrThrow<number>('PORT');
   await app.listen(port);
