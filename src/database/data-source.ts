@@ -53,6 +53,7 @@ import { BackfillImportedProjectStatusMigration1910000000000 } from './migration
 import { OutboxDeadStatusMigration1920000000000 } from './migrations/1920000000000-outbox-dead-status';
 import { ImportBatchPausedStatusMigration1930000000000 } from './migrations/1930000000000-import-batch-paused-status';
 import { RenderJobClaimTokenMigration1940000000000 } from './migrations/1940000000000-render-job-claim-token';
+import { RenderJobBatchIndexMigration1950000000000 } from './migrations/1950000000000-render-job-batch-index';
 
 loadEnv();
 
@@ -123,6 +124,7 @@ export const AppDataSource = new DataSource({
     OutboxDeadStatusMigration1920000000000,
     ImportBatchPausedStatusMigration1930000000000,
     RenderJobClaimTokenMigration1940000000000,
+    RenderJobBatchIndexMigration1950000000000,
   ],
   synchronize: false,
 });
