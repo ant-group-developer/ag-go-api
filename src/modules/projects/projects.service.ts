@@ -3,6 +3,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
+import { isAdminUserType } from '../../common/auth/user-type';
 import { ListResponseDto } from '../../common/dto/list-response.dto';
 import { OutboxService } from '../../common/outbox.service';
 import { CategoryEntity } from '../../database/entities/category.entity';
@@ -56,6 +57,14 @@ export class ProjectsService {
     const projectQuery = this.projectRepository
       .createQueryBuilder('project')
       .where('project.folderId IN (:...accessibleFolderIds)', { accessibleFolderIds: folderIds });
+
+    // Only admins can list everyone's drafts; other users only see their own drafts.
+    if (!isAdminUserType(userType)) {
+      projectQuery.andWhere(
+        "(project.evaluationStatus <> 'draft' OR project.ownerUserId = :currentUserId)",
+        { currentUserId: userId },
+      );
+    }
 
     if (query.normalizedKeyword) {
       projectQuery.andWhere(
