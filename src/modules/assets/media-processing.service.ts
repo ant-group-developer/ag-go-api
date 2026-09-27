@@ -62,6 +62,12 @@ const CANCEL_CHECK_MS = 5_000;
 /** A `processing` job with no heartbeat for this long has lost its worker. */
 const STALE_JOB_MS = 3 * 60_000;
 
+/**
+ * STALE_JOB_MS as a Postgres interval. Staleness is compared with NOW() on the database, the
+ * clock the heartbeat writes with, so workers on hosts whose clocks drift agree on it.
+ */
+const STALE_JOB_INTERVAL = `${STALE_JOB_MS} milliseconds`;
+
 /** Every temp file a render writes starts with this, so leftovers can be found by name. */
 const TEMP_FILE_PREFIX = 'ag-go-';
 
@@ -92,8 +98,11 @@ class RenderJobCancelledError extends Error {
   }
 }
 
-/** The job a render call chain belongs to; lets deep helpers stop when it is cancelled. */
-type ActiveRender = { jobId: string; controller: AbortController };
+/**
+ * The job a render call chain belongs to, and the token this worker run claimed it with; lets
+ * deep helpers stop when the job is cancelled or re-claimed by another worker.
+ */
+type ActiveRender = { jobId: string; claimToken: string; controller: AbortController };
 
 type RunProcessOptions = {
   /** Total run time limit; defaults to MEDIA_RENDER_TIMEOUT_SECONDS. */
@@ -130,11 +139,14 @@ export class MediaProcessingService {
       throw new Error(`Render job ${jobId} was not found`);
     }
 
+    // Only one worker's UPDATE can move the job out of queued/failed; the token marks which.
+    const claimToken = uuidv7();
     const claimed = await this.jobRepository
       .createQueryBuilder()
       .update(MediaRenderJobEntity)
       .set({
         status: 'processing',
+        claimToken,
         progressPercent: 5,
         progressMessage: 'Reading original object',
         startedAt: new Date(),
@@ -150,15 +162,18 @@ export class MediaProcessingService {
     if (!claimed.affected) {
       return;
     }
+    const render: ActiveRender = { jobId: job.id, claimToken, controller: new AbortController() };
     // Keeps updated_at fresh while this worker is alive, so recoverStaleJobs can tell a
     // long FFmpeg run from a job whose worker died.
-    const heartbeat = setInterval(() => void this.touchJob(job.id), JOB_HEARTBEAT_MS);
-    // A newer render of the same file cancels this job (see cancelSupersededRenderJobs); stop
-    // FFmpeg instead of rendering previews that would be thrown away or overwrite newer ones.
-    const render: ActiveRender = { jobId: job.id, controller: new AbortController() };
-    const cancelWatch = setInterval(() => void this.isJobActive(render), CANCEL_CHECK_MS);
+    const heartbeat = setInterval(() => void this.touchJob(render), JOB_HEARTBEAT_MS);
+    // A newer render of the same file cancels this job (see cancelSupersededRenderJobs), and a
+    // job re-queued as stale may be claimed by another worker; stop FFmpeg in both cases
+    // instead of rendering previews that would be thrown away or overwrite the new owner's.
+    const cancelWatch = setInterval(() => void this.watchJob(render), CANCEL_CHECK_MS);
     try {
-      await this.activeRender.run(render, () => this.runClaimedJob(job, assetId, queueJobId));
+      await this.activeRender.run(render, () =>
+        this.runClaimedJob(job, assetId, render, queueJobId),
+      );
     } finally {
       clearInterval(heartbeat);
       clearInterval(cancelWatch);
@@ -169,25 +184,27 @@ export class MediaProcessingService {
    * Handles `processing` jobs whose worker stopped heartbeating (killed for memory, restarted
    * by a deploy). Their BullMQ job is gone or cannot re-claim them, so without this they stay
    * `processing` forever. Jobs that already used every attempt fail; the rest go back to
-   * `queued` and are returned for the caller to re-enqueue.
+   * `queued` and are returned for the caller to re-enqueue. Clearing the claim token makes a
+   * worker that was only slow, not dead, stop at its next check instead of rendering on.
    */
   async recoverStaleJobs(): Promise<Array<{ id: string; assetId: string }>> {
-    const staleBefore = new Date(Date.now() - STALE_JOB_MS);
+    const stale = 'status = :status AND updated_at < NOW() - CAST(:staleAfter AS interval)';
     const maxAttempts = this.config.getOrThrow<number>('MEDIA_JOB_ATTEMPTS');
     const exhausted = await this.jobRepository
       .createQueryBuilder()
       .update(MediaRenderJobEntity)
       .set({
         status: 'failed',
+        claimToken: null,
         progressMessage: 'Media processing failed',
         errorCode: 'WORKER_LOST',
         errorMessage:
           'The worker stopped while processing this file (it may have run out of memory)',
         finishedAt: new Date(),
       })
-      .where('status = :status AND updated_at < :staleBefore AND attempt_count >= :maxAttempts', {
+      .where(`${stale} AND attempt_count >= :maxAttempts`, {
         status: 'processing',
-        staleBefore,
+        staleAfter: STALE_JOB_INTERVAL,
         maxAttempts,
       })
       .returning(['id', 'assetId', 'renderBatchId'])
@@ -208,13 +225,11 @@ export class MediaProcessingService {
       .update(MediaRenderJobEntity)
       .set({
         status: 'queued',
+        claimToken: null,
         progressPercent: 0,
         progressMessage: 'Queued again after the worker stopped',
       })
-      .where('status = :status AND updated_at < :staleBefore', {
-        status: 'processing',
-        staleBefore,
-      })
+      .where(stale, { status: 'processing', staleAfter: STALE_JOB_INTERVAL })
       .returning(['id', 'assetId'])
       .execute();
     const requeuedRows = requeued.raw as Array<{ id: string; asset_id: string }>;
@@ -267,17 +282,25 @@ export class MediaProcessingService {
     );
   }
 
-  private async touchJob(jobId: string): Promise<void> {
+  /**
+   * Where-criteria matching the job only while this worker run still holds it: not cancelled,
+   * and not re-queued as stale and claimed by another worker meanwhile.
+   */
+  private ownedJob(render: ActiveRender) {
+    return { id: render.jobId, status: 'processing' as const, claimToken: render.claimToken };
+  }
+
+  private async touchJob(render: ActiveRender): Promise<void> {
     try {
       await this.jobRepository
         .createQueryBuilder()
         .update(MediaRenderJobEntity)
         .set({ updatedAt: () => 'NOW()' })
-        .where('id = :id AND status = :status', { id: jobId, status: 'processing' })
+        .where('id = :id AND status = :status AND claim_token = :claimToken', this.ownedJob(render))
         .execute();
     } catch (error) {
       this.logger.warn(
-        `Render job ${jobId} heartbeat failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Render job ${render.jobId} heartbeat failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -285,10 +308,11 @@ export class MediaProcessingService {
   private async runClaimedJob(
     job: MediaRenderJobEntity,
     assetId: string,
+    render: ActiveRender,
     queueJobId?: string,
   ): Promise<void> {
     if (queueJobId) {
-      await this.jobRepository.update(job.id, { queueJobId });
+      await this.jobRepository.update(this.ownedJob(render), { queueJobId });
     }
 
     try {
@@ -306,6 +330,9 @@ export class MediaProcessingService {
 
       const tempPath = join(tmpdir(), `${TEMP_FILE_PREFIX}${asset.id}-${Date.now()}`);
       try {
+        // The lookups above can be slow; a render that lost the job meanwhile must not flip an
+        // asset another render already made `ready` back to `processing`.
+        await this.assertRenderActive();
         await this.assetRepository.update(asset.id, {
           processingStatus: 'processing',
           processingError: null,
@@ -314,43 +341,46 @@ export class MediaProcessingService {
           this.storage.readObject(asset.originalStorageKey),
           createWriteStream(tempPath),
         );
-        await this.jobRepository.update(job.id, {
+        await this.jobRepository.update(this.ownedJob(render), {
           progressPercent: 30,
           progressMessage: 'Extracting media metadata',
         });
 
         const report: ProgressReporter = async (progressPercent, progressMessage) => {
-          // Never overwrite the message of a job cancelled meanwhile.
-          await this.jobRepository.update(
-            { id: job.id, status: 'processing' },
-            { progressPercent, progressMessage },
-          );
+          // Never overwrite the message of a job cancelled or re-claimed meanwhile.
+          await this.jobRepository.update(this.ownedJob(render), {
+            progressPercent,
+            progressMessage,
+          });
         };
         const metadata =
           asset.assetType === 'image'
             ? await this.processImage(asset, tempPath, profile, report)
             : await this.processVideo(asset, tempPath, profile, report);
 
-        await this.assertRenderActive();
-        await this.assetRepository.update(asset.id, {
-          processingStatus: 'ready',
-          processingError: null,
-          sourceMetadata: {
-            ...(asset.sourceMetadata ?? {}),
-            ...metadata,
-          },
-        });
-        await this.jobRepository.update(
-          { id: job.id, status: 'processing' },
-          {
+        await this.jobRepository.manager.transaction(async (manager) => {
+          // Job first: its row lock holds off a cancel or stale sweep until the asset is ready
+          // too, and a job no longer held leaves the asset to the render that holds it.
+          const completed = await manager.update(MediaRenderJobEntity, this.ownedJob(render), {
             status: 'completed',
             progressPercent: 100,
             progressMessage: 'Media variants are ready',
             finishedAt: new Date(),
             errorCode: null,
             errorMessage: null,
-          },
-        );
+          });
+          if (!completed.affected) {
+            throw new RenderJobCancelledError();
+          }
+          await manager.update(AssetEntity, asset.id, {
+            processingStatus: 'ready',
+            processingError: null,
+            sourceMetadata: {
+              ...(asset.sourceMetadata ?? {}),
+              ...metadata,
+            },
+          });
+        });
         await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
       } finally {
         await this.removeTempFile(tempPath);
@@ -360,61 +390,80 @@ export class MediaProcessingService {
         error instanceof RenderJobCancelledError ||
         this.activeRender.getStore()?.controller.signal.aborted
       ) {
-        // The job stays `cancelled`, and the asset belongs to the render that replaced it.
-        // Returning (not throwing) keeps BullMQ from retrying it.
-        this.logger.log(`Render job ${job.id} was cancelled, stopped rendering asset ${assetId}`);
+        // The job stays `cancelled` (or with the worker that re-claimed it), and the asset
+        // belongs to that render. Returning (not throwing) keeps BullMQ from retrying it.
+        this.logger.log(
+          `Render job ${job.id} was cancelled or claimed by another worker, stopped rendering asset ${assetId}`,
+        );
         await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
         return;
       }
       const message = error instanceof Error ? error.message : 'Media processing failed';
       this.logger.error(`Asset ${assetId} processing failed: ${message}`);
-      await this.assetRepository.update(assetId, {
-        processingStatus: 'failed',
-        processingError: message.slice(0, 4000),
-      });
-      await this.jobRepository.update(
-        { id: job.id, status: 'processing' },
-        {
+      // Job first, as on completion: only the run still holding the job marks the asset.
+      const held = await this.jobRepository.manager.transaction(async (manager) => {
+        const failed = await manager.update(MediaRenderJobEntity, this.ownedJob(render), {
           status: 'failed',
           progressMessage: 'Media processing failed',
           errorCode: 'PROCESSING_FAILED',
           errorMessage: message.slice(0, 4000),
           finishedAt: new Date(),
-        },
-      );
+        });
+        if (failed.affected) {
+          await manager.update(AssetEntity, assetId, {
+            processingStatus: 'failed',
+            processingError: message.slice(0, 4000),
+          });
+        }
+        return Boolean(failed.affected);
+      });
       await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
+      if (!held) {
+        // Lost the job while failing: another render owns the asset now; nothing to retry.
+        this.logger.warn(`Render job ${job.id} is no longer held by this worker, not retried`);
+        return;
+      }
       throw error;
     }
   }
 
   /**
-   * Whether the job being rendered is still `processing`; aborts the render once it is not
-   * (cancelled because a newer render of the file was requested).
+   * Whether this worker run still holds the job it renders; aborts the render once it does
+   * not (cancelled because a newer render of the file was requested, re-queued as stale and
+   * possibly claimed by another worker, or deleted with its asset). Throws when the job
+   * cannot be read.
    */
   private async isJobActive(render: ActiveRender): Promise<boolean> {
     if (render.controller.signal.aborted) {
       return false;
     }
+    const job = await this.jobRepository.findOne({
+      select: { id: true, status: true, claimToken: true },
+      where: { id: render.jobId },
+    });
+    if (!job || job.status !== 'processing' || job.claimToken !== render.claimToken) {
+      render.controller.abort();
+      return false;
+    }
+    return true;
+  }
+
+  /** The periodic cancel check: rides out a database blip, the next check runs in 5 s. */
+  private async watchJob(render: ActiveRender): Promise<void> {
     try {
-      const job = await this.jobRepository.findOne({
-        select: { id: true, status: true },
-        where: { id: render.jobId },
-      });
-      if (job && job.status !== 'processing') {
-        render.controller.abort();
-        return false;
-      }
+      await this.isJobActive(render);
     } catch (error) {
       this.logger.warn(
         `Render job ${render.jobId} cancel check failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    return true;
   }
 
   /**
-   * Called before every write of a render's output, so a cancelled job never overwrites the
-   * previews of the render that replaced it. No-op outside a job (tests call helpers directly).
+   * Called before every write of a render's output, so a job this run no longer holds never
+   * overwrites the output of the render that holds it now. Fails closed: when the job cannot
+   * be read, the render fails (and is retried) rather than writing unchecked. No-op outside a
+   * job (tests call helpers directly).
    */
   private async assertRenderActive(): Promise<void> {
     const render = this.activeRender.getStore();
@@ -840,6 +889,8 @@ export class MediaProcessingService {
     hasWatermark = true,
     profile?: RenderProfileEntity | null,
   ): Promise<void> {
+    // An upload is not stopped by an abort; re-check after it before pointing the row at it.
+    await this.assertRenderActive();
     const existing = await this.variantRepository.findOne({
       where: { assetId: asset.id, variantCode },
     });

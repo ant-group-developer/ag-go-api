@@ -459,6 +459,9 @@ export class GoogleDriveService implements OnModuleDestroy {
     if (!clientId || !clientSecret) {
       throw new ServiceUnavailableException('Google Drive OAuth is not configured');
     }
+    // A missing or malformed key is this host's configuration, not the user's grant: fail
+    // before the try, so the connection is not marked as needing a reconnect.
+    this.getEncryptionKey();
     // Only a grant Google revoked or a token we can no longer decrypt needs the user to
     // reconnect; timeouts and Google 5xx are transient and must not disable the connection.
     let needsReconnect = true;

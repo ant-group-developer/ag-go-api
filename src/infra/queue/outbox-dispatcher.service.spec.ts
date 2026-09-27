@@ -30,7 +30,17 @@ function purgeEvent(attemptCount: number): OutboxEventEntity {
   };
 }
 
-function setup(rows: OutboxEventEntity[], deletePrefix: jest.Mock) {
+function renderEvent(): OutboxEventEntity {
+  return {
+    ...purgeEvent(0),
+    id: '0194f7c2-7a11-7d2a-9b10-000000000003',
+    eventType: 'asset.processing.requested',
+    aggregateType: 'asset',
+    payload: { assetId: 'asset-1', renderJobId: 'job-1' },
+  };
+}
+
+function setup(rows: OutboxEventEntity[], deletePrefix: jest.Mock, addProcessingJob = jest.fn()) {
   const orderBy = jest.fn();
   const queryBuilder = {
     where: jest.fn().mockReturnThis(),
@@ -53,11 +63,20 @@ function setup(rows: OutboxEventEntity[], deletePrefix: jest.Mock) {
   } as unknown as DataSource;
   const service = new OutboxDispatcherService(
     dataSource,
-    {} as MediaQueueService,
+    { addProcessingJob } as unknown as MediaQueueService,
     {} as ConfigService,
     { deletePrefix } as unknown as StorageAdapter,
   );
-  return { service, update, orderBy };
+  return { service, update, orderBy, manager, dataSource, queryBuilder };
+}
+
+/** The retry delay SQL an update wrote, e.g. "NOW() + interval '40000 milliseconds'". */
+function availableAtSql(update: jest.Mock): string {
+  const [, values] = update.mock.calls.find(([, v]) => (v as { status?: string }).status === 'failed') as [
+    string,
+    { availableAt: () => string },
+  ];
+  return values.availableAt();
 }
 
 describe('OutboxDispatcherService', () => {
@@ -81,32 +100,103 @@ describe('OutboxDispatcherService', () => {
     );
   });
 
-  it('backs off exponentially when R2 denies access', async () => {
-    jest.useFakeTimers({ now: new Date('2026-09-25T00:00:00Z') });
+  it('leases each claimed event on the database clock so no other poll publishes it again', async () => {
+    const { service, manager } = setup([purgeEvent(0)], jest.fn().mockResolvedValue(0));
+
+    await service.dispatchPending();
+
+    // Claimed events stay pending while they are published, so the lease is what hides them
+    // from the next poll of this or another worker host.
+    const [, id, values] = manager.update.mock.calls[0] as [
+      unknown,
+      string,
+      { availableAt: () => string },
+    ];
+    expect(id).toBe(purgeEvent(0).id);
+    expect(values).toMatchObject({ attemptCount: 1, lastError: null });
+    expect(values.availableAt()).toBe("NOW() + interval '5 minutes'");
+  });
+
+  it('backs off exponentially on the database clock when R2 denies access', async () => {
     const deletePrefix = jest.fn().mockRejectedValue(new Error('AccessDenied'));
     const { service, update } = setup([purgeEvent(3)], deletePrefix);
 
     await service.dispatchPending();
 
-    // Fourth attempt: 5 s * 2^3.
     expect(update).toHaveBeenCalledWith(expect.any(String), {
       status: 'failed',
-      availableAt: new Date(Date.now() + 40_000),
+      availableAt: expect.any(Function),
       lastError: 'AccessDenied',
     });
+    // Fourth attempt: 5 s * 2^3.
+    expect(availableAtSql(update)).toBe("NOW() + interval '40000 milliseconds'");
   });
 
   it('caps the retry delay at an hour', async () => {
-    jest.useFakeTimers({ now: new Date('2026-09-25T00:00:00Z') });
     const deletePrefix = jest.fn().mockRejectedValue(new Error('AccessDenied'));
     const { service, update } = setup([purgeEvent(20)], deletePrefix);
 
     await service.dispatchPending();
 
-    expect(update).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ availableAt: new Date(Date.now() + 60 * 60 * 1000) }),
+    expect(availableAtSql(update)).toBe("NOW() + interval '3600000 milliseconds'");
+  });
+
+  it('publishes a render request without waiting for a slow purge claimed with it', async () => {
+    const addProcessingJob = jest.fn().mockResolvedValue(undefined);
+    // A purge of a large project that is still running.
+    const deletePrefix = jest.fn(() => new Promise(() => undefined));
+    const { service, update } = setup([purgeEvent(0), renderEvent()], deletePrefix, addProcessingJob);
+
+    void service.dispatchPending();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(addProcessingJob).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: renderEvent().id, assetId: 'asset-1' }),
     );
+    expect(update).toHaveBeenCalledWith(
+      renderEvent().id,
+      expect.objectContaining({ status: 'published' }),
+    );
+  });
+
+  it('keeps claiming new render requests while a long purge is still publishing', async () => {
+    const addProcessingJob = jest.fn().mockResolvedValue(undefined);
+    // A purge of a large project that is still running.
+    const deletePrefix = jest.fn(() => new Promise(() => undefined));
+    const { service, dataSource, queryBuilder } = setup([], deletePrefix, addProcessingJob);
+    queryBuilder.getMany
+      .mockResolvedValueOnce([purgeEvent(0)])
+      .mockResolvedValueOnce([renderEvent()]);
+    const tick = () => (service as unknown as { tick: () => Promise<void> }).tick();
+
+    // The first tick returns once it claimed the purge, without waiting for it.
+    await tick();
+    await tick();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(dataSource.transaction).toHaveBeenCalledTimes(2);
+    expect(addProcessingJob).toHaveBeenCalledWith(
+      expect.objectContaining({ eventId: renderEvent().id }),
+    );
+  });
+
+  it('runs one claim at a time and survives a failed poll', async () => {
+    const { service, dataSource } = setup([], jest.fn());
+    const tick = () => (service as unknown as { tick: () => Promise<void> }).tick();
+    let failPoll!: (error: Error) => void;
+    (dataSource.transaction as jest.Mock).mockImplementationOnce(
+      () => new Promise((_, reject) => (failPoll = reject)),
+    );
+
+    const first = tick();
+    await tick();
+    // The second tick found the first poll still running and skipped.
+    expect(dataSource.transaction).toHaveBeenCalledTimes(1);
+
+    failPoll(new Error('Connection terminated unexpectedly'));
+    await expect(first).resolves.toBeUndefined();
+    await tick();
+    expect(dataSource.transaction).toHaveBeenCalledTimes(2);
   });
 
   it('parks the event as dead after the last attempt', async () => {
