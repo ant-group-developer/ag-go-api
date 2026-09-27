@@ -4,6 +4,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../../modules/assets/storage/storage-adapter';
+import { ASSET_STORAGE_PURGE_EVENT } from '../../modules/projects/project-asset-cleanup';
 import { MediaQueueService } from './media-queue.service';
 
 /** Retries wait 5 s, 10 s, 20 s, ... up to an hour; 30 attempts span about a day. */
@@ -139,6 +140,8 @@ export class OutboxDispatcherService implements OnModuleDestroy {
         });
       } else if (event.eventType === 'project.storage.purge') {
         await this.purgeProjectStorage(event);
+      } else if (event.eventType === ASSET_STORAGE_PURGE_EVENT) {
+        await this.purgeAssetStorage(event);
       }
       await this.dataSource.getRepository(OutboxEventEntity).update(event.id, {
         status: 'published',
@@ -181,6 +184,26 @@ export class OutboxDispatcherService implements OnModuleDestroy {
     // Lets the claim and the publishes in flight finish, instead of leaving events leased.
     await this.claiming;
     await Promise.allSettled([...this.inFlight]);
+  }
+
+  /**
+   * Removes the R2 objects of deleted assets stored outside a purged project prefix. Each prefix
+   * is one asset's original or variants folder; broader ones are refused so a bad payload cannot
+   * empty a whole project. Deleting is idempotent, so a retry after a partial run is safe.
+   */
+  private async purgeAssetStorage(event: OutboxEventEntity): Promise<void> {
+    const prefixes = Array.isArray(event.payload.prefixes)
+      ? event.payload.prefixes.filter((value): value is string => typeof value === 'string')
+      : [];
+    const invalid = prefixes.find((prefix) => !/^(projects|assets)\/[^/]+\/[^/]+\/./.test(prefix));
+    if (invalid !== undefined) {
+      throw new Error(`Outbox event has an invalid asset storage prefix: ${invalid}`);
+    }
+    let deleted = 0;
+    for (const prefix of prefixes) {
+      deleted += await this.storage.deletePrefix(prefix);
+    }
+    this.logger.log(`Deleted ${deleted} R2 object(s) of deleted assets`);
   }
 
   /** Removes a deleted project's R2 objects, keeping the ones other projects still use. */

@@ -136,7 +136,10 @@ export class MediaProcessingService {
   async processJobById(jobId: string, assetId: string, queueJobId?: string): Promise<void> {
     const job = await this.jobRepository.findOne({ where: { id: jobId, assetId } });
     if (!job) {
-      throw new Error(`Render job ${jobId} was not found`);
+      // Deleted with its asset (e.g. its project was deleted): nothing to render, and a throw
+      // would only make BullMQ retry it.
+      this.logger.warn(`Render job ${jobId} no longer exists, skipped`);
+      return;
     }
 
     // Only one worker's UPDATE can move the job out of queued/failed; the token marks which.
