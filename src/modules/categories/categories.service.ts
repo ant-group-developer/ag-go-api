@@ -17,10 +17,13 @@ export class CategoriesService {
   ) {}
 
   list() {
-    return this.categoryRepository.find({
-      where: { isActive: true },
-      order: { sortOrder: 'ASC', name: 'ASC' },
-    });
+    return this.categoryRepository
+      .createQueryBuilder('category')
+      .addSelect('category.name COLLATE natural_sort', 'name_sort')
+      .where('category.isActive = true')
+      .orderBy('category.sortOrder', 'ASC')
+      .addOrderBy('name_sort', 'ASC')
+      .getMany();
   }
 
   async create(dto: CreateCategoryDto) {

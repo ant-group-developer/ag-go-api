@@ -14,7 +14,11 @@ export class TagsService {
   ) {}
 
   list() {
-    return this.tagRepository.find({ order: { normalizedName: 'ASC' } });
+    return this.tagRepository
+      .createQueryBuilder('tag')
+      .addSelect('tag.normalizedName COLLATE natural_sort', 'name_sort')
+      .orderBy('name_sort', 'ASC')
+      .getMany();
   }
 
   async create(dto: CreateTagDto, userId: string) {
