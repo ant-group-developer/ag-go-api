@@ -1,8 +1,12 @@
 import {
+  clipToFrame,
   fitWithin,
   getOverlayPosition,
+  getRotatedSize,
   getSingleWatermarkTileScale,
   getVideoRenderSize,
+  getWatermarkMargin,
+  getWatermarkTileGeometry,
   getWatermarkUnitScale,
   toEvenDimension,
 } from './watermark-layout';
@@ -42,11 +46,54 @@ describe('watermark layout', () => {
     expect(getOverlayPosition(1000, 500, 100, 50, 'center', 10)).toEqual({ top: 225, left: 450 });
   });
 
-  it('never places an overlay outside the frame', () => {
-    expect(getOverlayPosition(100, 100, 100, 100, 'bottom-right', 24)).toEqual({
+  it('lets an oversized overlay hang off the edges opposite its anchor', () => {
+    expect(getOverlayPosition(100, 100, 200, 150, 'bottom-right', 10)).toEqual({
+      top: -60,
+      left: -110,
+    });
+    expect(getOverlayPosition(100, 100, 200, 150, 'top-left', 10)).toEqual({ top: 10, left: 10 });
+    expect(getOverlayPosition(100, 100, 200, 150, 'center', 10)).toEqual({ top: -25, left: -50 });
+  });
+
+  it('clips an overlay to the visible part of the frame', () => {
+    expect(clipToFrame(100, 100, 50, 50, 10, 20)).toEqual({
+      top: 10,
+      left: 20,
+      extract: { left: 0, top: 0, width: 50, height: 50 },
+    });
+    expect(clipToFrame(100, 100, 200, 150, -25, -50)).toEqual({
       top: 0,
       left: 0,
+      extract: { left: 50, top: 25, width: 100, height: 100 },
     });
+    expect(clipToFrame(100, 100, 50, 50, 120, 0)).toBeNull();
+  });
+
+  it('scales the margin and keeps corner anchors inside thin frames', () => {
+    expect(getWatermarkMargin(24, 1920, 1080)).toBe(48);
+    expect(getWatermarkMargin(500, 3840, 400)).toBe(199);
+  });
+
+  it('snaps the tile layout to whole pixels', () => {
+    const geometry = getWatermarkTileGeometry(7.3, true, 1.1);
+    for (const value of Object.values(geometry)) {
+      expect(Number.isInteger(value)).toBe(true);
+    }
+  });
+
+  it('computes the bounding box of a rotated tile', () => {
+    expect(getRotatedSize(200, 50, 0)).toEqual({ width: 200, height: 50 });
+    expect(getRotatedSize(200, 50, 90)).toEqual({ width: 50, height: 200 });
+    expect(getRotatedSize(200, 50, -180)).toEqual({ width: 200, height: 50 });
+    expect(getRotatedSize(100, 100, 45)).toEqual({ width: 142, height: 142 });
+  });
+
+  it('sizes the logo independently of the text', () => {
+    const base = getWatermarkTileGeometry(20, true);
+    const big = getWatermarkTileGeometry(20, true, 2);
+    expect(big.logoSize).toBe(base.logoSize * 2);
+    expect(big.textX - big.logoSize).toBeCloseTo(base.textX - base.logoSize);
+    expect(getWatermarkTileGeometry(20, false, 3)).toMatchObject({ logoSize: 0, textX: 0 });
   });
 
   it('keeps video dimensions even', () => {
