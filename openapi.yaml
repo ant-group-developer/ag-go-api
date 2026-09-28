@@ -943,6 +943,44 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a17
       tags: *a18
+  /project-media/bulk-approve:
+    post:
+      operationId: MediaController_bulkApproveMedia
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkApproveProjectMediaDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a17
+      tags: *a18
+  /projects/bulk-approve:
+    post:
+      operationId: MediaController_bulkApproveProjects
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkApproveProjectsDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a17
+      tags: *a18
   /project-media/{id}/evaluations:
     get:
       operationId: MediaController_listEvaluationHistory
@@ -2228,6 +2266,40 @@ components:
           type: string
           maxLength: 2000
           nullable: true
+    BulkApproveProjectMediaDto:
+      type: object
+      properties:
+        mediaIds:
+          maxItems: 1000
+          type: array
+          items:
+            type: string
+            format: uuid
+        comment:
+          type: string
+          maxLength: 2000
+          nullable: true
+      required:
+        - mediaIds
+    BulkApproveProjectsDto:
+      type: object
+      properties:
+        projectIds:
+          maxItems: 100
+          type: array
+          items:
+            type: string
+            format: uuid
+        overrideRejected:
+          type: boolean
+          default: false
+          description: Also approve files currently rejected; otherwise only pending files change.
+        comment:
+          type: string
+          maxLength: 2000
+          nullable: true
+      required:
+        - projectIds
     ReorderProjectMediaDto:
       type: object
       properties:

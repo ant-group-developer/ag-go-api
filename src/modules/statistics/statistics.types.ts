@@ -144,7 +144,11 @@ export type StatisticsActivityItem = {
   actorUser: unknown;
   projectId: string;
   projectName: string;
+  beforeData: unknown;
   afterData: unknown;
+  metadata: unknown;
+  /** Current name of the file the entry is about, when it still exists. */
+  mediaFileName: string | null;
   createdAt: string;
 };
 
