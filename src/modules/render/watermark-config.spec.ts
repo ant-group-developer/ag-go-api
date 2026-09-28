@@ -14,6 +14,8 @@ describe('normalizeWatermarkConfig', () => {
         opacity: 2,
         scale: 0,
         margin: 999,
+        fontWeight: 740,
+        logoScale: 50,
       }),
     ).toEqual({
       text: 'Brand',
@@ -21,6 +23,8 @@ describe('normalizeWatermarkConfig', () => {
       color: '#FFFFFF',
       fontFamily: 'Arial',
       fontSize: 24,
+      fontWeight: 700,
+      logoScale: 6,
       repeat: false,
       gapX: 220,
       gapY: 100,
@@ -30,6 +34,15 @@ describe('normalizeWatermarkConfig', () => {
       opacity: 1,
       scale: 0.05,
       margin: 500,
+    });
+  });
+
+  it('allows watermarks larger than the frame and big fonts', () => {
+    const config = normalizeWatermarkConfig({ scale: 2.5, fontSize: 360, logoScale: 0.5 });
+    expect(config).toMatchObject({ scale: 2.5, fontSize: 360, logoScale: 0.5 });
+    expect(normalizeWatermarkConfig({ scale: 9, fontSize: 9999 })).toMatchObject({
+      scale: 3,
+      fontSize: 400,
     });
   });
 });

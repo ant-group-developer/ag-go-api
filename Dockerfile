@@ -28,11 +28,15 @@ WORKDIR /app
 
 # The slim image ships no fonts, so sharp/librsvg draws watermark text as missing-glyph boxes.
 # Liberation is metric-compatible with Arial/Times New Roman/Courier New (fontconfig aliases them);
-# DejaVu is the fallback for the other families. Both cover Vietnamese.
+# DejaVu is the fallback for unknown families. Roboto, Open Sans and Noto Sans/Serif back the other
+# choices of the watermark font picker (ag-go-web/src/modules/render/utils/watermark-fonts.ts).
+# Extra .ttf/.otf files dropped into ./fonts are installed as well.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends fontconfig fonts-liberation fonts-dejavu-core \
-  && fc-cache -f \
+    fonts-roboto-unhinted fonts-open-sans fonts-noto-core \
   && rm -rf /var/lib/apt/lists/*
+COPY fonts/ /usr/share/fonts/truetype/ag-go/
+RUN fc-cache -f
 
 COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY package.json ./
