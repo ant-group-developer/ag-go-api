@@ -29,7 +29,7 @@ export class AssetUploadSessionEntity {
   @Column({ name: 'storage_key', type: 'varchar', length: 500 })
   storageKey!: string;
 
-  @Column({ name: 'multipart_upload_id', type: 'varchar', length: 255, nullable: true })
+  @Column({ name: 'multipart_upload_id', type: 'text', nullable: true })
   multipartUploadId!: string | null;
 
   @Column({ name: 'expected_size_bytes', type: 'bigint', nullable: true })
