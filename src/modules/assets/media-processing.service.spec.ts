@@ -87,11 +87,46 @@ describe('MediaProcessingService watermark', () => {
     expect(thumbnail!.width / 320).toBeCloseTo(preview!.width / 1920, 2);
   });
 
-  it('shrinks a watermark that would not fit inside the margins', async () => {
+  it('crops a watermark larger than the frame instead of shrinking it', async () => {
     const createWatermark = await createService();
-    const watermark = await createWatermark(1000, 200, { scale: 1, margin: 0 });
-    expect(watermark?.height).toBeLessThanOrEqual(200);
-    expect(watermark?.width).toBeLessThanOrEqual(1000);
+    const watermark = await createWatermark(1000, 200, {
+      scale: 1,
+      margin: 0,
+      position: 'bottom-right',
+    });
+    // The 1000px square logo keeps its size; only the bottom 200px fit in the frame.
+    expect(watermark?.height).toBe(200);
+    expect(watermark?.top).toBe(0);
+    expect(Math.abs(watermark!.width - 1000)).toBeLessThanOrEqual(3);
+    const stats = await sharp(watermark!.buffer).stats();
+    expect(stats.channels[3].max).toBeGreaterThan(0);
+  });
+
+  it('resizes the logo with logoScale on top of the watermark size', async () => {
+    const createWatermark = await createService();
+    const watermark = await createWatermark(1920, 1080, { scale: 0.1, logoScale: 2 });
+    expect(Math.abs(watermark!.width - 384)).toBeLessThanOrEqual(3);
+  });
+
+  it('keeps a small logo on whole pixels so its edges stay sharp', async () => {
+    const createWatermark = await createService();
+    for (const [width, height] of [
+      [320, 180],
+      [427, 240],
+    ]) {
+      const watermark = await createWatermark(width, height, { scale: 0.1, opacity: 1 });
+      const stats = await sharp(watermark!.buffer).stats();
+      // A logo straddling pixel rows would leave half-transparent edge rows.
+      expect(stats.channels[3].min).toBe(255);
+    }
+  });
+
+  it('rotates without growing a blurred fringe', async () => {
+    const createWatermark = await createService();
+    const watermark = await createWatermark(960, 540, { scale: 0.1, opacity: 1, rotate: 90 });
+    const stats = await sharp(watermark!.buffer).stats();
+    expect(watermark!.width).toBe(watermark!.height);
+    expect(stats.channels[3].min).toBe(255);
   });
 
   it('applies the opacity to the logo', async () => {

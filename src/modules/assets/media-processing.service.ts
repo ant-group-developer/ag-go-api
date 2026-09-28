@@ -25,10 +25,12 @@ import {
 } from '../render/render-sizes';
 import { normalizeWatermarkConfig, type WatermarkConfig } from '../render/watermark-config';
 import {
-  fitWithin,
+  clipToFrame,
   getOverlayPosition,
+  getRotatedSize,
   getSingleWatermarkTileScale,
   getVideoRenderSize,
+  getWatermarkMargin,
   getWatermarkTileGeometry,
   getWatermarkUnitScale,
 } from '../render/watermark-layout';
@@ -143,6 +145,8 @@ export class MediaProcessingService {
     }
 
     // Only one worker's UPDATE can move the job out of queued/failed; the token marks which.
+    // Jobs of a paused batch are not claimed: they stay queued and get a new BullMQ job when
+    // the batch is resumed (see RenderService.resumeBatch).
     const claimToken = uuidv7();
     const claimed = await this.jobRepository
       .createQueryBuilder()
@@ -157,10 +161,13 @@ export class MediaProcessingService {
         errorMessage: null,
         attemptCount: () => 'attempt_count + 1',
       })
-      .where('id = :id AND status IN (:...statuses)', {
-        id: job.id,
-        statuses: ['queued', 'failed'],
-      })
+      .where(
+        `id = :id AND status IN (:...statuses) AND NOT EXISTS (
+          SELECT 1 FROM render_batches batch
+          WHERE batch.id = media_render_jobs.render_batch_id AND batch.status = 'paused'
+        )`,
+        { id: job.id, statuses: ['queued', 'failed'] },
+      )
       .execute();
     if (!claimed.affected) {
       return;
@@ -542,7 +549,11 @@ export class MediaProcessingService {
     if (watermark) {
       image.composite([{ input: watermark.buffer, top: watermark.top, left: watermark.left }]);
     }
-    const output = await image.webp({ quality }).toBuffer({ resolveWithObject: true });
+    // Smart chroma subsampling keeps the colour edges of watermark text and logos crisp; plain
+    // 4:2:0 smears them over two pixels, which shows on small previews.
+    const output = await image
+      .webp({ quality, smartSubsample: true })
+      .toBuffer({ resolveWithObject: true });
     const variantCode =
       kind === 'preview' ? previewVariantCode(output.info.width) : THUMBNAIL_VARIANT_CODE;
     const storageKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${variantCode}.webp`;
@@ -985,12 +996,14 @@ export class MediaProcessingService {
     }
 
     const unitScale = getWatermarkUnitScale(baseWidth);
-    const margin = Math.round(config.margin * unitScale);
-    // Measured at 4x so rounding of the rasterised width does not skew the final size.
+    const margin = getWatermarkMargin(config.margin, baseWidth, baseHeight);
+    // Measured at 4x so rounding of the rasterised width does not skew the final size. The
+    // reference uses the default logo size so `logoScale` resizes the logo, not the text.
     const tileScale = config.repeat
       ? unitScale
       : getSingleWatermarkTileScale(
-          (await this.renderWatermarkTile(config, text, logo, 4, false)).width / 4,
+          (await this.renderWatermarkTile({ ...config, logoScale: 1 }, text, logo, 4, false))
+            .width / 4,
           baseWidth,
           config.scale,
         );
@@ -1028,38 +1041,47 @@ export class MediaProcessingService {
       return { buffer, width: baseWidth, height: baseHeight, top: 0, left: 0 };
     }
 
-    const fitted = fitWithin(
-      tile.width,
-      tile.height,
-      baseWidth - margin * 2,
-      baseHeight - margin * 2,
-    );
-    const resized =
-      fitted.width === tile.width && fitted.height === tile.height
-        ? { data: tile.buffer, info: { width: tile.width, height: tile.height } }
-        : await sharp(tile.buffer)
-            .resize({ width: fitted.width, height: fitted.height, fit: 'inside' })
-            .png()
-            .toBuffer({ resolveWithObject: true });
+    // Large (or rotated) watermarks may hang off the frame; only the visible part is kept, since
+    // neither sharp nor ffmpeg accept overlays outside the base.
     const position = getOverlayPosition(
       baseWidth,
       baseHeight,
-      resized.info.width,
-      resized.info.height,
+      tile.width,
+      tile.height,
       config.position,
       margin,
     );
+    const clip = clipToFrame(
+      baseWidth,
+      baseHeight,
+      tile.width,
+      tile.height,
+      position.top,
+      position.left,
+    );
+    if (!clip) {
+      throw new Error('Watermark falls outside the frame, reduce the watermark margin');
+    }
+    const visible =
+      clip.extract.width === tile.width && clip.extract.height === tile.height
+        ? tile.buffer
+        : await sharp(tile.buffer).extract(clip.extract).png().toBuffer();
     return {
-      buffer: resized.data,
-      width: resized.info.width,
-      height: resized.info.height,
-      ...position,
+      buffer: visible,
+      width: clip.extract.width,
+      height: clip.extract.height,
+      top: clip.top,
+      left: clip.left,
     };
   }
 
   /**
    * Renders the logo + text tile at `config.fontSize * scale`, cropped to the drawn width.
    * When `finalize` is set the tile is also rotated and faded to the configured opacity.
+   *
+   * Kept sharp at small sizes: the logo is downscaled up front (Lanczos) to its exact pixel size
+   * and drawn 1:1 on whole pixels, and rotation happens in the SVG so text is rasterised once,
+   * already rotated, instead of being resampled afterwards.
    */
   private async renderWatermarkTile(
     config: WatermarkConfig,
@@ -1069,22 +1091,17 @@ export class MediaProcessingService {
     finalize: boolean,
   ): Promise<{ buffer: Buffer; width: number; height: number }> {
     const fontSize = Math.max(1, config.fontSize * scale);
-    const geometry = getWatermarkTileGeometry(fontSize, Boolean(logo));
+    const geometry = getWatermarkTileGeometry(fontSize, Boolean(logo), config.logoScale);
     const canvasWidth = Math.max(1, Math.ceil(geometry.textX + (text.length + 2) * fontSize * 1.2));
-    const canvasHeight = Math.max(1, Math.ceil(geometry.height));
-    const logoSvg = logo
-      ? `<image href="data:${logo.mimeType};base64,${logo.buffer.toString('base64')}" x="0" y="${geometry.logoY}" width="${geometry.logoSize}" height="${geometry.logoSize}" preserveAspectRatio="xMidYMid meet"/>`
-      : '';
+    const canvasHeight = Math.max(1, geometry.height);
+    const logoSvg = logo ? await this.renderLogoImage(logo, geometry.logoSize, geometry.logoY) : '';
     const textSvg = text
       ? `<text x="${geometry.textX}" y="${geometry.textBaselineY}" fill="${this.escapeXml(
           config.color,
-        )}" font-family="${this.escapeXml(config.fontFamily)}" font-size="${fontSize}">${this.escapeXml(text)}</text>`
+        )}" font-family="${this.escapeXml(config.fontFamily)}" font-size="${fontSize}" font-weight="${config.fontWeight}">${this.escapeXml(text)}</text>`
       : '';
-    const drawn = await sharp(
-      Buffer.from(
-        `<svg width="${canvasWidth}" height="${canvasHeight}" xmlns="http://www.w3.org/2000/svg">${logoSvg}${textSvg}</svg>`,
-      ),
-    )
+    const content = `${logoSvg}${textSvg}`;
+    const drawn = await sharp(Buffer.from(this.svgDocument(canvasWidth, canvasHeight, content)))
       .png()
       .toBuffer();
     const stats = await sharp(drawn).stats();
@@ -1107,10 +1124,23 @@ export class MediaProcessingService {
       return { buffer: cropped, width: drawnWidth, height: canvasHeight };
     }
 
-    const rotated = await sharp(cropped)
-      .rotate(config.rotate, { background: { r: 0, g: 0, b: 0, alpha: 0 } })
-      .png()
-      .toBuffer();
+    let rotated = cropped;
+    if (config.rotate % 360 !== 0) {
+      const size = getRotatedSize(drawnWidth, canvasHeight, config.rotate);
+      rotated = await sharp(
+        Buffer.from(
+          this.svgDocument(
+            size.width,
+            size.height,
+            `<clipPath id="tile"><rect width="${drawnWidth}" height="${canvasHeight}"/></clipPath>` +
+              `<g transform="translate(${size.width / 2} ${size.height / 2}) rotate(${config.rotate}) translate(${-drawnWidth / 2} ${-canvasHeight / 2})">` +
+              `<g clip-path="url(#tile)">${content}</g></g>`,
+          ),
+        ),
+      )
+        .png()
+        .toBuffer();
+    }
     // Fade logo and text together, matching globalAlpha in the settings preview.
     const faded = await sharp(rotated)
       .ensureAlpha()
@@ -1125,6 +1155,30 @@ export class MediaProcessingService {
       .png()
       .toBuffer({ resolveWithObject: true });
     return { buffer: faded.data, width: faded.info.width, height: faded.info.height };
+  }
+
+  private svgDocument(width: number, height: number, content: string): string {
+    return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">${content}</svg>`;
+  }
+
+  /**
+   * `<image>` of the logo fitted inside the `size` square at `top` (centred, aspect kept). The
+   * bitmap is resized here to its final pixel size, so librsvg only copies it: letting librsvg
+   * shrink a large logo to a few dozen pixels gives a soft, aliased result.
+   */
+  private async renderLogoImage(
+    logo: { buffer: Buffer; mimeType: string },
+    size: number,
+    top: number,
+  ): Promise<string> {
+    const resized = await sharp(logo.buffer)
+      .rotate()
+      .resize({ width: size, height: size, fit: 'inside', kernel: 'lanczos3' })
+      .png()
+      .toBuffer({ resolveWithObject: true });
+    const x = Math.floor((size - resized.info.width) / 2);
+    const y = top + Math.floor((size - resized.info.height) / 2);
+    return `<image href="data:image/png;base64,${resized.data.toString('base64')}" x="${x}" y="${y}" width="${resized.info.width}" height="${resized.info.height}"/>`;
   }
 
   private async loadWatermarkLogo(

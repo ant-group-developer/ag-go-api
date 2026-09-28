@@ -8,12 +8,26 @@ export const WATERMARK_POSITIONS = [
 
 export type WatermarkPosition = (typeof WATERMARK_POSITIONS)[number];
 
+export const WATERMARK_FONT_WEIGHTS = [100, 200, 300, 400, 500, 600, 700, 800, 900] as const;
+
+export type WatermarkFontWeight = (typeof WATERMARK_FONT_WEIGHTS)[number];
+
+/** Limits shared by the DTO and the normalizer. Keep in sync with the web settings form. */
+export const WATERMARK_LIMITS = {
+  fontSize: { min: 8, max: 400 },
+  scale: { min: 0.05, max: 3 },
+  logoScale: { min: 0.2, max: 6 },
+} as const;
+
 export type WatermarkConfig = {
   text: string;
   logoAssetId: string | null;
   color: string;
   fontFamily: string;
   fontSize: number;
+  fontWeight: WatermarkFontWeight;
+  /** Logo height relative to its default size (1.6x the font size). */
+  logoScale: number;
   repeat: boolean;
   gapX: number;
   gapY: number;
@@ -31,6 +45,8 @@ export const DEFAULT_WATERMARK_CONFIG: WatermarkConfig = {
   color: '#FFFFFF',
   fontFamily: 'Arial',
   fontSize: 24,
+  fontWeight: 400,
+  logoScale: 1,
   repeat: false,
   gapX: 220,
   gapY: 100,
@@ -54,15 +70,32 @@ export function normalizeWatermarkConfig(
       : DEFAULT_WATERMARK_CONFIG.opacity;
   const scale =
     typeof config?.scale === 'number' && Number.isFinite(config.scale)
-      ? Math.min(1, Math.max(0.05, config.scale))
+      ? Math.min(WATERMARK_LIMITS.scale.max, Math.max(WATERMARK_LIMITS.scale.min, config.scale))
       : DEFAULT_WATERMARK_CONFIG.scale;
+  const logoScale =
+    typeof config?.logoScale === 'number' && Number.isFinite(config.logoScale)
+      ? Math.min(
+          WATERMARK_LIMITS.logoScale.max,
+          Math.max(WATERMARK_LIMITS.logoScale.min, config.logoScale),
+        )
+      : DEFAULT_WATERMARK_CONFIG.logoScale;
+  const fontWeight =
+    typeof config?.fontWeight === 'number' && Number.isFinite(config.fontWeight)
+      ? (Math.min(
+          900,
+          Math.max(100, Math.round(config.fontWeight / 100) * 100),
+        ) as WatermarkFontWeight)
+      : DEFAULT_WATERMARK_CONFIG.fontWeight;
   const margin =
     typeof config?.margin === 'number' && Number.isFinite(config.margin)
       ? Math.min(500, Math.max(0, Math.round(config.margin)))
       : DEFAULT_WATERMARK_CONFIG.margin;
   const fontSize =
     typeof config?.fontSize === 'number' && Number.isFinite(config.fontSize)
-      ? Math.min(240, Math.max(8, Math.round(config.fontSize)))
+      ? Math.min(
+          WATERMARK_LIMITS.fontSize.max,
+          Math.max(WATERMARK_LIMITS.fontSize.min, Math.round(config.fontSize)),
+        )
       : DEFAULT_WATERMARK_CONFIG.fontSize;
   const gapX =
     typeof config?.gapX === 'number' && Number.isFinite(config.gapX)
@@ -97,6 +130,8 @@ export function normalizeWatermarkConfig(
         ? config.fontFamily.trim().slice(0, 80)
         : DEFAULT_WATERMARK_CONFIG.fontFamily,
     fontSize,
+    fontWeight,
+    logoScale,
     repeat: typeof config?.repeat === 'boolean' ? config.repeat : DEFAULT_WATERMARK_CONFIG.repeat,
     gapX,
     gapY,
