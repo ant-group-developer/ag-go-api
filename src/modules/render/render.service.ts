@@ -35,7 +35,13 @@ const AUTO_JOBS_MAX_PAGE_SIZE = 100;
 const ACTIVE_JOB_STATUSES = ['queued', 'processing'];
 
 /** Status tabs of the auto render job list; 'active' groups queued and processing jobs. */
-export const AUTO_JOB_STATUS_FILTERS = ['all', 'active', 'completed', 'failed'] as const;
+export const AUTO_JOB_STATUS_FILTERS = [
+  'all',
+  'active',
+  'completed',
+  'failed',
+  'cancelled',
+] as const;
 export type AutoJobStatusFilter = (typeof AUTO_JOB_STATUS_FILTERS)[number];
 
 export function isAutoJobStatusFilter(value: unknown): value is AutoJobStatusFilter {
@@ -485,7 +491,7 @@ export class RenderService {
       AUTO_JOBS_MAX_PAGE_SIZE,
     );
     const status = options.status ?? 'all';
-    const emptyCounts: AutoJobCounts = { all: 0, active: 0, completed: 0, failed: 0 };
+    const emptyCounts: AutoJobCounts = { all: 0, active: 0, completed: 0, failed: 0, cancelled: 0 };
     const query = this.jobRepository.createQueryBuilder('job').where('job.render_batch_id IS NULL');
 
     if (options.projectId) {
@@ -536,6 +542,7 @@ export class RenderService {
       .addSelect(`COUNT(*) FILTER (WHERE job.status IN ('queued', 'processing'))::int`, 'active')
       .addSelect(`COUNT(*) FILTER (WHERE job.status = 'completed')::int`, 'completed')
       .addSelect(`COUNT(*) FILTER (WHERE job.status = 'failed')::int`, 'failed')
+      .addSelect(`COUNT(*) FILTER (WHERE job.status = 'cancelled')::int`, 'cancelled')
       .getRawOne<AutoJobCounts>();
     const counts = countRow ?? emptyCounts;
 
