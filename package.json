@@ -22,7 +22,8 @@
     "worker:download": "ts-node --files src/workers/worker.ts download",
     "worker:io": "ts-node --files src/workers/worker.ts download,import,outbox",
     "migration:run": "node --require ts-node/register ./node_modules/typeorm/cli.js migration:run -d src/database/data-source.ts",
-    "migration:revert": "node --require ts-node/register ./node_modules/typeorm/cli.js migration:revert -d src/database/data-source.ts"
+    "migration:revert": "node --require ts-node/register ./node_modules/typeorm/cli.js migration:revert -d src/database/data-source.ts",
+    "prepare": "node -e \"import('husky').then((h) => { const m = h.default(); if (m) console.log(m); }, () => {})\""
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1136.0",
@@ -53,6 +54,8 @@
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^13.0.0",
+    "@commitlint/cli": "^21.2.3",
+    "@commitlint/config-conventional": "^21.2.3",
     "@nestjs/cli": "^11.0.0",
     "@nestjs/schematics": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
@@ -63,12 +66,34 @@
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^9.0.0",
+    "husky": "^9.1.7",
     "jest": "^29.7.0",
+    "lint-staged": "^17.6.0",
     "prettier": "^3.6.2",
     "prettier-plugin-organize-imports": "^4.3.0",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
     "typeorm-ts-node-commonjs": "^0.3.20",
     "typescript": "^5.7.0"
+  },
+  "lint-staged": {
+    "src/**/*.ts": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,yml,yaml,mjs}": "prettier --write"
+  },
+  "commitlint": {
+    "extends": [
+      "@commitlint/config-conventional"
+    ],
+    "rules": {
+      "body-max-line-length": [
+        0
+      ],
+      "footer-max-line-length": [
+        0
+      ]
+    }
   }
 }
