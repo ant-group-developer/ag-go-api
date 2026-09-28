@@ -3,7 +3,6 @@ name: Notify on Workflow Completion
 on:
   workflow_run:
     workflows:
-      - Continuous Integration
       - Deploy development
       - Deploy production
     types:
