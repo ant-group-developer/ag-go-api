@@ -7,7 +7,7 @@ import {
   type ProjectEvaluationStatus,
 } from '../../media/evaluation-status';
 
-export const PROJECT_SORT_FIELDS = ['name', 'createdAt', 'updatedAt'] as const;
+export const PROJECT_SORT_FIELDS = ['name', 'folder', 'createdAt', 'updatedAt'] as const;
 export type ProjectSortField = (typeof PROJECT_SORT_FIELDS)[number];
 
 export const SORT_ORDERS = ['asc', 'desc'] as const;
@@ -29,6 +29,16 @@ export class ListProjectsQueryDto extends BaseKeywordQueryDto {
   @IsUUID()
   folderId?: string;
 
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Comma-separated folder IDs; matches any folder and its descendants.',
+  })
+  @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  folderIds?: string[];
+
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()
   @IsUUID()
@@ -43,6 +53,13 @@ export class ListProjectsQueryDto extends BaseKeywordQueryDto {
   @IsOptional()
   @IsUUID()
   categoryId?: string;
+
+  @ApiPropertyOptional({ type: [String], description: 'Comma-separated category IDs; matches any.' })
+  @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  categoryIds?: string[];
 
   @ApiPropertyOptional({ type: [String], description: 'Comma-separated tag IDs; matches any.' })
   @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))

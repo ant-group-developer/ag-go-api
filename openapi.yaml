@@ -688,6 +688,7 @@ paths:
             type: string
             enum:
               - name
+              - folder
               - createdAt
               - updatedAt
         - name: sortOrder
