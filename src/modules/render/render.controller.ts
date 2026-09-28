@@ -177,4 +177,18 @@ export class RenderController {
     const context = this.authContext.getContext(request);
     return this.renderService.cancelBatch(id, context.userId, context.userType);
   }
+
+  @Post('render-batches/:id/pause')
+  @RequirePermissions(GO_PERMISSIONS.RENDER_BATCH)
+  pauseBatch(@Param('id') id: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.renderService.pauseBatch(id, context.userId, context.userType);
+  }
+
+  @Post('render-batches/:id/resume')
+  @RequirePermissions(GO_PERMISSIONS.RENDER_BATCH)
+  resumeBatch(@Param('id') id: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.renderService.resumeBatch(id, context.userId, context.userType);
+  }
 }

@@ -15,7 +15,7 @@ export class RenderBatchEntity {
   renderProfileId!: string;
 
   @Column({ type: 'varchar', length: 20, default: 'queued' })
-  status!: 'queued' | 'processing' | 'completed' | 'partial' | 'failed' | 'cancelled';
+  status!: 'queued' | 'processing' | 'paused' | 'completed' | 'partial' | 'failed' | 'cancelled';
 
   @Column({ name: 'total_jobs', type: 'integer', default: 0 })
   totalJobs!: number;

@@ -26,7 +26,7 @@ function createManager(jobsOf: (batchId: string) => JobRow[], cancelledRows: unk
       lockedBatch = batchId;
       return this;
     }),
-    getOne: jest.fn(async () => {
+    getOne: jest.fn(async (): Promise<{ id: string; status?: string }> => {
       steps.push(`lock ${lockedBatch}`);
       return { id: lockedBatch };
     }),
@@ -101,6 +101,52 @@ describe('refreshRenderBatch', () => {
       RenderBatchEntity,
       'batch-1',
       expect.objectContaining({ status: 'processing', completedJobs: 1, progressPercent: 50 }),
+    );
+  });
+
+  it('keeps a paused batch paused while jobs are left, and finishes it once none are', async () => {
+    let jobs = [job('completed', 1), job('queued', 2)];
+    const { manager, mock, lockQuery } = createManager(() => jobs);
+    lockQuery.getOne.mockResolvedValue({ id: 'batch-1', status: 'paused' });
+
+    await refreshRenderBatch(manager, 'batch-1');
+
+    expect(mock.update).toHaveBeenLastCalledWith(
+      RenderBatchEntity,
+      'batch-1',
+      expect.objectContaining({ status: 'paused', completedJobs: 1, progressPercent: 50 }),
+    );
+
+    jobs = [job('completed', 1), job('completed', 2)];
+    await refreshRenderBatch(manager, 'batch-1');
+
+    expect(mock.update).toHaveBeenLastCalledWith(
+      RenderBatchEntity,
+      'batch-1',
+      expect.objectContaining({ status: 'completed', progressPercent: 100 }),
+    );
+  });
+
+  it('keeps a cancelled batch cancelled while and after its running jobs finish', async () => {
+    let jobs = [job('cancelled', 1), job('processing', 2)];
+    const { manager, mock, lockQuery } = createManager(() => jobs);
+    lockQuery.getOne.mockResolvedValue({ id: 'batch-1', status: 'cancelled' });
+
+    await refreshRenderBatch(manager, 'batch-1');
+
+    expect(mock.update).toHaveBeenLastCalledWith(
+      RenderBatchEntity,
+      'batch-1',
+      expect.objectContaining({ status: 'cancelled', progressPercent: 50 }),
+    );
+
+    jobs = [job('cancelled', 1), job('completed', 2)];
+    await refreshRenderBatch(manager, 'batch-1');
+
+    expect(mock.update).toHaveBeenLastCalledWith(
+      RenderBatchEntity,
+      'batch-1',
+      expect.objectContaining({ status: 'cancelled', completedJobs: 1, progressPercent: 100 }),
     );
   });
 

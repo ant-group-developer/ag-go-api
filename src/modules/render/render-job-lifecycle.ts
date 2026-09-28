@@ -63,7 +63,7 @@ export async function refreshRenderBatch(
 async function recountRenderBatch(manager: EntityManager, batchId: string): Promise<void> {
   const locked = await manager
     .createQueryBuilder(RenderBatchEntity, 'batch')
-    .select('batch.id')
+    .select(['batch.id', 'batch.status'])
     .setLock('pessimistic_write')
     .where('batch.id = :batchId', { batchId })
     .getOne();
@@ -93,16 +93,23 @@ async function recountRenderBatch(manager: EntityManager, batchId: string): Prom
     return;
   }
   const terminal = completed + failed + cancelled;
+  // A cancelled batch stays cancelled, and a paused one stays paused while jobs are left for
+  // its resume: the jobs that were already running when it was cancelled or paused still
+  // finish and are counted here.
   const status =
-    terminal < total
-      ? 'processing'
-      : cancelled === total
-        ? 'cancelled'
-        : failed > 0 || cancelled > 0
-          ? completed > 0
-            ? 'partial'
-            : 'failed'
-          : 'completed';
+    locked.status === 'cancelled'
+      ? 'cancelled'
+      : terminal < total
+        ? locked.status === 'paused'
+          ? 'paused'
+          : 'processing'
+        : cancelled === total
+          ? 'cancelled'
+          : failed > 0 || cancelled > 0
+            ? completed > 0
+              ? 'partial'
+              : 'failed'
+            : 'completed';
   await manager.update(RenderBatchEntity, batchId, {
     status,
     totalJobs: total,
