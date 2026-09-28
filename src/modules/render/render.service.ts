@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
@@ -26,7 +27,11 @@ import {
   RerenderWatermarkScope,
 } from './dto/rerender-watermark.dto';
 import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
-import { cancelSupersededRenderJobs, hasNewerRenderJob } from './render-job-lifecycle';
+import {
+  cancelSupersededRenderJobs,
+  hasNewerRenderJob,
+  refreshRenderBatch,
+} from './render-job-lifecycle';
 import { normalizePreviewWidths, PREVIEW_VARIANT_SQL } from './render-sizes';
 import { normalizeWatermarkConfig } from './watermark-config';
 
@@ -90,6 +95,7 @@ export class RenderService {
     private readonly folderAccess: FolderAccessService,
     private readonly mediaQueue: MediaQueueService,
     private readonly actorEnrichment: ActorEnrichmentService,
+    private readonly config: ConfigService,
   ) {}
 
   listProfiles(): Promise<RenderProfileEntity[]> {
@@ -681,7 +687,7 @@ export class RenderService {
     userType?: 'ADMIN' | 'USER',
   ): Promise<RenderBatchEntity> {
     const batch = await this.getBatch(id, userId, userType);
-    if (['completed', 'failed', 'cancelled'].includes(batch.status)) {
+    if (['completed', 'partial', 'failed', 'cancelled'].includes(batch.status)) {
       return batch;
     }
     await this.dataSource.transaction(async (manager) => {
@@ -692,6 +698,92 @@ export class RenderService {
         { status: 'cancelled', finishedAt: new Date(), progressMessage: 'Cancelled by user' },
       );
     });
+    return this.batchRepository.findOneOrFail({ where: { id } });
+  }
+
+  /**
+   * Stops workers from starting more jobs of the batch; the jobs already rendering finish. The
+   * queued jobs keep their place and are queued again by resumeBatch.
+   */
+  async pauseBatch(
+    id: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<RenderBatchEntity> {
+    await this.getBatch(id, userId, userType);
+    await this.batchRepository.update(
+      { id, status: In(['queued', 'processing']) },
+      { status: 'paused' },
+    );
+    return this.batchRepository.findOneOrFail({ where: { id } });
+  }
+
+  /**
+   * Queues a paused batch again: every job not rendered yet gets a new BullMQ job, since the
+   * ones it had were skipped while the batch was paused (see MediaProcessingService).
+   */
+  async resumeBatch(
+    id: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<RenderBatchEntity> {
+    await this.getBatch(id, userId, userType);
+    const maxAttempts = this.config.getOrThrow<number>('MEDIA_JOB_ATTEMPTS');
+    const jobs = await this.dataSource.transaction(async (manager) => {
+      const resumed = await manager.update(
+        RenderBatchEntity,
+        { id, status: 'paused' },
+        { status: 'processing', errorMessage: null },
+      );
+      if (!resumed.affected) {
+        return [];
+      }
+      // A job that failed while the batch was paused lost its BullMQ retries to the pause
+      // (each one found the batch paused), so it gets them back, unless a newer render of its
+      // file exists: the older render must not overwrite that one's previews.
+      await manager
+        .createQueryBuilder()
+        .update(MediaRenderJobEntity)
+        .set({
+          status: 'queued',
+          progressPercent: 0,
+          progressMessage: 'Queued again after the batch was resumed',
+          errorCode: null,
+          errorMessage: null,
+          startedAt: null,
+          finishedAt: null,
+        })
+        .where(
+          `render_batch_id = :id AND status = 'failed' AND attempt_count < :maxAttempts
+           AND NOT EXISTS (
+             SELECT 1 FROM media_render_jobs newer
+             WHERE newer.asset_id = media_render_jobs.asset_id
+               AND newer.id <> media_render_jobs.id
+               AND newer.created_at > media_render_jobs.created_at
+               AND newer.status <> 'cancelled'
+           )`,
+          { id, maxAttempts },
+        )
+        .execute();
+      const queued = await manager.find(MediaRenderJobEntity, {
+        select: { id: true, assetId: true },
+        where: { renderBatchId: id, status: 'queued' },
+        order: { createdAt: 'ASC' },
+      });
+      await refreshRenderBatch(manager, id);
+      return queued;
+    });
+    // After the commit, so the workers see the batch resumed when they claim these jobs.
+    await Promise.all(
+      jobs.map((job) =>
+        this.mediaQueue.addProcessingJob({
+          eventId: `${job.id}-resume-${uuidv7()}`,
+          assetId: job.assetId,
+          renderJobId: job.id,
+          userId,
+        }),
+      ),
+    );
     return this.batchRepository.findOneOrFail({ where: { id } });
   }
 
