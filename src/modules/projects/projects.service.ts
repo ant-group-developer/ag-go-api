@@ -73,14 +73,17 @@ export class ProjectsService {
         { keyword: `%${query.normalizedKeyword.toLocaleLowerCase('vi-VN')}%` },
       );
     }
-    if (query.folderId) {
+    const filterFolderIds = [
+      ...new Set([...(query.folderIds ?? []), ...(query.folderId ? [query.folderId] : [])]),
+    ];
+    if (filterFolderIds.length) {
       projectQuery.andWhere(
         `project.folderId IN (
           SELECT folder_closure.descendant_id
           FROM folder_closure
-          WHERE folder_closure.ancestor_id = :filterFolderId
+          WHERE folder_closure.ancestor_id IN (:...filterFolderIds)
         )`,
-        { filterFolderId: query.folderId },
+        { filterFolderIds },
       );
     }
     if (query.countryId) {
@@ -89,8 +92,11 @@ export class ProjectsService {
     if (query.provinceId) {
       projectQuery.andWhere('project.provinceId = :provinceId', { provinceId: query.provinceId });
     }
-    if (query.categoryId) {
-      projectQuery.andWhere('project.categoryId = :categoryId', { categoryId: query.categoryId });
+    const filterCategoryIds = [
+      ...new Set([...(query.categoryIds ?? []), ...(query.categoryId ? [query.categoryId] : [])]),
+    ];
+    if (filterCategoryIds.length) {
+      projectQuery.andWhere('project.categoryId IN (:...filterCategoryIds)', { filterCategoryIds });
     }
     if (query.mine) {
       projectQuery.andWhere('project.ownerUserId = :ownerUserId', { ownerUserId: userId });
