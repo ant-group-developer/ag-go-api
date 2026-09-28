@@ -145,6 +145,8 @@ export class MediaProcessingService {
     }
 
     // Only one worker's UPDATE can move the job out of queued/failed; the token marks which.
+    // Jobs of a paused batch are not claimed: they stay queued and get a new BullMQ job when
+    // the batch is resumed (see RenderService.resumeBatch).
     const claimToken = uuidv7();
     const claimed = await this.jobRepository
       .createQueryBuilder()
@@ -159,10 +161,13 @@ export class MediaProcessingService {
         errorMessage: null,
         attemptCount: () => 'attempt_count + 1',
       })
-      .where('id = :id AND status IN (:...statuses)', {
-        id: job.id,
-        statuses: ['queued', 'failed'],
-      })
+      .where(
+        `id = :id AND status IN (:...statuses) AND NOT EXISTS (
+          SELECT 1 FROM render_batches batch
+          WHERE batch.id = media_render_jobs.render_batch_id AND batch.status = 'paused'
+        )`,
+        { id: job.id, statuses: ['queued', 'failed'] },
+      )
       .execute();
     if (!claimed.affected) {
       return;
