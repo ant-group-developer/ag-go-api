@@ -54,7 +54,10 @@ export class ListProjectsQueryDto extends BaseKeywordQueryDto {
   @IsUUID()
   categoryId?: string;
 
-  @ApiPropertyOptional({ type: [String], description: 'Comma-separated category IDs; matches any.' })
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Comma-separated category IDs; matches any.',
+  })
   @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
   @IsOptional()
   @IsArray()
