@@ -2117,6 +2117,10 @@ components:
         name:
           type: string
           maxLength: 200
+        parentId:
+          type: string
+          format: uuid
+          nullable: true
         sortOrder:
           type: number
           minimum: 0

@@ -181,42 +181,79 @@ export class FoldersService {
   ): Promise<FolderEntity> {
     await this.requireAccess(folderId, userId, 'editor', userType);
     return this.dataSource.transaction(async (manager) => {
+      const moveRequested = dto.parentId !== undefined;
+      if (moveRequested) {
+        // Serialise moves so two concurrent ones cannot form a cycle (A under B, B under A).
+        await manager.query(`SELECT pg_advisory_xact_lock(hashtext('folders:move'))`);
+      }
       const folder = await manager.findOne(FolderEntity, {
         where: { id: folderId, isActive: true },
       });
       if (!folder) {
         throw new NotFoundException('Folder not found');
       }
-      const oldPathText = folder.pathText;
-      const oldPathKey = folder.pathKey;
-      if (dto.name && dto.name.trim() !== folder.name) {
-        const name = dto.name.trim();
+      const targetParentId = moveRequested ? (dto.parentId ?? null) : folder.parentId;
+      const moving = targetParentId !== folder.parentId;
+      const name = dto.name?.trim() || folder.name;
+      const renamed = name !== folder.name;
+
+      if (moving) {
+        // Moving changes which grants the subtree inherits, so it needs manager access.
+        await this.requireAccessOn(manager, folderId, userId, 'manager', userType);
+      }
+      const parent = targetParentId
+        ? await manager.findOne(FolderEntity, { where: { id: targetParentId, isActive: true } })
+        : null;
+      if (targetParentId && !parent) {
+        throw new NotFoundException('Parent folder not found');
+      }
+      if (moving && parent) {
+        const intoOwnSubtree = await manager.exists(FolderClosureEntity, {
+          where: { ancestorId: folderId, descendantId: parent.id },
+        });
+        if (intoOwnSubtree) {
+          throw new BadRequestException('A folder cannot be moved into itself or its subfolders');
+        }
+        await this.requireAccessOn(manager, parent.id, userId, 'editor', userType);
+      }
+
+      if (renamed || moving) {
         const duplicate = await manager
           .createQueryBuilder(FolderEntity, 'folder')
           .where('LOWER(folder.name) = LOWER(:name)', { name })
           .andWhere('folder.id <> :folderId', { folderId })
           .andWhere(
-            folder.parentId ? 'folder.parent_id = :parentId' : 'folder.parent_id IS NULL',
-            folder.parentId ? { parentId: folder.parentId } : {},
+            targetParentId ? 'folder.parent_id = :parentId' : 'folder.parent_id IS NULL',
+            targetParentId ? { parentId: targetParentId } : {},
           )
           .getOne();
         if (duplicate) {
           throw new ConflictException('A folder with this name already exists');
         }
+      }
+
+      const oldPathText = folder.pathText;
+      const oldPathKey = folder.pathKey;
+      const oldPathIds = folder.pathIds;
+      const oldDepth = folder.depth;
+      if (renamed || moving) {
         folder.name = name;
-        folder.pathText = folder.parentId
-          ? `${folder.pathText.split(' / ').slice(0, -1).join(' / ')} / ${folder.name}`
-          : folder.name;
-        folder.pathKey = folder.parentId
-          ? `${folder.pathKey.split('/').slice(0, -1).join('/')}/${this.slugify(folder.name)}`
-          : this.slugify(folder.name);
+        folder.parentId = parent?.id ?? null;
+        folder.pathText = parent ? `${parent.pathText} / ${name}` : name;
+        folder.pathKey = parent ? `${parent.pathKey}/${this.slugify(name)}` : this.slugify(name);
+        folder.pathIds = [...(parent?.pathIds ?? []), folder.id];
+        folder.depth = (parent?.depth ?? -1) + 1;
       }
       if (dto.sortOrder !== undefined) {
         folder.sortOrder = dto.sortOrder;
       }
       const saved = await manager.save(folder);
 
-      if (saved.pathText !== oldPathText || saved.pathKey !== oldPathKey) {
+      if (moving) {
+        await this.reattachSubtree(manager, folderId, parent?.id ?? null);
+      }
+
+      if (saved.pathText !== oldPathText || saved.pathKey !== oldPathKey || moving) {
         const descendantIds = (
           await manager.find(FolderClosureEntity, { where: { ancestorId: folderId } })
         )
@@ -229,12 +266,54 @@ export class FoldersService {
           for (const descendant of descendants) {
             descendant.pathText = saved.pathText + descendant.pathText.slice(oldPathText.length);
             descendant.pathKey = saved.pathKey + descendant.pathKey.slice(oldPathKey.length);
+            descendant.pathIds = [...saved.pathIds, ...descendant.pathIds.slice(oldPathIds.length)];
+            descendant.depth += saved.depth - oldDepth;
           }
           await manager.save(descendants);
         }
       }
+
+      if (moving) {
+        // The mover's manager access may have come from the old parent.
+        const stillManager = await this.accessService.canAccess(
+          folderId,
+          userId,
+          'manager',
+          userType,
+          manager,
+        );
+        if (!stillManager) {
+          throw new ConflictException(
+            'You cannot move this folder where you would lose manager access to it',
+          );
+        }
+      }
       return saved;
     });
+  }
+
+  /** Detaches a subtree from its old ancestors in the closure table and links it under `parentId`. */
+  private async reattachSubtree(
+    manager: EntityManager,
+    folderId: string,
+    parentId: string | null,
+  ): Promise<void> {
+    await manager.query(
+      `DELETE FROM folder_closure
+       WHERE descendant_id IN (SELECT descendant_id FROM folder_closure WHERE ancestor_id = $1)
+         AND ancestor_id NOT IN (SELECT descendant_id FROM folder_closure WHERE ancestor_id = $1)`,
+      [folderId],
+    );
+    if (parentId) {
+      await manager.query(
+        `INSERT INTO folder_closure (ancestor_id, descendant_id, depth)
+         SELECT above.ancestor_id, below.descendant_id, above.depth + below.depth + 1
+         FROM folder_closure above
+         CROSS JOIN folder_closure below
+         WHERE above.descendant_id = $1 AND below.ancestor_id = $2`,
+        [parentId, folderId],
+      );
+    }
   }
 
   async remove(folderId: string, userId: string, userType?: 'ADMIN' | 'USER'): Promise<void> {
@@ -477,6 +556,26 @@ export class FoldersService {
     userType?: 'ADMIN' | 'USER',
   ): Promise<void> {
     const allowed = await this.accessService.canAccess(folderId, userId, minimum, userType);
+    if (!allowed) {
+      throw new ForbiddenException('Insufficient folder permission');
+    }
+  }
+
+  /** Like requireAccess, but on the transaction's connection. */
+  private async requireAccessOn(
+    manager: EntityManager,
+    folderId: string,
+    userId: string,
+    minimum: FolderAccessLevel,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<void> {
+    const allowed = await this.accessService.canAccess(
+      folderId,
+      userId,
+      minimum,
+      userType,
+      manager,
+    );
     if (!allowed) {
       throw new ForbiddenException('Insufficient folder permission');
     }
