@@ -24,7 +24,7 @@ import {
   THUMBNAIL_WIDTH_MAX,
   THUMBNAIL_WIDTH_MIN,
 } from '../render-sizes';
-import { WATERMARK_POSITIONS } from '../watermark-config';
+import { WATERMARK_FONT_WEIGHTS, WATERMARK_LIMITS, WATERMARK_POSITIONS } from '../watermark-config';
 
 export class RenderSizesDto {
   @IsArray()
@@ -63,9 +63,19 @@ export class WatermarkConfigDto {
 
   @IsOptional()
   @IsInt()
-  @Min(8)
-  @Max(240)
+  @Min(WATERMARK_LIMITS.fontSize.min)
+  @Max(WATERMARK_LIMITS.fontSize.max)
   fontSize?: number;
+
+  @IsOptional()
+  @IsIn(WATERMARK_FONT_WEIGHTS)
+  fontWeight?: (typeof WATERMARK_FONT_WEIGHTS)[number];
+
+  @IsOptional()
+  @IsNumber()
+  @Min(WATERMARK_LIMITS.logoScale.min)
+  @Max(WATERMARK_LIMITS.logoScale.max)
+  logoScale?: number;
 
   @IsOptional()
   @IsBoolean()
@@ -107,8 +117,8 @@ export class WatermarkConfigDto {
 
   @IsOptional()
   @IsNumber()
-  @Min(0.05)
-  @Max(1)
+  @Min(WATERMARK_LIMITS.scale.min)
+  @Max(WATERMARK_LIMITS.scale.max)
   scale?: number;
 
   @IsOptional()
