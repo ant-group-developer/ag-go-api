@@ -7,7 +7,7 @@ import {
   type ProjectEvaluationStatus,
 } from '../../media/evaluation-status';
 
-export const PROJECT_SORT_FIELDS = ['name', 'createdAt', 'updatedAt'] as const;
+export const PROJECT_SORT_FIELDS = ['name', 'folder', 'createdAt', 'updatedAt'] as const;
 export type ProjectSortField = (typeof PROJECT_SORT_FIELDS)[number];
 
 export const SORT_ORDERS = ['asc', 'desc'] as const;

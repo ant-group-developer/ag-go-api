@@ -113,8 +113,19 @@ export class ProjectsService {
     }
 
     const sortOrder = query.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    if (query.sortBy === 'folder') {
+      // Sort by the folder's full path so subfolders stay grouped under their parent.
+      projectQuery
+        .addSelect(
+          '(SELECT folder.path_text FROM folders folder WHERE folder.id = project.folder_id)',
+          'folder_path_sort',
+        )
+        .orderBy('folder_path_sort', sortOrder)
+        .addOrderBy('project.name', sortOrder);
+    } else {
+      projectQuery.orderBy(`project.${query.sortBy ?? 'updatedAt'}`, sortOrder);
+    }
     const [projects, total] = await projectQuery
-      .orderBy(`project.${query.sortBy ?? 'updatedAt'}`, sortOrder)
       .addOrderBy('project.id', sortOrder)
       .skip(query.skip)
       .take(query.pageSize)
