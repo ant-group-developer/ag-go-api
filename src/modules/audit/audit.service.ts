@@ -43,8 +43,15 @@ export class AuditService {
       skip: Math.max(0, page - 1) * pageSize,
       take: Math.min(Math.max(pageSize, 1), 100),
     });
+    const fileNames = await this.findMediaFileNames(
+      rows.map((row) => row.projectMediaId).filter((id): id is string => Boolean(id)),
+    );
     const enriched = await this.actorEnrichment.enrich(
-      rows as unknown as Array<Record<string, unknown>>,
+      rows.map((row) => ({
+        ...row,
+        // Entries written before file names were recorded only carry the media id.
+        mediaFileName: (row.projectMediaId && fileNames.get(row.projectMediaId)) ?? null,
+      })) as unknown as Array<Record<string, unknown>>,
       [{ id: 'actorUserId', target: 'actorUser' }],
     );
     return {
@@ -54,6 +61,21 @@ export class AuditService {
       total,
       totalPages: Math.ceil(total / pageSize),
     };
+  }
+
+  /** Current file name of each still-existing project media, keyed by media id. */
+  private async findMediaFileNames(mediaIds: string[]): Promise<Map<string, string>> {
+    if (mediaIds.length === 0) {
+      return new Map();
+    }
+    const rows = (await this.auditRepository.manager.query(
+      `SELECT media.id, asset.original_filename AS "fileName"
+       FROM project_media media
+       INNER JOIN assets asset ON asset.id = media.asset_id
+       WHERE media.id = ANY($1::uuid[])`,
+      [[...new Set(mediaIds)]],
+    )) as Array<{ id: string; fileName: string }>;
+    return new Map(rows.map((row) => [row.id, row.fileName]));
   }
 
   /**
@@ -122,6 +144,27 @@ export class AuditService {
         afterData: input.afterData ?? null,
         metadata: input.metadata ?? {},
       }),
+    );
+  }
+
+  /** Bulk variant of `record`, saved in chunks so one query stays within Postgres' parameter limit. */
+  async recordMany(inputs: Array<Parameters<AuditService['record']>[0]>) {
+    if (inputs.length === 0) {
+      return;
+    }
+    await this.auditRepository.save(
+      inputs.map((input) =>
+        this.auditRepository.create({
+          projectId: input.projectId ?? null,
+          projectMediaId: input.projectMediaId ?? null,
+          actorUserId: input.actorUserId,
+          action: input.action,
+          beforeData: input.beforeData ?? null,
+          afterData: input.afterData ?? null,
+          metadata: input.metadata ?? {},
+        }),
+      ),
+      { chunk: 500 },
     );
   }
 }

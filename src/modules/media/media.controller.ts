@@ -4,6 +4,8 @@ import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequireAnyPermissions, RequirePermissions } from '../../common/auth/permissions.decorator';
+import { BulkApproveProjectMediaDto } from './dto/bulk-approve-project-media.dto';
+import { BulkApproveProjectsDto } from './dto/bulk-approve-projects.dto';
 import { CreateProjectMediaDto } from './dto/create-project-media.dto';
 import { ReorderProjectMediaDto } from './dto/reorder-project-media.dto';
 import { SetProjectThumbnailDto } from './dto/set-project-thumbnail.dto';
@@ -60,6 +62,20 @@ export class MediaController {
       context.permissions ?? [],
       context.userType,
     );
+  }
+
+  @Post('project-media/bulk-approve')
+  @RequirePermissions(GO_PERMISSIONS.PROJECT_EVALUATE)
+  bulkApproveMedia(@Body() dto: BulkApproveProjectMediaDto, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.mediaService.bulkApproveMedia(dto, context.userId, context.userType);
+  }
+
+  @Post('projects/bulk-approve')
+  @RequirePermissions(GO_PERMISSIONS.PROJECT_EVALUATE)
+  bulkApproveProjects(@Body() dto: BulkApproveProjectsDto, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.mediaService.bulkApproveProjects(dto, context.userId, context.userType);
   }
 
   @Get('project-media/:id/evaluations')
