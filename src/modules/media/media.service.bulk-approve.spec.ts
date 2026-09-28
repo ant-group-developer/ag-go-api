@@ -14,7 +14,7 @@ jest.mock('@nestjs/typeorm', () => ({
 }));
 jest.mock('uuid', () => ({ v7: () => 'generated-uuid' }));
 
-type Media = { id: string; projectId: string; evaluationStatus: string };
+type Media = { id: string; projectId: string; evaluationStatus: string; assetId?: string };
 
 describe('MediaService bulk approval', () => {
   function createService(options: {
@@ -52,9 +52,12 @@ describe('MediaService bulk approval', () => {
     );
     const canAccess = jest.fn().mockResolvedValue(options.canAccess ?? true);
     const recordMany = jest.fn().mockResolvedValue(undefined);
+    const assetRepository = {
+      find: jest.fn().mockResolvedValue([{ id: 'asset-a', originalFilename: 'a.jpg' }]),
+    };
     const service = new MediaService(
       { transaction } as unknown as DataSource,
-      {} as never,
+      assetRepository as never,
       {} as never,
       {} as never,
       { canAccess } as unknown as FolderAccessService,
@@ -69,8 +72,8 @@ describe('MediaService bulk approval', () => {
   it('approves only the selected files that are not approved yet', async () => {
     const { service, manager, lockQuery, canAccess, recordMany } = createService({
       media: [
-        { id: 'a', projectId: 'project', evaluationStatus: 'pending' },
-        { id: 'b', projectId: 'project', evaluationStatus: 'rejected' },
+        { id: 'a', projectId: 'project', evaluationStatus: 'pending', assetId: 'asset-a' },
+        { id: 'b', projectId: 'project', evaluationStatus: 'rejected', assetId: 'asset-b' },
         { id: 'c', projectId: 'project', evaluationStatus: 'approved' },
       ],
     });
@@ -99,11 +102,17 @@ describe('MediaService bulk approval', () => {
       expect.objectContaining({
         projectMediaId: 'a',
         action: 'evaluation_changed',
-        afterData: expect.objectContaining({ previousEvaluationStatus: 'pending' }),
+        afterData: expect.objectContaining({
+          fileName: 'a.jpg',
+          previousEvaluationStatus: 'pending',
+        }),
       }),
       expect.objectContaining({
         projectMediaId: 'b',
-        afterData: expect.objectContaining({ previousEvaluationStatus: 'rejected' }),
+        afterData: expect.objectContaining({
+          fileName: null,
+          previousEvaluationStatus: 'rejected',
+        }),
       }),
     ]);
   });

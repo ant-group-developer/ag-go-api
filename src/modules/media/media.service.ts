@@ -20,6 +20,7 @@ import { ProjectMediaEntity } from '../../database/entities/project-media.entity
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
+import { diffAuditSnapshots, type AuditChange } from '../audit/audit-changes';
 import { AuditService } from '../audit/audit.service';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
 import { isPreviewVariantCode, pickPreviewVariant } from '../render/render-sizes';
@@ -255,7 +256,7 @@ export class MediaService {
       projectMediaId: created.id,
       actorUserId: userId,
       action: 'media_attached',
-      afterData: { assetId: created.assetId },
+      afterData: { assetId: created.assetId, fileName: created.asset?.originalFilename ?? null },
     });
     return created;
   }
@@ -282,6 +283,8 @@ export class MediaService {
     let projectId = '';
     let projectMediaId = '';
     let previousEvaluationStatus = '';
+    let fileName: string | null = null;
+    let contentChanges: AuditChange[] = [];
     const updated = await this.dataSource.transaction(async (manager) => {
       const media = await manager
         .createQueryBuilder(ProjectMediaEntity, 'media')
@@ -303,11 +306,17 @@ export class MediaService {
       projectId = project.id;
       projectMediaId = media.id;
       previousEvaluationStatus = media.evaluationStatus;
+      fileName = media.asset?.originalFilename ?? null;
+      const contentBefore = { caption: media.caption, sortOrder: media.sortOrder };
 
       Object.assign(media, {
         sortOrder: dto.sortOrder ?? media.sortOrder,
         caption: dto.caption === undefined ? media.caption : dto.caption.trim() || null,
         evaluationStatus: dto.evaluationStatus ?? media.evaluationStatus,
+      });
+      contentChanges = diffAuditSnapshots(contentBefore, {
+        caption: media.caption,
+        sortOrder: media.sortOrder,
       });
       const updatedMedia = await manager.save(media);
       if (dto.evaluationStatus !== undefined || dto.comment !== undefined) {
@@ -326,20 +335,28 @@ export class MediaService {
       }
       return this.findMedia(updatedMedia.id, manager);
     });
-    await this.auditService.record({
-      projectId,
-      projectMediaId,
-      actorUserId: userId,
-      action:
-        dto.evaluationStatus !== undefined || dto.comment !== undefined
-          ? 'evaluation_changed'
-          : 'media_updated',
-      afterData: {
-        previousEvaluationStatus,
-        evaluationStatus: dto.evaluationStatus ?? previousEvaluationStatus,
-        comment: dto.comment ?? null,
-      },
-    });
+    if (evaluationMutation) {
+      await this.auditService.record({
+        projectId,
+        projectMediaId,
+        actorUserId: userId,
+        action: 'evaluation_changed',
+        afterData: {
+          fileName,
+          previousEvaluationStatus,
+          evaluationStatus: dto.evaluationStatus ?? previousEvaluationStatus,
+          comment: dto.comment ?? null,
+        },
+      });
+    } else if (contentChanges.length > 0) {
+      await this.auditService.record({
+        projectId,
+        projectMediaId,
+        actorUserId: userId,
+        action: 'media_updated',
+        afterData: { fileName, changes: contentChanges },
+      });
+    }
     return updated;
   }
 
@@ -415,6 +432,8 @@ export class MediaService {
     const media = await this.getMedia(mediaId);
     const project = await this.getProject(media.projectId);
     await this.requireProjectAccess(project, userId, 'editor', userType);
+    // Read before the delete: the asset row can go with it.
+    const asset = await this.assetRepository.findOne({ where: { id: media.assetId } });
 
     await this.dataSource.transaction(async (manager) => {
       if (project.thumbnailProjectMediaId === mediaId) {
@@ -428,7 +447,7 @@ export class MediaService {
       projectMediaId: mediaId,
       actorUserId: userId,
       action: 'media_deleted',
-      beforeData: { assetId: media.assetId },
+      beforeData: { assetId: media.assetId, fileName: asset?.originalFilename ?? null },
     });
   }
 
@@ -591,6 +610,14 @@ export class MediaService {
     comment: string | null | undefined,
     userId: string,
   ): Promise<void> {
+    if (changes.length === 0) {
+      return;
+    }
+    const assets = await this.assetRepository.find({
+      select: { id: true, originalFilename: true },
+      where: { id: In([...new Set(changes.map((item) => item.assetId))]) },
+    });
+    const fileNames = new Map(assets.map((asset) => [asset.id, asset.originalFilename]));
     await this.auditService.recordMany(
       changes.map((item) => ({
         projectId: item.projectId,
@@ -598,6 +625,7 @@ export class MediaService {
         actorUserId: userId,
         action: 'evaluation_changed',
         afterData: {
+          fileName: fileNames.get(item.assetId) ?? null,
           previousEvaluationStatus: item.evaluationStatus,
           evaluationStatus: 'approved',
           comment: comment ?? null,

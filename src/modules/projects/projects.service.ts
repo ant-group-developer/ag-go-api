@@ -14,6 +14,7 @@ import { ProjectMediaEntity } from '../../database/entities/project-media.entity
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ProvinceEntity } from '../../database/entities/province.entity';
 import { TagEntity } from '../../database/entities/tag.entity';
+import { diffAuditSnapshots, type AuditValue } from '../audit/audit-changes';
 import { AuditService } from '../audit/audit.service';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -290,11 +291,16 @@ export class ProjectsService {
       }
       return project;
     });
+    const folder = await this.folderRepository.findOne({ where: { id: created.folderId } });
     await this.auditService.record({
       projectId: created.id,
       actorUserId: userId,
       action: 'project_created',
-      afterData: { name: created.name, folderId: created.folderId },
+      afterData: {
+        name: created.name,
+        folderId: created.folderId,
+        folder: folder?.pathText ?? null,
+      },
     });
     return created;
   }
@@ -342,16 +348,19 @@ export class ProjectsService {
       }
     });
     const updated = await this.findOne(id, userId, userType);
-    await this.auditService.record({
-      projectId: id,
-      actorUserId: userId,
-      action: 'project_updated',
-      afterData: {
-        name: updated.name,
-        folderId: updated.folderId,
-        description: updated.description,
-      },
-    });
+    const changes = diffAuditSnapshots(
+      projectAuditSnapshot(project),
+      projectAuditSnapshot(updated),
+    );
+    // Saving the form unchanged is not worth an entry.
+    if (changes.length > 0) {
+      await this.auditService.record({
+        projectId: id,
+        actorUserId: userId,
+        action: 'project_updated',
+        afterData: { changes },
+      });
+    }
     return updated;
   }
 
@@ -400,7 +409,11 @@ export class ProjectsService {
       projectId: id,
       actorUserId: userId,
       action: 'project_deleted',
-      beforeData: { name: project.name, folderId: project.folderId },
+      beforeData: {
+        name: project.name,
+        folderId: project.folderId,
+        folder: (project as ProjectDetail).folderPath || null,
+      },
     });
     return { success: true };
   }
@@ -535,4 +548,27 @@ export class ProjectsService {
       throw new ForbiddenException('Insufficient folder permission');
     }
   }
+}
+
+/** Display fields `findOne` adds to the entity. */
+type ProjectDetail = ProjectEntity & {
+  folderPath?: string;
+  categoryName?: string | null;
+  countryName?: string | null;
+  provinceName?: string | null;
+  tags?: string[];
+};
+
+/** What a project update can change, as readable values (names, not ids) for the audit log. */
+function projectAuditSnapshot(project: ProjectEntity): Record<string, AuditValue> {
+  const detail = project as ProjectDetail;
+  return {
+    name: detail.name,
+    description: detail.description,
+    folder: detail.folderPath ?? null,
+    category: detail.categoryName ?? null,
+    country: detail.countryName ?? null,
+    province: detail.provinceName ?? null,
+    tags: detail.tags ?? [],
+  };
 }

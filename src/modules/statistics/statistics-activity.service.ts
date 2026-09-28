@@ -22,10 +22,15 @@ SELECT
   pal.actor_user_id AS "actorUserId",
   pal.project_id AS "projectId",
   sp.name AS "projectName",
+  pal.before_data AS "beforeData",
   pal.after_data AS "afterData",
+  pal.metadata,
+  asset.original_filename AS "mediaFileName",
   pal.created_at AS "createdAt"
 FROM project_audit_logs pal
 INNER JOIN scoped_projects sp ON sp.id = pal.project_id
+LEFT JOIN project_media media ON media.id = pal.project_media_id
+LEFT JOIN assets asset ON asset.id = media.asset_id
 WHERE pal.action <> 'media_updated'
 ORDER BY pal.created_at DESC, pal.id DESC
 LIMIT $4`;
