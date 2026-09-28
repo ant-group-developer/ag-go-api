@@ -134,10 +134,15 @@ export class FoldersService {
     if (ids.length === 0) {
       return [];
     }
-    const folders = await this.folderRepository.find({
-      where: { id: In(ids), isActive: true },
-      order: { depth: 'ASC', sortOrder: 'ASC', name: 'ASC' },
-    });
+    const folders = await this.folderRepository
+      .createQueryBuilder('folder')
+      .addSelect('folder.name COLLATE natural_sort', 'name_sort')
+      .where('folder.id IN (:...ids)', { ids })
+      .andWhere('folder.isActive = true')
+      .orderBy('folder.depth', 'ASC')
+      .addOrderBy('folder.sortOrder', 'ASC')
+      .addOrderBy('name_sort', 'ASC')
+      .getMany();
     const folderIds = folders.map((folder) => folder.id);
     if (folderIds.length === 0) {
       return [];
@@ -517,7 +522,9 @@ export class FoldersService {
           ]
         : [];
     });
-    rows.sort((a, b) => a.folder.pathText.localeCompare(b.folder.pathText, 'vi'));
+    rows.sort((a, b) =>
+      a.folder.pathText.localeCompare(b.folder.pathText, 'vi', { numeric: true }),
+    );
     return (await this.actorEnrichment.enrich(rows as unknown as Array<Record<string, unknown>>, [
       { id: 'principalId', target: 'principalUser' },
       { id: 'grantedBy', target: 'grantedByUser' },
