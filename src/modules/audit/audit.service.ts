@@ -124,4 +124,25 @@ export class AuditService {
       }),
     );
   }
+
+  /** Bulk variant of `record`, saved in chunks so one query stays within Postgres' parameter limit. */
+  async recordMany(inputs: Array<Parameters<AuditService['record']>[0]>) {
+    if (inputs.length === 0) {
+      return;
+    }
+    await this.auditRepository.save(
+      inputs.map((input) =>
+        this.auditRepository.create({
+          projectId: input.projectId ?? null,
+          projectMediaId: input.projectMediaId ?? null,
+          actorUserId: input.actorUserId,
+          action: input.action,
+          beforeData: input.beforeData ?? null,
+          afterData: input.afterData ?? null,
+          metadata: input.metadata ?? {},
+        }),
+      ),
+      { chunk: 500 },
+    );
+  }
 }

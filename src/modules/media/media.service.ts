@@ -28,6 +28,8 @@ import {
   isVariantServable,
   THUMBNAIL_VARIANT_CODE,
 } from '../render/watermark-policy';
+import { BulkApproveProjectMediaDto } from './dto/bulk-approve-project-media.dto';
+import { BulkApproveProjectsDto } from './dto/bulk-approve-projects.dto';
 import { CreateProjectMediaDto } from './dto/create-project-media.dto';
 import { ReorderProjectMediaDto } from './dto/reorder-project-media.dto';
 import { SetProjectThumbnailDto } from './dto/set-project-thumbnail.dto';
@@ -38,6 +40,27 @@ type MediaCursor = {
   sortOrder: number;
   id: string;
 };
+
+export type BulkApprovalResult = {
+  /** Files switched to "approved" by this call. */
+  approvedCount: number;
+  /** Selected files that were already approved. */
+  unchangedCount: number;
+  projects: Array<
+    Pick<
+      ProjectEvaluationSummaryEntity,
+      | 'projectId'
+      | 'evaluationStatus'
+      | 'totalMedia'
+      | 'pendingCount'
+      | 'approvedCount'
+      | 'rejectedCount'
+    >
+  >;
+};
+
+// Keeps each UPDATE ... IN / multi-row INSERT well under Postgres' 65535 bind-parameter limit.
+const BULK_WRITE_CHUNK_SIZE = 1000;
 
 @Injectable()
 export class MediaService {
@@ -320,6 +343,56 @@ export class MediaService {
     return updated;
   }
 
+  /** Marks the selected files "approved"; files already approved are left untouched. */
+  async bulkApproveMedia(
+    dto: BulkApproveProjectMediaDto,
+    userId: string,
+    userType: 'ADMIN' | 'USER' | undefined,
+  ): Promise<BulkApprovalResult> {
+    const { result, changes } = await this.dataSource.transaction(async (manager) => {
+      const media = await manager
+        .createQueryBuilder(ProjectMediaEntity, 'media')
+        .where('media.id IN (:...mediaIds)', { mediaIds: dto.mediaIds })
+        // Stable lock order so concurrent bulk calls cannot deadlock each other.
+        .orderBy('media.id', 'ASC')
+        .setLock('pessimistic_write')
+        .getMany();
+      if (media.length !== dto.mediaIds.length) {
+        throw new NotFoundException('Project media not found');
+      }
+      const projectIds = [...new Set(media.map((item) => item.projectId))];
+      await this.requireProjectsAccess(manager, projectIds, userId, userType);
+      return this.approveLockedMedia(manager, media, projectIds, dto.comment, userId);
+    });
+    await this.recordBulkApprovalAudit(changes, dto.comment, userId);
+    return result;
+  }
+
+  /**
+   * Approves every pending file of the selected projects (and rejected ones too with
+   * `overrideRejected`); the project status is then derived from its files as usual.
+   */
+  async bulkApproveProjects(
+    dto: BulkApproveProjectsDto,
+    userId: string,
+    userType: 'ADMIN' | 'USER' | undefined,
+  ): Promise<BulkApprovalResult> {
+    const statuses = dto.overrideRejected ? ['pending', 'rejected'] : ['pending'];
+    const { result, changes } = await this.dataSource.transaction(async (manager) => {
+      await this.requireProjectsAccess(manager, dto.projectIds, userId, userType);
+      const media = await manager
+        .createQueryBuilder(ProjectMediaEntity, 'media')
+        .where('media.project_id IN (:...projectIds)', { projectIds: dto.projectIds })
+        .andWhere('media.evaluation_status IN (:...statuses)', { statuses })
+        .orderBy('media.id', 'ASC')
+        .setLock('pessimistic_write')
+        .getMany();
+      return this.approveLockedMedia(manager, media, dto.projectIds, dto.comment, userId);
+    });
+    await this.recordBulkApprovalAudit(changes, dto.comment, userId);
+    return result;
+  }
+
   async listEvaluationHistory(mediaId: string, userId: string, userType?: 'ADMIN' | 'USER') {
     const media = await this.getMedia(mediaId);
     const project = await this.getProject(media.projectId);
@@ -443,6 +516,95 @@ export class MediaService {
     if (!allowed) {
       throw new ForbiddenException('Insufficient project permission');
     }
+  }
+
+  private async requireProjectsAccess(
+    manager: import('typeorm').EntityManager,
+    projectIds: string[],
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<void> {
+    const projects = await manager.find(ProjectEntity, { where: { id: In(projectIds) } });
+    if (projects.length !== projectIds.length) {
+      throw new NotFoundException('Project not found');
+    }
+    // Access is granted per folder, so each folder only needs to be checked once.
+    const projectsByFolder = new Map(projects.map((project) => [project.folderId, project]));
+    for (const project of projectsByFolder.values()) {
+      await this.requireProjectAccess(project, userId, 'editor', userType, manager);
+    }
+  }
+
+  /** `media` must already be locked by the caller's transaction. */
+  private async approveLockedMedia(
+    manager: import('typeorm').EntityManager,
+    media: ProjectMediaEntity[],
+    projectIds: string[],
+    comment: string | null | undefined,
+    userId: string,
+  ): Promise<{ result: BulkApprovalResult; changes: ProjectMediaEntity[] }> {
+    const changes = media.filter((item) => item.evaluationStatus !== 'approved');
+    const trimmedComment = comment?.trim() || null;
+    for (let start = 0; start < changes.length; start += BULK_WRITE_CHUNK_SIZE) {
+      const chunk = changes.slice(start, start + BULK_WRITE_CHUNK_SIZE);
+      await manager.update(
+        ProjectMediaEntity,
+        { id: In(chunk.map((item) => item.id)) },
+        { evaluationStatus: 'approved' },
+      );
+      await manager.insert(
+        ProjectMediaEvaluationEntity,
+        chunk.map((item) => ({
+          id: uuidv7(),
+          projectMediaId: item.id,
+          evaluationStatus: 'approved' as const,
+          comment: trimmedComment,
+          evaluatedBy: userId,
+        })),
+      );
+    }
+    for (const projectId of projectIds) {
+      await this.refreshProjectEvaluation(manager, projectId);
+    }
+    const summaries = await manager.find(ProjectEvaluationSummaryEntity, {
+      where: { projectId: In(projectIds) },
+    });
+    return {
+      changes,
+      result: {
+        approvedCount: changes.length,
+        unchangedCount: media.length - changes.length,
+        projects: summaries.map((summary) => ({
+          projectId: summary.projectId,
+          evaluationStatus: summary.evaluationStatus,
+          totalMedia: summary.totalMedia,
+          pendingCount: summary.pendingCount,
+          approvedCount: summary.approvedCount,
+          rejectedCount: summary.rejectedCount,
+        })),
+      },
+    };
+  }
+
+  private async recordBulkApprovalAudit(
+    changes: ProjectMediaEntity[],
+    comment: string | null | undefined,
+    userId: string,
+  ): Promise<void> {
+    await this.auditService.recordMany(
+      changes.map((item) => ({
+        projectId: item.projectId,
+        projectMediaId: item.id,
+        actorUserId: userId,
+        action: 'evaluation_changed',
+        afterData: {
+          previousEvaluationStatus: item.evaluationStatus,
+          evaluationStatus: 'approved',
+          comment: comment ?? null,
+        },
+        metadata: { source: 'bulk_approve' },
+      })),
+    );
   }
 
   private async findMedia(
