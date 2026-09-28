@@ -62,9 +62,11 @@ export class ProvincesService {
     }
 
     const [items, total] = await builder
-      .orderBy('country.name', 'ASC')
+      .addSelect('country.name COLLATE natural_sort', 'country_name_sort')
+      .addSelect('province.name COLLATE natural_sort', 'province_name_sort')
+      .orderBy('country_name_sort', 'ASC')
       .addOrderBy('province.sort_order', 'ASC')
-      .addOrderBy('province.name', 'ASC')
+      .addOrderBy('province_name_sort', 'ASC')
       .skip(query.skip)
       .take(pageSize)
       .getManyAndCount();

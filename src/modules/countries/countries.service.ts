@@ -34,10 +34,13 @@ export class CountriesService {
   ) {}
 
   list() {
-    return this.countryRepository.find({
-      where: { isActive: true },
-      order: { sortOrder: 'ASC', name: 'ASC' },
-    });
+    return this.countryRepository
+      .createQueryBuilder('country')
+      .addSelect('country.name COLLATE natural_sort', 'name_sort')
+      .where('country.isActive = true')
+      .orderBy('country.sortOrder', 'ASC')
+      .addOrderBy('name_sort', 'ASC')
+      .getMany();
   }
 
   async create(dto: CreateCountryDto) {

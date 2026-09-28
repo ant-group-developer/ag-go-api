@@ -124,7 +124,7 @@ export class FolderAccessOverviewService {
       return result * direction;
     });
     for (const row of rows) {
-      row.folders.sort((a, b) => a.pathText.localeCompare(b.pathText, 'vi'));
+      row.folders.sort((a, b) => a.pathText.localeCompare(b.pathText, 'vi', { numeric: true }));
     }
 
     return {

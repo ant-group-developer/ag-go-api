@@ -57,6 +57,7 @@ import { RenderJobBatchIndexMigration1950000000000 } from './migrations/19500000
 import { StopOrphanRenderJobsMigration1960000000000 } from './migrations/1960000000000-stop-orphan-render-jobs';
 import { StatisticsIndexesMigration1970000000000 } from './migrations/1970000000000-statistics-indexes';
 import { MultipartUploadIdTextMigration1980000000000 } from './migrations/1980000000000-multipart-upload-id-text';
+import { NaturalSortCollationMigration1990000000000 } from './migrations/1990000000000-natural-sort-collation';
 
 loadEnv();
 
@@ -133,6 +134,7 @@ export const AppDataSource = new DataSource({
     StopOrphanRenderJobsMigration1960000000000,
     StatisticsIndexesMigration1970000000000,
     MultipartUploadIdTextMigration1980000000000,
+    NaturalSortCollationMigration1990000000000,
   ],
   synchronize: false,
 });

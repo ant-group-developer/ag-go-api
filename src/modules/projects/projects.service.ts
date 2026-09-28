@@ -126,8 +126,14 @@ export class ProjectsService {
           '(SELECT folder.path_text FROM folders folder WHERE folder.id = project.folder_id)',
           'folder_path_sort',
         )
+        .addSelect('project.name COLLATE natural_sort', 'name_sort')
         .orderBy('folder_path_sort', sortOrder)
-        .addOrderBy('project.name', sortOrder);
+        .addOrderBy('name_sort', sortOrder);
+    } else if (query.sortBy === 'name') {
+      // Natural order so "10. ..." follows "9. ..." instead of "1. ...".
+      projectQuery
+        .addSelect('project.name COLLATE natural_sort', 'name_sort')
+        .orderBy('name_sort', sortOrder);
     } else {
       projectQuery.orderBy(`project.${query.sortBy ?? 'updatedAt'}`, sortOrder);
     }
