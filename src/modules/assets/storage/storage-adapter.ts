@@ -49,6 +49,8 @@ export interface StorageAdapter {
   ): Promise<void>;
   /** Discards the uploaded parts; an upload that is already completed or aborted is ignored. */
   abortMultipartUpload(storageKey: string, uploadId: string): Promise<void>;
+  /** Reads the full object body as a UTF-8 string. Throws if the object does not exist. */
+  getObjectText(storageKey: string): Promise<string>;
 }
 
 export type UploadedPart = {
