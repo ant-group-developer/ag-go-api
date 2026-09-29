@@ -2,6 +2,8 @@ import { config as loadEnv } from 'dotenv';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from '../config/env.validation';
+import { AnalysisFarmJobEntity } from './entities/analysis-farm-job.entity';
+import { AssetAnalysisEntity } from './entities/asset-analysis.entity';
 import { AssetImportEntity } from './entities/asset-import.entity';
 import { AssetUploadSessionEntity } from './entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './entities/asset-variant.entity';
@@ -17,6 +19,7 @@ import { FolderEntity } from './entities/folder.entity';
 import { GoogleDriveConnectionEntity } from './entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './entities/import-batch.entity';
 import { MediaRenderJobEntity } from './entities/media-render-job.entity';
+import { MediaSegmentEntity } from './entities/media-segment.entity';
 import { OutboxEventEntity } from './entities/outbox-event.entity';
 import { ProjectAuditLogEntity } from './entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './entities/project-evaluation-summary.entity';
@@ -60,6 +63,7 @@ import { MultipartUploadIdTextMigration1980000000000 } from './migrations/198000
 import { NaturalSortCollationMigration1990000000000 } from './migrations/1990000000000-natural-sort-collation';
 import { RenderBatchPausedStatusMigration2000000000000 } from './migrations/2000000000000-render-batch-paused-status';
 import { RenderVariantsMigration2010000000000 } from './migrations/2010000000000-render-variants';
+import { MediaAnalysisMigration2020000000000 } from './migrations/2020000000000-media-analysis';
 
 loadEnv();
 
@@ -106,6 +110,9 @@ export const AppDataSource = new DataSource({
     OutboxEventEntity,
     SystemSettingEntity,
     SystemLogEntity,
+    AssetAnalysisEntity,
+    MediaSegmentEntity,
+    AnalysisFarmJobEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -139,6 +146,7 @@ export const AppDataSource = new DataSource({
     NaturalSortCollationMigration1990000000000,
     RenderBatchPausedStatusMigration2000000000000,
     RenderVariantsMigration2010000000000,
+    MediaAnalysisMigration2020000000000,
   ],
   synchronize: false,
 });
