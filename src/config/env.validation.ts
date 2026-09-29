@@ -73,6 +73,18 @@ export const envValidationSchema = Joi.object({
   AUTH0_AUDIENCE: requiredString,
   AUTH0_CLIENT_ID: requiredString,
   AUTH0_JWKS_URL: httpsUrl,
+  // Comma-separated list of allowed Auth0 client IDs (azp claim).
+  // When set, overrides AUTH0_CLIENT_ID for azp validation.
+  // Allows multiple SPA apps (ag-go-web, ag-studio-web, ag-farm-web) to share this API.
+  AUTH0_ALLOWED_CLIENT_IDS: Joi.string().trim().allow('').optional(),
+
+  // Service-key authentication for backend-to-backend calls (e.g. ag-studio acting as user)
+  // JSON array: [{"name":"studio","sha256":"<hex-of-sha256(key)>","scopes":["footage:read","footage:resolve"]}]
+  SERVICE_KEYS: Joi.string().trim().allow('').optional(),
+
+  // Account API path template for looking up user_type + permissions by userId.
+  // {userId} is replaced with the encoded userId.
+  ACCOUNT_API_USER_ACCESS_PATH: Joi.string().trim().allow('').optional(),
 
   // Account API
   ACCOUNT_API_URL: Joi.string()

@@ -7,7 +7,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { USER_TYPES } from '../../common/auth/user-type';
+import { USER_TYPES, type UserType } from '../../common/auth/user-type';
 import type {
   AccountApplication,
   AccountCurrentUser,
@@ -45,10 +45,17 @@ const DEFAULT_USER_FIELDS = [
 
 const ACTOR_FIELDS = 'id,name,email,avatar';
 
+export type AccountUserAccess = {
+  user_type: UserType;
+  permissions: string[];
+};
+
 @Injectable()
 export class AccountApiService {
   private readonly logger = new Logger(AccountApiService.name);
   private readonly actorCache = new Map<string, { expiresAt: number; value: AccountUser | null }>();
+  /** Cache for getUserAccess: userId → { expiresAt, value }. TTL 60 s. */
+  private readonly accessCache = new Map<string, { expiresAt: number; value: AccountUserAccess }>();
 
   constructor(private readonly config: ConfigService) {}
 
@@ -74,6 +81,110 @@ export class AccountApiService {
     }
 
     return user;
+  }
+
+  /**
+   * Returns the user_type and app permissions for `userId` in the `ant-go-v2` application.
+   * Used by the service-key act-as flow; results are cached for 60 seconds.
+   *
+   * Endpoint: `ACCOUNT_API_USER_ACCESS_PATH` env var, default
+   * `/v2/public/users/{userId}/access?application=ant-go-v2`.
+   * Expects `{ user_type, permissions: string[] }` (possibly wrapped in the standard envelope).
+   *
+   * On any failure: throws 503 (never guesses ADMIN).
+   */
+  async getUserAccess(userId: string): Promise<AccountUserAccess> {
+    const now = Date.now();
+    const cached = this.accessCache.get(userId);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+
+    const pathTemplate =
+      this.config.get<string>('ACCOUNT_API_USER_ACCESS_PATH') ??
+      '/v2/public/users/{userId}/access?application=ant-go-v2';
+    const resolvedPath = pathTemplate.replace('{userId}', encodeURIComponent(userId));
+
+    const baseUrl = this.config.get<string>('ACCOUNT_API_URL')?.trim();
+    if (!baseUrl) {
+      throw new ServiceUnavailableException('Account API integration is not configured');
+    }
+    const normalizedBase = `${baseUrl.replace(/\/+$/, '')}/`;
+    // If path template starts with /v2 and base already ends in /v2, avoid duplication
+    const cleanPath = resolvedPath.startsWith('/') ? resolvedPath.slice(1) : resolvedPath;
+    const fullUrl = new URL(cleanPath, normalizedBase).toString();
+
+    let response: Response;
+    try {
+      const apiKey = this.config.get<string>('ACCOUNT_API_KEY')?.trim();
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (apiKey) {
+        headers['x-api-key'] = apiKey;
+      }
+      response = await fetch(fullUrl, {
+        method: 'GET',
+        headers,
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (error) {
+      this.logger.error(
+        `Account API getUserAccess failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new ServiceUnavailableException('Account API is unavailable');
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      throw new ServiceUnavailableException('Account API denied access for getUserAccess');
+    }
+
+    const bodyText = await response.text();
+    if (!response.ok) {
+      this.logger.warn(`Account API getUserAccess returned HTTP ${response.status}`);
+      throw new ServiceUnavailableException('Account API request failed');
+    }
+
+    let body: unknown;
+    try {
+      body = JSON.parse(bodyText) as unknown;
+    } catch {
+      throw new ServiceUnavailableException('Account API returned invalid JSON');
+    }
+
+    // Unwrap envelope if present
+    let data: unknown = body;
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      'data' in body &&
+      ('statusCode' in body || 'success' in body)
+    ) {
+      const env = body as Record<string, unknown>;
+      if (env['success'] === false) {
+        throw new ServiceUnavailableException('Account API getUserAccess failed');
+      }
+      data = env['data'];
+    }
+
+    if (!this.isUserAccess(data)) {
+      this.logger.warn(`Account API getUserAccess returned unexpected shape`);
+      throw new ServiceUnavailableException('Account API returned an invalid access response');
+    }
+
+    const result: AccountUserAccess = { user_type: data.user_type, permissions: data.permissions };
+    this.accessCache.set(userId, { expiresAt: now + 60_000, value: result });
+    return result;
+  }
+
+  private isUserAccess(value: unknown): value is AccountUserAccess {
+    if (typeof value !== 'object' || value === null) {
+      return false;
+    }
+    const c = value as Record<string, unknown>;
+    return (
+      (c['user_type'] === USER_TYPES.ADMIN || c['user_type'] === USER_TYPES.USER) &&
+      Array.isArray(c['permissions']) &&
+      (c['permissions'] as unknown[]).every((p) => typeof p === 'string')
+    );
   }
 
   async getCurrentUser(accessToken: string): Promise<AccountCurrentUser> {
