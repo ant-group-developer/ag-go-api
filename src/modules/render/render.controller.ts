@@ -178,6 +178,14 @@ export class RenderController {
     return this.renderService.cancelBatch(id, context.userId, context.userType);
   }
 
+  /** Queues every failed job of the batch again. */
+  @Post('render-batches/:id/retry-failed')
+  @RequirePermissions(GO_PERMISSIONS.RENDER_BATCH)
+  retryFailedJobs(@Param('id') id: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.renderService.retryFailedJobs(id, context.userId, context.userType);
+  }
+
   @Post('render-batches/:id/pause')
   @RequirePermissions(GO_PERMISSIONS.RENDER_BATCH)
   pauseBatch(@Param('id') id: string, @Req() request: Request) {
