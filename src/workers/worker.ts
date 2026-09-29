@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
 import { OutboxDispatcherService } from '../infra/queue/outbox-dispatcher.service';
+import { FarmResultPollerService } from '../modules/analysis/farm-result-poller.service';
 import { MediaQueueWorkerService } from '../modules/assets/media-queue-worker.service';
 import { DownloadWorkerService } from '../modules/downloads/download-worker.service';
 import { GoogleDriveImportWorkerService } from '../modules/google-drive/google-drive-import-worker.service';
@@ -45,6 +46,8 @@ async function bootstrap(): Promise<void> {
   }
   if (roles.has('outbox')) {
     app.get(OutboxDispatcherService).start();
+    // Start farm result poller only in outbox role; no-ops automatically if FARM_URL is unset.
+    app.get(FarmResultPollerService).start();
   }
 
   const shutdown = async () => {

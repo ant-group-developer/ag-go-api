@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import ffmpegPath from 'ffmpeg-static';
@@ -19,6 +19,7 @@ import {
   type RenderSummary,
 } from '../../database/entities/media-render-job.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
+import { AnalysisEnqueueService } from '../analysis/analysis-enqueue.service';
 import { refreshRenderBatch } from '../render/render-job-lifecycle';
 import {
   normalizeRenderSizes,
@@ -156,6 +157,9 @@ export class MediaProcessingService {
     private readonly renderProfileRepository: Repository<RenderProfileEntity>,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     private readonly config: ConfigService,
+    @Optional()
+    @Inject(forwardRef(() => AnalysisEnqueueService))
+    private readonly analysisEnqueue?: AnalysisEnqueueService,
   ) {}
 
   async processJobById(jobId: string, assetId: string, queueJobId?: string): Promise<void> {
@@ -391,6 +395,11 @@ export class MediaProcessingService {
             ...result.metadata,
           },
         });
+        // Every render ends here, re-renders too (watermark changes, reused variants): the enqueue
+        // skips an asset that already has a current or in-flight analysis of the same version.
+        if (this.analysisEnqueue?.isAutoEnqueueEnabled()) {
+          await this.analysisEnqueue.enqueueInsideTransaction(manager, asset);
+        }
       });
       await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
     } catch (error) {

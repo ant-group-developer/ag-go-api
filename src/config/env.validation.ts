@@ -92,4 +92,22 @@ export const envValidationSchema = Joi.object({
     .optional(),
   GOOGLE_SCOPES: Joi.string().trim().allow('').optional(),
   GOOGLE_TOKEN_ENCRYPTION_KEY: Joi.string().trim().allow('').optional(),
+
+  // ag-farm integration
+  FARM_URL: Joi.string()
+    .trim()
+    .uri({ scheme: ['http', 'https'] })
+    .allow('')
+    .optional(),
+  FARM_OWNER_KEY: Joi.string().trim().allow('').optional(),
+  // PEM public key for verifying farm tickets; accept literal \n in the value
+  FARM_TICKET_PUBLIC_KEY: Joi.string().trim().allow('').optional(),
+  FARM_URL_TTL_SECONDS: Joi.number().integer().min(1).default(3600),
+  FARM_POLL_INTERVAL_MS: Joi.number().integer().min(100).default(5000),
+
+  // Content analysis
+  ANALYSIS_AUTO_ENQUEUE: Joi.boolean().truthy('true').falsy('false').default(false),
+  ANALYSIS_EXTRACT_VERSION: Joi.string().trim().min(1).default('x1'),
+  ANALYSIS_PROMPT_VERSION: Joi.string().trim().min(1).default('p1'),
+  ANALYSIS_MODEL: Joi.string().trim().min(1).default('qwen2.5vl:7b'),
 }).unknown(true);
