@@ -4,6 +4,7 @@ import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequireAnyPermissions, RequirePermissions } from '../../common/auth/permissions.decorator';
+import { canViewUnwatermarked } from '../render/watermark-policy';
 import { BulkApproveProjectMediaDto } from './dto/bulk-approve-project-media.dto';
 import { BulkApproveProjectsDto } from './dto/bulk-approve-projects.dto';
 import { CreateProjectMediaDto } from './dto/create-project-media.dto';
@@ -37,6 +38,7 @@ export class MediaController {
       context.userType,
       cursor,
       Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+      canViewUnwatermarked(context.permissions, context.userType),
     );
   }
 

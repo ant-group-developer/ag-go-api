@@ -41,6 +41,13 @@ export class AssetVariantEntity {
   @Column({ name: 'has_watermark', type: 'boolean', default: false })
   hasWatermark!: boolean;
 
+  /**
+   * How the variant was rendered (size, watermark look, quality); a render with the same spec
+   * keeps it instead of rendering it again. Null for variants rendered before specs existed.
+   */
+  @Column({ name: 'render_spec', type: 'varchar', length: 300, nullable: true })
+  renderSpec!: string | null;
+
   @Column({ name: 'status', type: 'varchar', length: 20, default: 'processing' })
   status!: 'processing' | 'ready' | 'failed';
 

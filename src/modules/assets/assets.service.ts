@@ -26,7 +26,12 @@ import { AuditService } from '../audit/audit.service';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
 import { refreshProjectMediaSummary } from '../media/project-media-summary';
 import { cancelSupersededRenderJobs } from '../render/render-job-lifecycle';
-import { isPreviewVariantCode, pickPreviewVariant } from '../render/render-sizes';
+import {
+  comparePreviews,
+  describePreview,
+  isPreviewVariantCode,
+  pickPreviewVariant,
+} from '../render/render-sizes';
 import {
   findActiveRenderProfile,
   isVariantServable,
@@ -479,9 +484,15 @@ export class AssetsService implements OnModuleDestroy {
     userType: 'ADMIN' | 'USER' | undefined,
     response: Response,
     width?: number,
+    viewerMaySeeUnwatermarked = false,
   ) {
     await this.requireAssetAccess(assetId, userId, 'viewer', userType);
-    const variant = await this.findReadyVariant(assetId, variantCode, width);
+    const variant = await this.findReadyVariant(
+      assetId,
+      variantCode,
+      width,
+      viewerMaySeeUnwatermarked,
+    );
     response.setHeader('Content-Type', variant.mimeType);
     response.setHeader('Content-Length', variant.fileSizeBytes);
     this.storage.readObject(variant.storageKey).pipe(response);
@@ -493,9 +504,15 @@ export class AssetsService implements OnModuleDestroy {
     userId: string,
     userType?: 'ADMIN' | 'USER',
     width?: number,
+    viewerMaySeeUnwatermarked = false,
   ) {
     await this.requireAssetAccess(assetId, userId, 'viewer', userType);
-    const variant = await this.findReadyVariant(assetId, variantCode, width);
+    const variant = await this.findReadyVariant(
+      assetId,
+      variantCode,
+      width,
+      viewerMaySeeUnwatermarked,
+    );
     const expiresInSeconds = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
     const url = await this.storage.getPresignedGetUrl(
       variant.storageKey,
@@ -533,18 +550,19 @@ export class AssetsService implements OnModuleDestroy {
     };
   }
 
-  /** Preview sizes a viewer may choose from, smallest first. */
-  async listRenditions(assetId: string, userId: string, userType?: 'ADMIN' | 'USER') {
-    await this.requireAssetAccess(assetId, userId, 'viewer', userType);
-    const previews = await this.findServablePreviews(assetId);
+  /** Previews a viewer may choose from, smallest first. */
+  async listRenditions(
+    assetId: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    viewerMaySeeUnwatermarked = false,
+  ) {
+    const asset = await this.requireAssetAccess(assetId, userId, 'viewer', userType);
+    const previews = await this.findServablePreviews(assetId, viewerMaySeeUnwatermarked);
+    const duration = asset.sourceMetadata?.durationSeconds;
     return previews
-      .sort((a, b) => (a.width ?? 0) - (b.width ?? 0))
-      .map((variant) => ({
-        variantCode: variant.variantCode,
-        width: variant.width,
-        height: variant.height,
-        mimeType: variant.mimeType,
-      }));
+      .sort(comparePreviews)
+      .map((variant) => describePreview(variant, typeof duration === 'number' ? duration : null));
   }
 
   async retry(assetId: string, userId: string, userType?: 'ADMIN' | 'USER') {
@@ -645,9 +663,17 @@ export class AssetsService implements OnModuleDestroy {
    * `preview` is an alias for "the best preview for a frame `width` pixels wide" (the largest
    * without a width); any other code is looked up as is.
    */
-  private async findReadyVariant(assetId: string, variantCode: string, width?: number) {
+  private async findReadyVariant(
+    assetId: string,
+    variantCode: string,
+    width?: number,
+    viewerMaySeeUnwatermarked = false,
+  ) {
     if (variantCode === 'preview') {
-      const variant = pickPreviewVariant(await this.findServablePreviews(assetId), width);
+      const variant = pickPreviewVariant(
+        await this.findServablePreviews(assetId, viewerMaySeeUnwatermarked),
+        width,
+      );
       if (!variant) {
         throw new NotFoundException('Ready watermarked asset variant not found');
       }
@@ -657,19 +683,21 @@ export class AssetsService implements OnModuleDestroy {
       this.variantRepository.findOne({ where: { assetId, variantCode, status: 'ready' } }),
       findActiveRenderProfile(this.renderProfileRepository),
     ]);
-    if (!variant || !isVariantServable(variant, profile)) {
+    if (!variant || !isVariantServable(variant, profile, viewerMaySeeUnwatermarked)) {
       throw new NotFoundException('Ready watermarked asset variant not found');
     }
     return variant;
   }
 
-  private async findServablePreviews(assetId: string) {
+  private async findServablePreviews(assetId: string, viewerMaySeeUnwatermarked = false) {
     const [variants, profile] = await Promise.all([
       this.variantRepository.find({ where: { assetId, status: 'ready' } }),
       findActiveRenderProfile(this.renderProfileRepository),
     ]);
     return variants.filter(
-      (variant) => isPreviewVariantCode(variant.variantCode) && isVariantServable(variant, profile),
+      (variant) =>
+        isPreviewVariantCode(variant.variantCode) &&
+        isVariantServable(variant, profile, viewerMaySeeUnwatermarked),
     );
   }
 

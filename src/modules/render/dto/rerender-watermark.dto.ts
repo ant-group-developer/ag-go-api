@@ -1,4 +1,4 @@
-import { IsArray, IsDateString, IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { IsArray, IsBoolean, IsDateString, IsEnum, IsOptional, IsUUID } from 'class-validator';
 
 export enum RerenderWatermarkScope {
   PROJECT = 'PROJECT',
@@ -37,4 +37,9 @@ export class RerenderWatermarkDto {
   @IsOptional()
   @IsEnum(RerenderMediaType)
   mediaType?: RerenderMediaType;
+
+  /** Keep previews that already match the profile; default true. */
+  @IsOptional()
+  @IsBoolean()
+  reuseExisting?: boolean;
 }

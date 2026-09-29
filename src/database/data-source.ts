@@ -59,6 +59,7 @@ import { StatisticsIndexesMigration1970000000000 } from './migrations/1970000000
 import { MultipartUploadIdTextMigration1980000000000 } from './migrations/1980000000000-multipart-upload-id-text';
 import { NaturalSortCollationMigration1990000000000 } from './migrations/1990000000000-natural-sort-collation';
 import { RenderBatchPausedStatusMigration2000000000000 } from './migrations/2000000000000-render-batch-paused-status';
+import { RenderVariantsMigration2010000000000 } from './migrations/2010000000000-render-variants';
 
 loadEnv();
 
@@ -137,6 +138,7 @@ export const AppDataSource = new DataSource({
     MultipartUploadIdTextMigration1980000000000,
     NaturalSortCollationMigration1990000000000,
     RenderBatchPausedStatusMigration2000000000000,
+    RenderVariantsMigration2010000000000,
   ],
   synchronize: false,
 });
