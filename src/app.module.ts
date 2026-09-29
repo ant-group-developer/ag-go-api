@@ -50,6 +50,7 @@ import { CategoriesModule } from './modules/categories/categories.module';
 import { CountriesModule } from './modules/countries/countries.module';
 import { DownloadsModule } from './modules/downloads/downloads.module';
 import { FoldersModule } from './modules/folders/folders.module';
+import { FootageModule } from './modules/footage/footage.module';
 import { GoogleDriveModule } from './modules/google-drive/google-drive.module';
 import { LogsModule } from './modules/logs/logs.module';
 import { MediaModule } from './modules/media/media.module';
@@ -133,6 +134,7 @@ import { TagsModule } from './modules/tags/tags.module';
     SettingsModule,
     LogsModule,
     AnalysisModule,
+    FootageModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
