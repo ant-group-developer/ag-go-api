@@ -176,9 +176,39 @@ describe('MediaProcessingService image variants', () => {
     height: number;
     hasWatermark: boolean;
     storageKey: string;
+    renderSpec: string;
+  };
+  type RenderResult = {
+    metadata: Record<string, unknown>;
+    summary: { rendered: string[]; reused: string[]; removed: string[] };
   };
 
-  async function renderImage(sourceWidth: number, sourceHeight: number) {
+  const profile = {
+    id: 'profile',
+    profileVersion: 2,
+    imageQuality: 80,
+    maxWidth: null,
+    watermarkEnabled: true,
+    watermarkConfig: { text: '', logoAssetId: LOGO_ID },
+    renderSizes: {
+      variants: [
+        { resolution: 360, watermark: true },
+        { resolution: 720, watermark: false },
+        { resolution: 1080, watermark: true },
+      ],
+      thumbnailWidth: 200,
+    },
+  };
+
+  async function renderImage(
+    sourceWidth: number,
+    sourceHeight: number,
+    options: {
+      existing?: Array<Partial<SavedVariant>>;
+      reuse?: boolean;
+      renderProfile?: Record<string, unknown>;
+    } = {},
+  ) {
     const logo = await sharp({
       create: { width: 64, height: 64, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } },
     })
@@ -203,11 +233,12 @@ describe('MediaProcessingService image variants', () => {
         saved.push(value);
         return value;
       }),
-      find: jest
-        .fn()
-        .mockResolvedValue([
-          { id: 'legacy', variantCode: 'preview', storageKey: 'legacy/preview.webp' },
-        ]),
+      // Ready variants for the reuse check; stale ones (not kept by the render) otherwise.
+      find: jest.fn(async ({ where }: { where: { status?: string } }) =>
+        where.status
+          ? (options.existing ?? [])
+          : [{ id: 'legacy', variantCode: 'preview', storageKey: 'legacy/preview.webp' }],
+      ),
       delete: jest.fn(),
     };
     const storage = {
@@ -231,42 +262,50 @@ describe('MediaProcessingService image variants', () => {
       storage as never,
       { getOrThrow: () => 1920 } as unknown as ConfigService,
     );
-    await (
+    const result = await (
       service as unknown as {
         processImage: (
           asset: unknown,
           input: Buffer,
           profile: unknown,
           report: () => Promise<void>,
-        ) => Promise<unknown>;
+          reuse?: boolean,
+        ) => Promise<RenderResult>;
       }
     ).processImage(
-      { id: 'asset-1', originalStorageKey: 'projects/p1/originals/a.jpg' },
+      { id: 'asset-1', assetType: 'image', originalStorageKey: 'projects/p1/originals/a.jpg' },
       source,
-      {
-        id: 'profile',
-        profileVersion: 2,
-        imageQuality: 80,
-        maxWidth: null,
-        watermarkEnabled: true,
-        watermarkConfig: { text: '', logoAssetId: LOGO_ID },
-        renderSizes: { previewWidths: [480, 960, 1920], thumbnailWidth: 200 },
-      },
+      options.renderProfile ?? profile,
       async () => undefined,
+      options.reuse,
     );
-    return { saved, deleted, variantRepository };
+    return { saved, deleted, variantRepository, result };
   }
 
-  it('renders every configured width that fits, with the height following the ratio', async () => {
+  it('renders every variant by short edge, each with its own watermark, never upscaled', async () => {
     const { saved } = await renderImage(1200, 800);
     const previews = saved.filter((variant) => variant.variantCode.startsWith('preview_'));
-    expect(previews.map((variant) => [variant.variantCode, variant.width, variant.height])).toEqual(
-      [
-        ['preview_480', 480, 320],
-        ['preview_960', 960, 640],
-      ],
-    );
-    expect(previews.every((variant) => variant.hasWatermark)).toBe(true);
+    expect(
+      previews.map((variant) => [
+        variant.variantCode,
+        variant.width,
+        variant.height,
+        variant.hasWatermark,
+      ]),
+    ).toEqual([
+      ['preview_360p_wm', 540, 360, true],
+      ['preview_720p', 1080, 720, false],
+      ['preview_800p_wm', 1200, 800, true],
+    ]);
+    expect(previews.every((variant) => variant.renderSpec.startsWith('image|'))).toBe(true);
+  });
+
+  it('keeps portrait previews upright with the short edge as the width', async () => {
+    const { saved } = await renderImage(800, 1200);
+    expect(saved.find((variant) => variant.variantCode === 'preview_360p_wm')).toMatchObject({
+      width: 360,
+      height: 540,
+    });
   });
 
   it('renders a small thumbnail without watermark', async () => {
@@ -278,27 +317,155 @@ describe('MediaProcessingService image variants', () => {
     });
   });
 
-  it('renders the source size when it is smaller than every width', async () => {
-    const { saved } = await renderImage(300, 200);
-    expect(
-      saved.filter((variant) => variant.variantCode.startsWith('preview_')).map((v) => v.width),
-    ).toEqual([300]);
-  });
-
-  it('deletes variants the new render did not produce', async () => {
-    const { deleted, variantRepository } = await renderImage(1200, 800);
+  it('deletes variants the profile no longer asks for', async () => {
+    const { deleted, variantRepository, result } = await renderImage(1200, 800);
     expect(deleted).toEqual(['legacy/preview.webp']);
     expect(variantRepository.delete).toHaveBeenCalledWith('legacy');
+    expect(result.summary.removed).toEqual(['preview']);
+  });
+
+  it('with reuse, renders only the variants that are missing or whose spec changed', async () => {
+    const first = await renderImage(1200, 800);
+    const existing = first.saved.filter((variant) => variant.variantCode !== 'preview_720p');
+    // A watermarked preview made with another watermark look is rendered again.
+    existing[0] = { ...existing[0], renderSpec: 'image|360p|wm=old|q=80' };
+
+    const { saved, result } = await renderImage(1200, 800, { existing, reuse: true });
+
+    expect(saved.map((variant) => variant.variantCode)).toEqual([
+      'preview_360p_wm',
+      'preview_720p',
+    ]);
+    expect(result.summary).toEqual({
+      rendered: ['preview_360p_wm', 'preview_720p'],
+      reused: ['preview_800p_wm', 'thumbnail'],
+      removed: ['preview'],
+    });
+  });
+
+  it('without reuse, renders every variant again', async () => {
+    const first = await renderImage(1200, 800);
+    const { saved, result } = await renderImage(1200, 800, {
+      existing: first.saved,
+      reuse: false,
+    });
+    expect(saved).toHaveLength(4);
+    expect(result.summary.reused).toEqual([]);
+  });
+
+  it('renders again when the quality changes', async () => {
+    const first = await renderImage(1200, 800);
+    const { result } = await renderImage(1200, 800, {
+      existing: first.saved,
+      reuse: true,
+      renderProfile: { ...profile, imageQuality: 60 },
+    });
+    expect(result.summary.rendered).toEqual([
+      'preview_360p_wm',
+      'preview_720p',
+      'preview_800p_wm',
+      'thumbnail',
+    ]);
+  });
+});
+
+describe('MediaProcessingService reuse without the original', () => {
+  it('finishes from stored metadata when every variant matches, and not otherwise', async () => {
+    const planned = [
+      { variantCode: 'preview_720p_wm', renderSpec: '' },
+      { variantCode: 'preview_1080p', renderSpec: '' },
+      { variantCode: 'thumbnail', renderSpec: '' },
+    ];
+    const variantRepository = {
+      find: jest.fn(async ({ where }: { where: { status?: string } }) =>
+        where.status ? planned : [],
+      ),
+      delete: jest.fn(),
+    };
+    const service = new MediaProcessingService(
+      {} as never,
+      variantRepository as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { getOrThrow: () => 320 } as unknown as ConfigService,
+    );
+    const internals = service as unknown as {
+      planOutputs: (
+        type: string,
+        width: number,
+        height: number,
+        profile: unknown,
+      ) => Array<{ variantCode: string; renderSpec: string }>;
+      reuseMatchingVariants: (asset: unknown, profile: unknown) => Promise<unknown>;
+    };
+    const profile = {
+      imageQuality: 85,
+      videoBitrateBps: '4000000',
+      watermarkEnabled: true,
+      watermarkConfig: { text: 'AG' },
+      renderSizes: {
+        variants: [
+          { resolution: 720, watermark: true },
+          { resolution: 1080, watermark: false },
+        ],
+        thumbnailWidth: 320,
+      },
+    };
+    // Coded 1080x1920 of a rotated phone video plans the same variants as its displayed frame.
+    for (const [index, output] of internals.planOutputs('video', 1920, 1080, profile).entries()) {
+      planned[index].renderSpec = output.renderSpec;
+    }
+    const asset = {
+      id: 'asset-1',
+      assetType: 'video',
+      sourceMetadata: { width: 1080, height: 1920 },
+    };
+
+    await expect(internals.reuseMatchingVariants(asset, profile)).resolves.toEqual({
+      metadata: {},
+      summary: {
+        rendered: [],
+        reused: ['preview_720p_wm', 'preview_1080p', 'thumbnail'],
+        removed: [],
+      },
+    });
+    await expect(
+      internals.reuseMatchingVariants(asset, { ...profile, videoBitrateBps: '8000000' }),
+    ).resolves.toBeNull();
+    await expect(
+      internals.reuseMatchingVariants({ ...asset, sourceMetadata: {} }, profile),
+    ).resolves.toBeNull();
   });
 });
 
 describe('MediaProcessingService video variants', () => {
-  type SavedVariant = { variantCode: string; width: number; height: number; hasWatermark: boolean };
+  type SavedVariant = {
+    variantCode: string;
+    width: number;
+    height: number;
+    hasWatermark: boolean;
+    renderSpec: string;
+  };
   const settings: Record<string, number> = {
     MEDIA_FFMPEG_THREADS: 2,
     MEDIA_RENDER_TIMEOUT_SECONDS: 60,
     MEDIA_PREVIEW_MAX_WIDTH: 1920,
     MEDIA_THUMBNAIL_MAX_WIDTH: 320,
+  };
+  const profile = {
+    id: 'profile',
+    profileVersion: 2,
+    watermarkEnabled: true,
+    watermarkConfig: { text: '', logoAssetId: LOGO_ID },
+    renderSizes: {
+      variants: [
+        { resolution: 180, watermark: true },
+        { resolution: 360, watermark: false },
+        { resolution: 360, watermark: true },
+      ],
+      thumbnailWidth: 120,
+    },
   };
   let dir: string;
   let source: string;
@@ -335,7 +502,7 @@ describe('MediaProcessingService video variants', () => {
 
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  it('renders every preview size in a single FFmpeg run', async () => {
+  async function renderVideo(existing: SavedVariant[] = [], reuse = false) {
     const logo = await sharp({
       create: { width: 64, height: 64, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } },
     })
@@ -366,7 +533,9 @@ describe('MediaProcessingService video variants', () => {
         findOne: jest.fn().mockResolvedValue(null),
         create: jest.fn((value: SavedVariant) => value),
         save: jest.fn(async (value: SavedVariant) => saved.push(value)),
-        find: jest.fn().mockResolvedValue([]),
+        find: jest.fn(async ({ where }: { where: { status?: string } }) =>
+          where.status ? existing : [],
+        ),
       } as never,
       {} as never,
       {} as never,
@@ -380,38 +549,60 @@ describe('MediaProcessingService video variants', () => {
         input: string,
         profile: unknown,
         report: () => Promise<void>,
-      ) => Promise<{ width?: number; height?: number }>;
+        reuse?: boolean,
+      ) => Promise<{
+        metadata: { width?: number; height?: number };
+        summary: { rendered: string[]; reused: string[] };
+      }>;
     };
     const runProcess = jest.spyOn(internals, 'runProcess');
-
-    const metadata = await internals.processVideo(
-      { id: 'asset-1', originalStorageKey: 'projects/p1/originals/a.mp4' },
+    const result = await internals.processVideo(
+      { id: 'asset-1', assetType: 'video', originalStorageKey: 'projects/p1/originals/a.mp4' },
       source,
-      {
-        id: 'profile',
-        profileVersion: 2,
-        watermarkEnabled: true,
-        watermarkConfig: { text: '', logoAssetId: LOGO_ID },
-        renderSizes: { previewWidths: [160, 320, 640], thumbnailWidth: 120 },
-      },
+      profile,
       async () => undefined,
+      reuse,
     );
+    return { saved, uploaded, runProcess, result };
+  }
 
-    expect(metadata).toMatchObject({ width: 640, height: 360 });
+  it('renders every preview variant in a single FFmpeg run', async () => {
+    const { saved, uploaded, runProcess, result } = await renderVideo();
+
+    expect(result.metadata).toMatchObject({ width: 640, height: 360 });
     const previews = saved.filter((variant) => variant.variantCode.startsWith('preview_'));
-    expect(previews.map((variant) => [variant.variantCode, variant.width, variant.height])).toEqual(
-      [
-        ['preview_160', 160, 90],
-        ['preview_320', 320, 180],
-        ['preview_640', 640, 360],
-      ],
-    );
-    expect(previews.every((variant) => variant.hasWatermark)).toBe(true);
-    for (const width of [160, 320, 640]) {
-      expect(uploaded.get(`projects/p1/variants/asset-1/preview_${width}.mp4`)).toBeGreaterThan(0);
+    expect(
+      previews.map((variant) => [
+        variant.variantCode,
+        variant.width,
+        variant.height,
+        variant.hasWatermark,
+      ]),
+    ).toEqual([
+      ['preview_180p_wm', 320, 180, true],
+      ['preview_360p', 640, 360, false],
+      ['preview_360p_wm', 640, 360, true],
+    ]);
+    for (const code of ['preview_180p_wm', 'preview_360p', 'preview_360p_wm']) {
+      expect(uploaded.get(`projects/p1/variants/asset-1/${code}.mp4`)).toBeGreaterThan(0);
     }
     // ffprobe, the thumbnail frame, then one run for all previews.
     expect(runProcess).toHaveBeenCalledTimes(3);
+  }, 60_000);
+
+  it('with reuse, renders only the missing preview', async () => {
+    const first = await renderVideo();
+    const existing = first.saved.filter((variant) => variant.variantCode !== 'preview_360p');
+
+    const { saved, runProcess, result } = await renderVideo(existing, true);
+
+    expect(saved.map((variant) => variant.variantCode)).toEqual(['preview_360p']);
+    expect(result.summary).toMatchObject({
+      rendered: ['preview_360p'],
+      reused: ['preview_180p_wm', 'preview_360p_wm', 'thumbnail'],
+    });
+    // ffprobe and the previews run; the thumbnail is kept.
+    expect(runProcess).toHaveBeenCalledTimes(2);
   }, 60_000);
 });
 

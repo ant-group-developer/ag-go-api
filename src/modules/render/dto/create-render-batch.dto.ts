@@ -1,4 +1,4 @@
-import { IsArray, IsOptional, IsUUID } from 'class-validator';
+import { IsArray, IsBoolean, IsOptional, IsUUID } from 'class-validator';
 
 export class CreateRenderBatchDto {
   @IsOptional()
@@ -17,4 +17,12 @@ export class CreateRenderBatchDto {
   @IsOptional()
   @IsUUID()
   renderProfileId?: string;
+
+  /**
+   * Keep variants that already match the profile and render only the missing or changed ones
+   * (default). False renders every variant again.
+   */
+  @IsOptional()
+  @IsBoolean()
+  reuseExisting?: boolean;
 }

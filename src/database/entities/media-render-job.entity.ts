@@ -1,5 +1,7 @@
 import { Column, CreateDateColumn, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
+export type RenderSummary = { rendered: string[]; reused: string[]; removed: string[] };
+
 @Entity('media_render_jobs')
 export class MediaRenderJobEntity {
   @PrimaryColumn('uuid')
@@ -35,6 +37,14 @@ export class MediaRenderJobEntity {
   /** Set by the worker run that claimed the job; a run that no longer holds it stops rendering. */
   @Column({ name: 'claim_token', type: 'uuid', nullable: true })
   claimToken!: string | null;
+
+  /** Keep variants that already match the profile instead of rendering them again. */
+  @Column({ name: 'reuse_existing', type: 'boolean', default: true })
+  reuseExisting!: boolean;
+
+  /** Variant codes the finished job rendered, reused and removed. */
+  @Column({ name: 'render_summary', type: 'jsonb', nullable: true })
+  renderSummary!: RenderSummary | null;
 
   @Column({ name: 'attempt_count', type: 'smallint', default: 0 })
   attemptCount!: number;

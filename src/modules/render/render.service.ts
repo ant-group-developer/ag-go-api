@@ -32,8 +32,15 @@ import {
   hasNewerRenderJob,
   refreshRenderBatch,
 } from './render-job-lifecycle';
-import { normalizePreviewWidths, PREVIEW_VARIANT_SQL } from './render-sizes';
+import {
+  normalizeRenderSizes,
+  normalizeRenderVariants,
+  PREVIEW_VARIANT_SQL,
+  type RenderSizes,
+  variantResolution,
+} from './render-sizes';
 import { normalizeWatermarkConfig } from './watermark-config';
+import { THUMBNAIL_VARIANT_CODE } from './watermark-policy';
 
 const AUTO_JOBS_DEFAULT_PAGE_SIZE = 20;
 const AUTO_JOBS_MAX_PAGE_SIZE = 100;
@@ -98,10 +105,25 @@ export class RenderService {
     private readonly config: ConfigService,
   ) {}
 
-  listProfiles(): Promise<RenderProfileEntity[]> {
-    return this.profileRepository.find({
+  async listProfiles(): Promise<RenderProfileEntity[]> {
+    const profiles = await this.profileRepository.find({
       where: { isActive: true },
       order: { code: 'ASC', profileVersion: 'DESC' },
+    });
+    return profiles.map((profile) => this.withRenderSizes(profile));
+  }
+
+  /** The profile with `renderSizes` in its current shape, whatever shape it was saved in. */
+  private withRenderSizes(profile: RenderProfileEntity): RenderProfileEntity {
+    return Object.assign(profile, { renderSizes: this.renderSizesOf(profile) });
+  }
+
+  private renderSizesOf(
+    profile: Pick<RenderProfileEntity, 'renderSizes' | 'maxWidth' | 'watermarkEnabled'>,
+  ): RenderSizes {
+    return normalizeRenderSizes(profile, {
+      previewWidth: this.config.getOrThrow<number>('MEDIA_PREVIEW_MAX_WIDTH'),
+      thumbnailWidth: this.config.getOrThrow<number>('MEDIA_THUMBNAIL_MAX_WIDTH'),
     });
   }
 
@@ -123,7 +145,11 @@ export class RenderService {
       }
     }
 
-    return this.dataSource.transaction(async (manager) => {
+    if (dto.renderSizes && !dto.renderSizes.variants && !dto.renderSizes.previewWidths) {
+      throw new BadRequestException('renderSizes.variants is required');
+    }
+
+    const saved = await this.dataSource.transaction(async (manager) => {
       const latest = await manager.findOne(RenderProfileEntity, {
         where: { code: current.code },
         order: { profileVersion: 'DESC' },
@@ -138,6 +164,23 @@ export class RenderService {
         { isActive: false },
       );
 
+      // With variants, each one says whether it is watermarked; the profile switch follows them.
+      let watermarkEnabled = dto.watermarkEnabled ?? latest.watermarkEnabled;
+      let renderSizes = latest.renderSizes;
+      if (dto.renderSizes) {
+        const sizes = this.renderSizesOf({
+          maxWidth: null,
+          watermarkEnabled,
+          renderSizes: dto.renderSizes.variants
+            ? { variants: normalizeRenderVariants(dto.renderSizes.variants) }
+            : { previewWidths: dto.renderSizes.previewWidths },
+        });
+        if (dto.renderSizes.variants) {
+          watermarkEnabled = sizes.variants.some((variant) => variant.watermark);
+        }
+        renderSizes = { variants: sizes.variants, thumbnailWidth: dto.renderSizes.thumbnailWidth };
+      }
+
       return manager.save(
         manager.create(RenderProfileEntity, {
           id: uuidv7(),
@@ -150,7 +193,7 @@ export class RenderService {
           imageQuality: dto.imageQuality ?? latest.imageQuality,
           videoBitrateBps:
             dto.videoBitrateBps === undefined ? latest.videoBitrateBps : dto.videoBitrateBps,
-          watermarkEnabled: dto.watermarkEnabled ?? latest.watermarkEnabled,
+          watermarkEnabled,
           watermarkConfig:
             dto.watermarkConfig === undefined
               ? latest.watermarkConfig
@@ -158,18 +201,13 @@ export class RenderService {
                   ...(latest.watermarkConfig ?? {}),
                   ...(dto.watermarkConfig as Record<string, unknown>),
                 }),
-          renderSizes:
-            dto.renderSizes === undefined
-              ? latest.renderSizes
-              : {
-                  previewWidths: normalizePreviewWidths(dto.renderSizes.previewWidths),
-                  thumbnailWidth: dto.renderSizes.thumbnailWidth,
-                },
+          renderSizes,
           isActive: true,
           createdBy: userId,
         }),
       );
     });
+    return this.withRenderSizes(saved);
   }
 
   async createBatch(
@@ -209,16 +247,29 @@ export class RenderService {
       }
     }
 
-    const existingJobs = await this.jobRepository.find({
-      where: {
-        assetId: In([...new Set(media.map((item) => item.assetId))]),
-        renderProfileId: profile.id,
-        renderVersion: profile.profileVersion,
-        status: In(['queued', 'processing', 'completed']),
-      },
-    });
+    // With reuse, a file already rendered (or rendering) with this profile version is left
+    // alone; the jobs that do run keep the variants that still match and render the rest.
+    // Without it every file is rendered again from scratch, superseding any running render.
+    const reuseExisting = dto.reuseExisting ?? true;
+    const existingJobs = reuseExisting
+      ? await this.jobRepository.find({
+          where: {
+            assetId: In([...new Set(media.map((item) => item.assetId))]),
+            renderProfileId: profile.id,
+            renderVersion: profile.profileVersion,
+            status: In(['queued', 'processing', 'completed']),
+          },
+        })
+      : [];
     const existingAssetIds = new Set(existingJobs.map((job) => job.assetId));
-    const jobsToQueue = media.filter((item) => !existingAssetIds.has(item.assetId));
+    // A file shared by several of the selected projects is rendered once.
+    const jobsToQueue = [
+      ...new Map(
+        media
+          .filter((item) => !existingAssetIds.has(item.assetId))
+          .map((item) => [item.assetId, item]),
+      ).values(),
+    ];
 
     const batch = await this.dataSource.transaction(async (manager) => {
       const savedBatch = await manager.save(
@@ -244,7 +295,10 @@ export class RenderService {
         renderBatchId: savedBatch.id,
         renderVersion: profile.profileVersion,
         queueJobId: null,
-        dedupeKey: `${item.assetId}:${profile.id}:${profile.profileVersion}`,
+        dedupeKey: reuseExisting
+          ? `${item.assetId}:${profile.id}:${profile.profileVersion}`
+          : `${item.assetId}:${profile.id}:${profile.profileVersion}:full:${savedBatch.id}`,
+        reuseExisting,
         status: 'queued' as const,
         progressPercent: 0,
         progressMessage: 'Queued for batch rendering',
@@ -312,21 +366,17 @@ export class RenderService {
       }
     }
     if (dto.scope === RerenderWatermarkScope.NOT_WATERMARKED) {
-      // Any ready preview without a watermark (or no ready preview at all) needs a re-render.
-      // Thumbnails are never watermarked, so they are ignored here.
+      // Files without any ready watermarked preview need a re-render. Un-watermarked previews
+      // next to a watermarked one are wanted (a profile may ask for both), and thumbnails are
+      // never watermarked, so neither counts.
       mediaQuery.andWhere(
-        `(EXISTS (
+        `NOT EXISTS (
           SELECT 1 FROM asset_variants av
           WHERE av.asset_id = media.asset_id
             AND av.status = 'ready'
             AND ${PREVIEW_VARIANT_SQL}
-            AND av.has_watermark = false
-        ) OR NOT EXISTS (
-          SELECT 1 FROM asset_variants av
-          WHERE av.asset_id = media.asset_id
-            AND av.status = 'ready'
-            AND ${PREVIEW_VARIANT_SQL}
-        ))`,
+            AND av.has_watermark = true
+        )`,
       );
     }
     if (dto.mediaType === RerenderMediaType.IMAGE) {
@@ -340,7 +390,7 @@ export class RenderService {
       return { scope: dto.scope, matchedMedia: 0, enqueuedJobs: 0, batchId: null };
     }
     const batch = await this.createBatch(
-      { projectMediaIds: media.map((item) => item.id) },
+      { projectMediaIds: media.map((item) => item.id), reuseExisting: dto.reuseExisting },
       userId,
       userType,
     );
@@ -636,9 +686,12 @@ export class RenderService {
               mimeType: variant.mimeType,
               width: variant.width,
               height: variant.height,
+              resolution:
+                variant.variantCode === THUMBNAIL_VARIANT_CODE ? null : variantResolution(variant),
               fileSizeBytes: variant.fileSizeBytes,
               hasWatermark: variant.hasWatermark,
               renderVersion: variant.renderVersion,
+              reused: job.renderSummary?.reused.includes(variant.variantCode) ?? false,
             })),
         };
       }) as unknown as Array<Record<string, unknown>>,

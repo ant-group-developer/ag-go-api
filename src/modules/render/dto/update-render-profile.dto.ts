@@ -18,22 +18,43 @@ import {
   ValidateNested,
 } from 'class-validator';
 import {
-  PREVIEW_WIDTH_MAX,
-  PREVIEW_WIDTH_MIN,
-  PREVIEW_WIDTHS_MAX_COUNT,
+  PREVIEW_RESOLUTION_MAX,
+  PREVIEW_RESOLUTION_MIN,
+  PREVIEW_VARIANTS_MAX_COUNT,
   THUMBNAIL_WIDTH_MAX,
   THUMBNAIL_WIDTH_MIN,
 } from '../render-sizes';
 import { WATERMARK_FONT_WEIGHTS, WATERMARK_LIMITS, WATERMARK_POSITIONS } from '../watermark-config';
 
+export class RenderVariantDto {
+  /** Short edge in pixels: 720 is "720p". */
+  @IsInt()
+  @Min(PREVIEW_RESOLUTION_MIN)
+  @Max(PREVIEW_RESOLUTION_MAX)
+  resolution!: number;
+
+  @IsBoolean()
+  watermark!: boolean;
+}
+
 export class RenderSizesDto {
+  @IsOptional()
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(PREVIEW_WIDTHS_MAX_COUNT)
+  @ArrayMaxSize(PREVIEW_VARIANTS_MAX_COUNT)
+  @ValidateNested({ each: true })
+  @Type(() => RenderVariantDto)
+  variants?: RenderVariantDto[];
+
+  /** Legacy: preview widths, each with the profile's watermark switch. Ignored with `variants`. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(6)
   @IsInt({ each: true })
-  @Min(PREVIEW_WIDTH_MIN, { each: true })
-  @Max(PREVIEW_WIDTH_MAX, { each: true })
-  previewWidths!: number[];
+  @Min(64, { each: true })
+  @Max(7680, { each: true })
+  previewWidths?: number[];
 
   @IsInt()
   @Min(THUMBNAIL_WIDTH_MIN)

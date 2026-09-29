@@ -1,4 +1,9 @@
-import { isVariantServable, isWatermarkActive } from './watermark-policy';
+import {
+  canViewUnwatermarked,
+  isVariantServable,
+  isWatermarkActive,
+  watermarkFingerprint,
+} from './watermark-policy';
 
 describe('watermark policy', () => {
   const active = { watermarkEnabled: true, watermarkConfig: { text: 'AG Go' } };
@@ -32,5 +37,25 @@ describe('watermark policy', () => {
   it('serves any ready variant while watermarking is off', () => {
     expect(isVariantServable({ hasWatermark: false }, disabled)).toBe(true);
     expect(isVariantServable({ hasWatermark: false }, null)).toBe(true);
+  });
+
+  it('serves un-watermarked previews to viewers allowed to see originals', () => {
+    expect(isVariantServable({ hasWatermark: false }, active, true)).toBe(true);
+  });
+
+  it('lets admins and users who evaluate or download originals see un-watermarked media', () => {
+    expect(canViewUnwatermarked([], 'ADMIN')).toBe(true);
+    expect(canViewUnwatermarked(['go.project.evaluate'], 'USER')).toBe(true);
+    expect(canViewUnwatermarked(['go.project.download_original'], 'USER')).toBe(true);
+    expect(canViewUnwatermarked(['go.project.read', 'go.project.download_rendered'], 'USER')).toBe(
+      false,
+    );
+    expect(canViewUnwatermarked(undefined, undefined)).toBe(false);
+  });
+
+  it('fingerprints the watermark look, not the switch', () => {
+    expect(watermarkFingerprint(active)).toBe(watermarkFingerprint(disabled));
+    expect(watermarkFingerprint(active)).not.toBe(watermarkFingerprint(logoOnly));
+    expect(watermarkFingerprint(active)).toMatch(/^[0-9a-f]{12}$/);
   });
 });

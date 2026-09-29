@@ -15,6 +15,7 @@ import type { Request, Response } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequireAnyPermissions, RequirePermissions } from '../../common/auth/permissions.decorator';
+import { canViewUnwatermarked } from '../render/watermark-policy';
 import { AssetsService } from './assets.service';
 import { AbortUploadDto } from './dto/abort-upload.dto';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
@@ -102,10 +103,18 @@ export class AssetsController {
 
   @Get('assets/:assetId/renditions')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
-  @ApiOperation({ summary: 'Các kích thước preview (có watermark) người xem có thể chọn' })
+  @ApiOperation({
+    summary:
+      'Các bản preview (độ phân giải, watermark, bitrate) người xem được chọn; bản không watermark chỉ cho người có quyền xem file gốc',
+  })
   listRenditions(@Param('assetId') assetId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.assetsService.listRenditions(assetId, context.userId, context.userType);
+    return this.assetsService.listRenditions(
+      assetId,
+      context.userId,
+      context.userType,
+      canViewUnwatermarked(context.permissions, context.userType),
+    );
   }
 
   @Get('assets/:assetId/preview/:variantCode')
@@ -125,6 +134,7 @@ export class AssetsController {
       context.userType,
       response,
       width,
+      canViewUnwatermarked(context.permissions, context.userType),
     );
   }
 
@@ -147,6 +157,7 @@ export class AssetsController {
       context.userId,
       context.userType,
       width,
+      canViewUnwatermarked(context.permissions, context.userType),
     );
   }
 
