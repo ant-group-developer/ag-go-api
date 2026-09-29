@@ -681,6 +681,84 @@ export class RenderService {
     return this.jobRepository.findOneOrFail({ where: { id } });
   }
 
+  /**
+   * Queues every failed job of the batch again, except those whose file has a newer render
+   * (the older render must not overwrite that one's previews). A cancelled batch stays
+   * cancelled whatever its jobs do, and a paused one queues its failed jobs itself when resumed,
+   * so neither can be retried here.
+   */
+  async retryFailedJobs(
+    id: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<{ batch: RenderBatchEntity; retriedJobs: number }> {
+    await this.getBatch(id, userId, userType);
+    const jobs = await this.dataSource.transaction(async (manager) => {
+      // Locked so a concurrent cancel or pause cannot slip in between the check and the update.
+      const batch = await manager.findOne(RenderBatchEntity, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!batch) {
+        throw new NotFoundException('Render batch not found');
+      }
+      if (batch.status === 'cancelled') {
+        throw new ConflictException('A cancelled render batch cannot be retried');
+      }
+      if (batch.status === 'paused') {
+        throw new ConflictException('Resume the render batch to retry its failed jobs');
+      }
+      const result = await manager
+        .createQueryBuilder()
+        .update(MediaRenderJobEntity)
+        .set({
+          status: 'queued',
+          progressPercent: 0,
+          progressMessage: 'Queued for retry',
+          errorCode: null,
+          errorMessage: null,
+          startedAt: null,
+          finishedAt: null,
+        })
+        .where(
+          `render_batch_id = :id AND status = 'failed'
+           AND NOT EXISTS (
+             SELECT 1 FROM media_render_jobs newer
+             WHERE newer.asset_id = media_render_jobs.asset_id
+               AND newer.id <> media_render_jobs.id
+               AND newer.created_at > media_render_jobs.created_at
+               AND newer.status <> 'cancelled'
+           )`,
+          { id },
+        )
+        .returning(['id', 'assetId'])
+        .execute();
+      const rows = result.raw as Array<{ id: string; asset_id: string }>;
+      if (rows.length === 0) {
+        throw new ConflictException('No failed render job of this batch can be retried');
+      }
+      // Back to processing, so the batch counts its retried jobs as not done yet.
+      await refreshRenderBatch(manager, id);
+      return rows;
+    });
+    // After the commit, so the workers see the jobs queued when they claim them. Failed BullMQ
+    // jobs are kept (removeOnFail: false), so each retry needs a new BullMQ job id.
+    await Promise.all(
+      jobs.map((job) =>
+        this.mediaQueue.addProcessingJob({
+          eventId: `${job.id}-retry-${uuidv7()}`,
+          assetId: job.asset_id,
+          renderJobId: job.id,
+          userId,
+        }),
+      ),
+    );
+    return {
+      batch: await this.getBatch(id, userId, userType),
+      retriedJobs: jobs.length,
+    };
+  }
+
   async cancelBatch(
     id: string,
     userId: string,
