@@ -12,6 +12,7 @@
     "format:check": "prettier --check \"src/**/*.ts\" \"*.{json,yml,yaml,mjs}\"",
     "lint": "eslint \"src/**/*.ts\"",
     "test": "jest --runInBand",
+    "test:db": "jest --config jest.db.config.ts --runInBand",
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
     "openapi:generate": "ts-node --files src/scripts/generate-openapi.ts",
