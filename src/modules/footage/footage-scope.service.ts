@@ -4,7 +4,7 @@ import { DataSource } from 'typeorm';
 import { isAdminUserType } from '../../common/auth/user-type';
 import { FolderAccessService } from '../folders/folder-access.service';
 
-export type SegmentVisibilityContext = {
+export type AssetVisibilityContext = {
   userId: string;
   userType?: 'ADMIN' | 'USER';
   /** Pre-computed accessible folder IDs (pass to avoid double-fetch). */
@@ -12,14 +12,13 @@ export type SegmentVisibilityContext = {
 };
 
 /**
- * Computes which media_segments are visible to a user based on folder access grants.
+ * Computes which analysed videos (assets) are visible to a user based on folder access grants.
  *
  * Visibility rule (from plan S5 / 2.1):
- *   A segment is visible when its asset belongs to at least one project_media link where:
+ *   A video is visible when it belongs to at least one project_media link where:
  *     - project.folder_id is in the user's accessible folders
  *     - project.evaluation_status <> 'draft' OR project.owner_user_id = $userId   (ADMIN skips)
  *     - project_media.evaluation_status <> 'rejected'
- *   AND segment.is_current = true.
  *
  *   Out of scope (no visible link) → 404.
  */
@@ -90,66 +89,67 @@ export class FootageScopeService {
   }
 
   /**
-   * Returns a parameterized EXISTS sub-query that is TRUE when the given segment alias `s`
-   * has at least one non-rejected project_media in a visible project.
+   * Returns a parameterized EXISTS sub-query that is TRUE when the row alias (any table with an
+   * `asset_id` column) has at least one non-rejected project_media in a visible project.
    *
    * The caller must have already defined the `visible_projects` CTE.
    */
-  visibleExistsClause(segmentAlias = 's'): string {
+  visibleExistsClause(alias = 'aa'): string {
     return `EXISTS (
       SELECT 1
       FROM project_media pm
       JOIN visible_projects vp ON vp.id = pm.project_id
-      WHERE pm.asset_id = ${segmentAlias}.asset_id
+      WHERE pm.asset_id = ${alias}.asset_id
         AND pm.evaluation_status <> 'rejected'
     )`;
   }
 
   /**
-   * Returns TRUE if the segment has at least one approved link in scope.
+   * Returns TRUE if the video has at least one approved link in scope.
    * The caller must have already defined the `visible_projects` CTE.
    */
-  approvedExistsClause(segmentAlias = 's'): string {
+  approvedExistsClause(alias = 'aa'): string {
     return `EXISTS (
       SELECT 1
       FROM project_media pm
       JOIN visible_projects vp ON vp.id = pm.project_id
-      WHERE pm.asset_id = ${segmentAlias}.asset_id
+      WHERE pm.asset_id = ${alias}.asset_id
         AND pm.evaluation_status = 'approved'
     )`;
   }
 
   /**
-   * Asserts that all provided segmentIds are in scope for the user.
-   * Throws NotFoundException for any id that is not visible.
+   * Asserts that every asset is visible to the user (same rule as footage lists: a non-rejected
+   * link in a visible project). Throws NotFoundException naming the first one that is not.
    */
-  async assertSegmentsInScope(segmentIds: string[], ctx: SegmentVisibilityContext): Promise<void> {
-    if (segmentIds.length === 0) return;
-
+  async assertAssetsInScope(assetIds: string[], ctx: AssetVisibilityContext): Promise<void> {
+    if (assetIds.length === 0) return;
     const folderIds =
       ctx.folderIds ?? (await this.folderAccess.accessibleFolderIds(ctx.userId, ctx.userType));
     const isAdmin = isAdminUserType(ctx.userType);
-
     const { cte, params } = this.buildVisibleProjectsCte(isAdmin, folderIds, ctx.userId);
     const rawSql = `
       WITH ${cte}
-      SELECT s.id
-      FROM media_segments s
-      WHERE s.id = ANY(:seg_ids)
-        AND s.is_current = true
-        AND ${this.visibleExistsClause('s')}
+      SELECT a.id
+      FROM assets a
+      WHERE a.id = ANY(:asset_ids)
+        AND EXISTS (
+          SELECT 1
+          FROM project_media pm
+          JOIN visible_projects vp ON vp.id = pm.project_id
+          WHERE pm.asset_id = a.id
+            AND pm.evaluation_status <> 'rejected'
+        )
     `;
-
     const { sql, params: positional } = FootageScopeService.toPositional(rawSql, {
       ...params,
-      seg_ids: segmentIds,
+      asset_ids: assetIds,
     });
     const rows = (await this.dataSource.query(sql, positional)) as Array<{ id: string }>;
-
     const found = new Set(rows.map((r) => r.id));
-    const missing = segmentIds.find((id) => !found.has(id));
+    const missing = assetIds.find((id) => !found.has(id));
     if (missing) {
-      throw new NotFoundException(`Segment not found or not in scope: ${missing}`);
+      throw new NotFoundException(`Video not found or not in scope: ${missing}`);
     }
   }
 

@@ -11,13 +11,12 @@
 import type { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import type { DataSource, Repository } from 'typeorm';
-import type { OutboxService } from '../../common/outbox.service';
 import type { AnalysisFarmJobEntity } from '../../database/entities/analysis-farm-job.entity';
 import type { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
 import type { AssetEntity } from '../../database/entities/asset.entity';
-import type { MediaSegmentEntity } from '../../database/entities/media-segment.entity';
 import type { StorageAdapter } from '../assets/storage/storage-adapter';
 import type { AnalysisLogService } from './analysis-log.service';
+import type { AnalysisPipelineService } from './analysis-pipeline.service';
 import { FarmResultPollerService } from './farm-result-poller.service';
 import type { FarmClient } from './farm/farm-client';
 import type { JobView } from './farm/protocol';
@@ -75,6 +74,7 @@ function makeJobView(overrides: Partial<JobView> = {}): JobView {
     priority: 0,
     correlation_id: `${ANALYSIS_ID}:extract`,
     affinity_key: ANALYSIS_ID,
+    group_key: null,
     attempt_count: 1,
     max_attempts: 3,
     node_id: null,
@@ -145,10 +145,6 @@ function makeService(
     findOne: jest.fn().mockResolvedValue(null),
   };
 
-  const segmentRepo = {
-    find: jest.fn().mockResolvedValue([]),
-  };
-
   const manager = {
     update: jest.fn().mockResolvedValue({ affected: 0 }),
     count: jest.fn().mockResolvedValue(0),
@@ -180,8 +176,10 @@ function makeService(
     cancelJob: jest.fn().mockResolvedValue(undefined),
   };
 
-  const outboxService = {
-    create: jest.fn().mockReturnValue({ id: randomUUID(), eventType: 'asset.analysis.completed' }),
+  const pipeline = {
+    submitAi: jest.fn().mockResolvedValue(true),
+    finalizeIfDone: jest.fn().mockResolvedValue(undefined),
+    recordFarmJob: jest.fn().mockResolvedValue(undefined),
   };
 
   const config = {
@@ -193,12 +191,11 @@ function makeService(
   const service = new FarmResultPollerService(
     dataSource as unknown as DataSource,
     analysisRepo as unknown as Repository<AssetAnalysisEntity>,
-    segmentRepo as unknown as Repository<MediaSegmentEntity>,
     assetRepo as unknown as Repository<AssetEntity>,
     farmJobRepo as unknown as Repository<AnalysisFarmJobEntity>,
     storage as unknown as StorageAdapter,
     farmClient as unknown as FarmClient,
-    outboxService as unknown as OutboxService,
+    pipeline as unknown as AnalysisPipelineService,
     analysisLog as unknown as AnalysisLogService,
     config as unknown as ConfigService,
   );
@@ -210,6 +207,7 @@ function makeService(
     farmClient,
     storage,
     analysisLog,
+    pipeline,
   };
 }
 
@@ -252,7 +250,7 @@ describe('FarmResultPollerService', () => {
   // -------------------------------------------------------------------------
 
   describe('processJob: adopt from correlation_id', () => {
-    it('creates a local row via the query builder when the job is found only by correlation_id', async () => {
+    it('delegates to pipeline.recordFarmJob when the job is found only by correlation_id', async () => {
       // The first findOne returns null (row not found), the second returns an already-ingested row
       // so the test terminates quickly without needing the full processing stack.
       const adoptedRow: AnalysisFarmJobEntity = {
@@ -261,7 +259,7 @@ describe('FarmResultPollerService', () => {
         ingestedAt: new Date(),
         lockedUntil: null,
       };
-      const { service, farmJobRepo } = makeService({
+      const { service, pipeline } = makeService({
         farmJobFindOneValues: [null, adoptedRow],
         analysisCount: 1,
       });
@@ -271,12 +269,12 @@ describe('FarmResultPollerService', () => {
       );
 
       expect(result).toBe(true);
-      // Adoption path goes through createQueryBuilder().insert()...
-      expect(farmJobRepo.createQueryBuilder).toHaveBeenCalled();
-      const qb = (farmJobRepo.createQueryBuilder as jest.Mock).mock.results[0]?.value as {
-        insert: jest.Mock;
-      };
-      expect(qb?.insert).toHaveBeenCalled();
+      // Adoption path now delegates to AnalysisPipelineService.recordFarmJob
+      expect(pipeline.recordFarmJob).toHaveBeenCalledWith(
+        adoptedRow.farmJobId,
+        ANALYSIS_ID,
+        'scan.extract',
+      );
     });
   });
 

@@ -48,6 +48,8 @@ function makeService(options: {
   return { service, config, outboxService };
 }
 
+const AUTO_BATCH_ID = randomUUID();
+
 function makeManager(options: {
   inFlightAnalysis?: Partial<AssetAnalysisEntity> | null;
   currentAnalysis?: Partial<AssetAnalysisEntity> | null;
@@ -57,10 +59,16 @@ function makeManager(options: {
   const manager = {
     findOne: jest.fn().mockImplementation(async (_Entity: unknown, opts: { where: unknown }) => {
       // Distinguish the in-flight check (array of status conditions) from the
-      // same-version current check (object with isCurrent).
-      const where = opts?.where;
+      // same-version current check (object with isCurrent) and the
+      // autoBatchId check (object with kind: 'auto').
+      const where = opts?.where as Record<string, unknown>;
       if (Array.isArray(where)) {
         return inFlightAnalysis; // in-flight check
+      }
+      if (where?.kind === 'auto') {
+        // autoBatchId lookup — return a fake existing auto batch so the
+        // createQueryBuilder insert path is never reached in unit tests.
+        return { id: AUTO_BATCH_ID, kind: 'auto', status: 'running' };
       }
       return currentAnalysis; // same-version current check
     }),

@@ -1,7 +1,22 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsIn, IsNumber, IsOptional, IsUUID } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+} from 'class-validator';
 
 export class BackfillAnalysisDto {
+  @ApiPropertyOptional({ description: 'Batch name shown in the batches list' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  name?: string;
+
   @ApiPropertyOptional({
     type: [String],
     description: 'Folder ids to backfill (includes subfolders)',

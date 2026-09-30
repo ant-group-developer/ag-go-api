@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
@@ -8,8 +8,8 @@ import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.enti
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
-import { MediaSegmentEntity } from '../../database/entities/media-segment.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
+import { descriptionView, type DescriptionView } from '../analysis/description-view';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { SystemLogService } from '../logs/system-log.service';
@@ -17,32 +17,52 @@ import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
 import { isPreviewVariantCode } from '../render/render-sizes';
 import { findActiveRenderProfile, isVariantServable } from '../render/watermark-policy';
 import type { FootageCatalogBodyDto } from './dto/catalog-query.dto';
-import type { ResolvePurpose, ResolvedSegmentItem } from './dto/resolve-segments.dto';
+import type {
+  ResolveAssetsResponse,
+  ResolvePurpose,
+  ResolvedAssetItem,
+} from './dto/resolve-assets.dto';
 import type { FootageSearchQueryDto } from './dto/search-query.dto';
 import { FootageScopeService } from './footage-scope.service';
 
-/** CatalogItem shape returned by /footage/catalog and /footage/search */
-export type CatalogItem = {
-  segmentId: string;
+/** One analysed video as footage (see the asset-level contract). */
+export type FootageVideo = DescriptionView & {
   assetId: string;
-  startMs: number;
-  endMs: number;
+  name: string;
+  projectIds: string[];
+  projectNames: string[];
+  folderIds: string[];
   durationMs: number;
-  captionVi: string | null;
-  captionEn: string | null;
-  tags: string[] | null;
-  keywordsVi: string[] | null;
-  subjects: string[] | null;
-  actions: string[] | null;
-  shotSize: string | null;
-  cameraMotion: string | null;
-  timeOfDay: string | null;
-  setting: string | null;
-  peopleCount: string | null;
-  orientation: string | null;
-  quality: number | null;
-  usable: boolean | null;
+  width: number;
+  height: number;
+  orientation: string;
+  hasAudio: boolean;
+  hasSpeech: boolean | null;
   approved: boolean;
+  analyzedAt: string;
+  thumbnailUrl: string | null;
+};
+
+export type FacetValue = { value: string; label?: string; count: number };
+
+type VideoRow = {
+  assetId: string;
+  analysisId: string;
+  name: string;
+  storageKey: string;
+  projectIds: string[];
+  projectNames: string[];
+  folderIds: string[];
+  durationMs: number | null;
+  width: number | null;
+  height: number | null;
+  orientation: string | null;
+  hasAudio: boolean | null;
+  hasSpeech: boolean | null;
+  description: Record<string, unknown>;
+  approved: boolean;
+  analyzedAt: Date | string | null;
+  keyframes: Array<{ output?: string; t_ms?: number }> | null;
 };
 
 /** Decode a base64url cursor into { offset: number } */
@@ -61,6 +81,36 @@ function encodeCursor(offset: number): string {
   return Buffer.from(JSON.stringify({ offset })).toString('base64url');
 }
 
+/** Columns of a FootageVideo row; needs `aa` (current asset_analyses), `asst` (assets), `p`, `pm`, `visible_projects`. */
+function videoSelect(approvedExists: string): string {
+  return `
+    aa.asset_id                              AS "assetId",
+    aa.id                                    AS "analysisId",
+    asst.original_filename                   AS "name",
+    asst.original_storage_key                AS "storageKey",
+    array_agg(DISTINCT p.id)                 AS "projectIds",
+    array_agg(DISTINCT p.name)               AS "projectNames",
+    array_agg(DISTINCT p.folder_id)          AS "folderIds",
+    aa.duration_ms                           AS "durationMs",
+    CAST(aa.artifacts -> 'media' ->> 'width' AS int)  AS "width",
+    CAST(aa.artifacts -> 'media' ->> 'height' AS int) AS "height",
+    aa.orientation                           AS "orientation",
+    aa.has_audio                             AS "hasAudio",
+    aa.has_speech                            AS "hasSpeech",
+    aa.description                           AS "description",
+    (${approvedExists})                      AS "approved",
+    aa.completed_at                          AS "analyzedAt",
+    aa.keyframes                             AS "keyframes"`;
+}
+
+/** Joins every video row is read through: visible, non-rejected project links in the chosen folders. */
+const VIDEO_FROM = `
+  FROM asset_analyses aa
+  JOIN assets asst ON asst.id = aa.asset_id
+  JOIN project_media pm ON pm.asset_id = aa.asset_id AND pm.evaluation_status <> 'rejected'
+  JOIN projects p ON p.id = pm.project_id AND p.folder_id = ANY(:scope_folder_ids)
+  JOIN visible_projects vp ON vp.id = p.id`;
+
 @Injectable()
 export class FootageService {
   constructor(
@@ -69,8 +119,6 @@ export class FootageService {
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(FolderEntity)
     private readonly folderRepo: Repository<FolderEntity>,
-    @InjectRepository(MediaSegmentEntity)
-    private readonly segmentRepo: Repository<MediaSegmentEntity>,
     @InjectRepository(AssetVariantEntity)
     private readonly variantRepo: Repository<AssetVariantEntity>,
     @InjectRepository(AssetEntity)
@@ -97,64 +145,58 @@ export class FootageService {
       parentId: string | null;
       name: string;
       path: string;
-      analyzedSegments: number;
-      usableSegments: number;
+      analyzedVideos: number;
+      usableVideos: number;
     }>;
   }> {
     const folderIds = await this.folderAccess.accessibleFolderIds(userId, userType);
+    if (folderIds.length === 0) return { folders: [] };
 
-    if (folderIds.length === 0) {
-      return { folders: [] };
-    }
-
-    const isAdmin = isAdminUserType(userType);
-    const { cte, params } = this.scopeService.buildVisibleProjectsCte(isAdmin, folderIds, userId);
-    const visibleExists = this.scopeService.visibleExistsClause('s');
-
-    // Count analyzed and usable segments per folder
+    const { cte, params } = this.scopeService.buildVisibleProjectsCte(
+      isAdminUserType(userType),
+      folderIds,
+      userId,
+    );
     const countSql = `
       WITH ${cte}
       SELECT
         p.folder_id,
-        COUNT(DISTINCT s.id) FILTER (WHERE s.is_current = true AND ${visibleExists}) AS analyzed_count,
-        COUNT(DISTINCT s.id) FILTER (WHERE s.is_current = true AND s.usable = true AND ${visibleExists}) AS usable_count
+        COUNT(DISTINCT aa.asset_id) AS analyzed_count,
+        COUNT(DISTINCT aa.asset_id) FILTER (WHERE aa.usable = true) AS usable_count
       FROM projects p
+      JOIN visible_projects vp ON vp.id = p.id
       JOIN project_media pm ON pm.project_id = p.id AND pm.evaluation_status <> 'rejected'
-      JOIN media_segments s ON s.asset_id = pm.asset_id AND s.is_current = true
-      WHERE p.folder_id = ANY(:folder_ids)
+      JOIN asset_analyses aa ON aa.asset_id = pm.asset_id AND aa.is_current = true
+      WHERE p.folder_id = ANY(:folder_ids) AND aa.description IS NOT NULL
       GROUP BY p.folder_id
     `;
-
-    const { sql: countSqlPos, params: countParamsPos } = FootageScopeService.toPositional(
-      countSql,
-      { ...params, folder_ids: folderIds },
-    );
-    const countRows = (await this.dataSource.query(countSqlPos, countParamsPos)) as Array<{
+    const { sql, params: positional } = FootageScopeService.toPositional(countSql, {
+      ...params,
+      folder_ids: folderIds,
+    });
+    const countRows = (await this.dataSource.query(sql, positional)) as Array<{
       folder_id: string;
       analyzed_count: string;
       usable_count: string;
     }>;
-
     const countByFolder = new Map(
       countRows.map((r) => [
         r.folder_id,
         { analyzed: Number(r.analyzed_count), usable: Number(r.usable_count) },
       ]),
     );
-
     const folders = await this.folderRepo.find({
       where: { id: In(folderIds) },
       order: { pathText: 'ASC' },
     });
-
     return {
       folders: folders.map((f) => ({
         id: f.id,
         parentId: f.parentId,
         name: f.name,
         path: f.pathText,
-        analyzedSegments: countByFolder.get(f.id)?.analyzed ?? 0,
-        usableSegments: countByFolder.get(f.id)?.usable ?? 0,
+        analyzedVideos: countByFolder.get(f.id)?.analyzed ?? 0,
+        usableVideos: countByFolder.get(f.id)?.usable ?? 0,
       })),
     };
   }
@@ -167,10 +209,11 @@ export class FootageService {
     body: FootageCatalogBodyDto,
     userId: string,
     userType?: 'ADMIN' | 'USER',
-  ): Promise<{ items: CatalogItem[]; nextCursor: string | null }> {
-    const { folderIds, filters, cursor } = body;
-    const limit = Math.min(body.limit ?? 500, 1000);
-
+  ): Promise<{ items: FootageVideo[]; nextCursor: string | null }> {
+    const { folderIds, cursor } = body;
+    // Flat filters (current) win over the nested `filters` of older clients
+    const filters = { ...(body.filters ?? {}), ...stripUndefined(body) };
+    const limit = Math.min(body.limit ?? 200, 500);
     if (!folderIds || folderIds.length === 0 || folderIds.length > 50) {
       throw new BadRequestException('folderIds must have 1–50 entries');
     }
@@ -181,376 +224,227 @@ export class FootageService {
       folderIds,
       accessibleFolderIds,
     );
-
-    const isAdmin = isAdminUserType(userType);
     const { cte, params } = this.scopeService.buildVisibleProjectsCte(
-      isAdmin,
+      isAdminUserType(userType),
       scopeFolderIds,
       userId,
     );
-    const visibleExists = this.scopeService.visibleExistsClause('s');
-    const approvedExists = this.scopeService.approvedExistsClause('s');
-
+    const approvedExists = this.scopeService.approvedExistsClause('aa');
     const { offset } = decodeCursor(cursor);
 
-    const whereClauses: string[] = [`s.is_current = true`, visibleExists];
-    const queryParams: Record<string, unknown> = { ...params };
-
-    if (filters?.usableOnly !== false) {
-      whereClauses.push(`s.usable = true`);
-    }
-    if (filters?.minQuality !== undefined) {
-      whereClauses.push(`s.quality >= :min_quality`);
+    const where: string[] = ['aa.is_current = true', 'aa.description IS NOT NULL'];
+    const queryParams: Record<string, unknown> = { ...params, scope_folder_ids: scopeFolderIds };
+    if (filters.usableOnly !== false) where.push('aa.usable = true');
+    if (filters.minQuality !== undefined) {
+      where.push('aa.quality >= :min_quality');
       queryParams['min_quality'] = filters.minQuality;
     }
-    if (filters?.orientations?.length) {
-      whereClauses.push(`s.orientation = ANY(:orientations)`);
+    if (filters.orientations?.length) {
+      where.push('aa.orientation = ANY(:orientations)');
       queryParams['orientations'] = filters.orientations;
     }
-    if (filters?.shotSizes?.length) {
-      whereClauses.push(`s.shot_size = ANY(:shot_sizes)`);
-      queryParams['shot_sizes'] = filters.shotSizes;
+    if (filters.q?.trim()) {
+      where.push(textMatch());
+      queryParams['search_q'] = filters.q.trim();
     }
-    if (filters?.q?.trim()) {
-      // Simple text filter when search_vector may not exist yet; upgrade to FTS in search endpoint
-      whereClauses.push(
-        `(s.caption_vi ILIKE :q_pattern OR s.caption_en ILIKE :q_pattern OR :q_plain = ANY(s.tags))`,
-      );
-      queryParams['q_pattern'] = `%${filters.q.trim()}%`;
-      queryParams['q_plain'] = filters.q.trim();
-    }
-
-    const whereStr = whereClauses.join(' AND ');
 
     const sql = `
       WITH ${cte}
-      SELECT
-        s.id            AS "segmentId",
-        s.asset_id      AS "assetId",
-        s.start_ms      AS "startMs",
-        s.end_ms        AS "endMs",
-        (s.end_ms - s.start_ms) AS "durationMs",
-        s.caption_vi    AS "captionVi",
-        s.caption_en    AS "captionEn",
-        s.tags,
-        s.keywords_vi   AS "keywordsVi",
-        s.subjects,
-        s.actions,
-        s.shot_size     AS "shotSize",
-        s.camera_motion AS "cameraMotion",
-        s.time_of_day   AS "timeOfDay",
-        s.setting,
-        s.people_count  AS "peopleCount",
-        s.orientation,
-        s.quality,
-        s.usable,
-        (${approvedExists}) AS approved,
-        p.folder_id     AS "folderIdSort",
-        pm.project_id   AS "projectIdSort",
-        s.asset_id      AS "assetIdSort",
-        s.segment_index AS "segmentIndexSort"
-      FROM media_segments s
-      JOIN project_media pm ON pm.asset_id = s.asset_id AND pm.evaluation_status <> 'rejected'
-      JOIN projects p ON p.id = pm.project_id AND p.folder_id = ANY(:scope_folder_ids)
-      JOIN visible_projects vp ON vp.id = p.id
-      WHERE ${whereStr}
-      ORDER BY "folderIdSort", "projectIdSort", "assetIdSort", "segmentIndexSort"
+      SELECT ${videoSelect(approvedExists)}
+      ${VIDEO_FROM}
+      WHERE ${where.join(' AND ')}
+      GROUP BY aa.id, asst.id
+      ORDER BY aa.quality DESC NULLS LAST, aa.completed_at DESC NULLS LAST, aa.asset_id
       LIMIT :limit OFFSET :offset
     `;
-
-    queryParams['scope_folder_ids'] = scopeFolderIds;
     queryParams['limit'] = limit + 1;
     queryParams['offset'] = offset;
-
-    const { sql: catalogSql, params: catalogParams } = FootageScopeService.toPositional(
+    const { sql: positionalSql, params: positional } = FootageScopeService.toPositional(
       sql,
       queryParams,
     );
-    const rows = (await this.dataSource.query(catalogSql, catalogParams)) as Array<
-      CatalogItem & {
-        folderIdSort: string;
-        projectIdSort: string;
-        assetIdSort: string;
-        segmentIndexSort: number;
-      }
-    >;
-
+    const rows = (await this.dataSource.query(positionalSql, positional)) as VideoRow[];
     const hasMore = rows.length > limit;
-    const items = hasMore ? rows.slice(0, limit) : rows;
-
+    const page = hasMore ? rows.slice(0, limit) : rows;
     return {
-      items: items.map((row): CatalogItem => ({
-        segmentId: row.segmentId,
-        assetId: row.assetId,
-        startMs: row.startMs,
-        endMs: row.endMs,
-        durationMs: row.durationMs,
-        captionVi: row.captionVi,
-        captionEn: row.captionEn,
-        tags: row.tags,
-        keywordsVi: row.keywordsVi,
-        subjects: row.subjects,
-        actions: row.actions,
-        shotSize: row.shotSize,
-        cameraMotion: row.cameraMotion,
-        timeOfDay: row.timeOfDay,
-        setting: row.setting,
-        peopleCount: row.peopleCount,
-        orientation: row.orientation,
-        quality: row.quality,
-        usable: row.usable,
-        approved: row.approved,
-      })),
+      items: await Promise.all(page.map((row) => this.toVideo(row))),
       nextCursor: hasMore ? encodeCursor(offset + limit) : null,
     };
   }
 
   // ---------------------------------------------------------------------------
-  // GET /footage/segments/:segmentId/media
+  // GET /footage/assets/:assetId/media
   // ---------------------------------------------------------------------------
 
-  async getSegmentMedia(
-    segmentId: string,
+  async getAssetMedia(
+    assetId: string,
     userId: string,
     userType?: 'ADMIN' | 'USER',
   ): Promise<{
-    segmentId: string;
     assetId: string;
-    startMs: number;
-    endMs: number;
-    durationMs: number;
-    keyframeUrls: string[];
     previewUrl: string | null;
     previewWidth: number | null;
+    previewHeight: number | null;
+    watermarked: boolean;
+    posterUrl: string | null;
+    keyframes: { url: string; tMs: number }[];
+    contactSheetUrl: string | null;
+    durationMs: number | null;
+    expiresAt: string;
   }> {
-    await this.scopeService.assertSegmentsInScope([segmentId], { userId, userType });
-
-    const segment = await this.segmentRepo.findOne({ where: { id: segmentId } });
-    if (!segment) {
-      throw new NotFoundException(`Segment ${segmentId} not found`);
-    }
-
+    await this.scopeService.assertAssetsInScope([assetId], { userId, userType });
     const ttl = this.config.get<number>('R2_PRESIGNED_URL_TTL_SECONDS') ?? 900;
+    const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
 
-    // Resolve keyframe URLs
-    const keyframeUrls: string[] = [];
-    if (Array.isArray(segment.keyframes)) {
-      const analysis = await this.analysisRepo.findOne({ where: { id: segment.analysisId } });
-      const asset = analysis
-        ? await this.assetRepo.findOne({ where: { id: segment.assetId } })
-        : null;
+    const [asset, analysis, preview] = await Promise.all([
+      this.assetRepo.findOne({ where: { id: assetId } }),
+      this.analysisRepo.findOne({ where: { assetId, isCurrent: true } }),
+      this.bestPreview(assetId),
+    ]);
 
-      if (asset && analysis) {
-        const analysisPrefix = `${assetVariantsPrefix(asset.originalStorageKey, asset.id)}analysis/${analysis.id}/`;
-        for (const kf of segment.keyframes) {
-          const kfObj = kf as { output?: string };
-          if (kfObj.output) {
-            try {
-              const url = await this.storage.getPresignedGetUrl(
-                `${analysisPrefix}${kfObj.output}`,
-                'image/jpeg',
-                ttl,
-              );
-              keyframeUrls.push(url);
-            } catch {
-              // Skip missing keyframes rather than failing the whole request
-            }
-          }
-        }
+    let keyframes: { url: string; tMs: number }[] = [];
+    let contactSheetUrl: string | null = null;
+    if (asset && analysis) {
+      const prefix = analysisPrefix(asset.originalStorageKey, asset.id, analysis.id);
+      keyframes = await Promise.all(
+        ((analysis.keyframes ?? []) as Array<{ output: string; t_ms: number }>).map(async (kf) => ({
+          url: await this.storage.getPresignedGetUrl(`${prefix}${kf.output}`, 'image/jpeg', ttl),
+          tMs: kf.t_ms,
+        })),
+      );
+      const sheet = (analysis.artifacts as { contact_sheet?: { output: string } } | null)
+        ?.contact_sheet;
+      if (sheet) {
+        contactSheetUrl = await this.storage.getPresignedGetUrl(
+          `${prefix}${sheet.output}`,
+          'image/jpeg',
+          ttl,
+        );
       }
     }
-
-    // Best servable preview variant
-    const [variants, profile] = await Promise.all([
-      this.variantRepo.find({ where: { assetId: segment.assetId, status: 'ready' } }),
-      findActiveRenderProfile(this.renderProfileRepo),
-    ]);
-    const previews = variants.filter(
-      (v) => isPreviewVariantCode(v.variantCode) && isVariantServable(v, profile),
-    );
-    previews.sort((a, b) => (b.width ?? 0) - (a.width ?? 0));
-    const bestPreview = previews[0] ?? null;
-
-    let previewUrl: string | null = null;
-    if (bestPreview) {
-      previewUrl = await this.storage.getPresignedGetUrl(
-        bestPreview.storageKey,
-        bestPreview.mimeType,
-        ttl,
-      );
-    }
-
     return {
-      segmentId: segment.id,
-      assetId: segment.assetId,
-      startMs: segment.startMs,
-      endMs: segment.endMs,
-      durationMs: segment.endMs - segment.startMs,
-      keyframeUrls,
-      previewUrl,
-      previewWidth: bestPreview?.width ?? null,
+      assetId,
+      previewUrl: preview
+        ? await this.storage.getPresignedGetUrl(preview.storageKey, preview.mimeType, ttl)
+        : null,
+      previewWidth: preview?.width ?? null,
+      previewHeight: preview?.height ?? null,
+      watermarked: preview?.hasWatermark ?? false,
+      posterUrl: keyframes[0]?.url ?? null,
+      keyframes,
+      contactSheetUrl,
+      durationMs: analysis?.durationMs ?? durationFromMetadata(asset),
+      expiresAt,
     };
   }
 
   // ---------------------------------------------------------------------------
-  // POST /footage/segments/resolve
+  // POST /footage/assets/resolve
   // ---------------------------------------------------------------------------
 
-  async resolveSegments(
-    segmentIds: string[],
+  /**
+   * Signed URLs of whole video files for rendering (decision 8): users who may see originals get the
+   * original for a final render and the analysis proxy for a preview; everyone else gets the widest
+   * servable preview variant.
+   */
+  async resolveAssets(
+    assetIds: string[],
     purpose: ResolvePurpose,
     userId: string,
     userType?: 'ADMIN' | 'USER',
     userPermissions?: string[],
     requestId?: string,
-  ): Promise<{ items: ResolvedSegmentItem[] }> {
-    await this.scopeService.assertSegmentsInScope(segmentIds, { userId, userType });
-
-    const segments = await this.segmentRepo.find({
-      where: { id: In(segmentIds), isCurrent: true },
-    });
+  ): Promise<ResolveAssetsResponse> {
+    const uniqueIds = [...new Set(assetIds)];
+    await this.scopeService.assertAssetsInScope(uniqueIds, { userId, userType });
 
     const canAccessOriginal =
       isAdminUserType(userType) ||
       userPermissions?.includes(GO_PERMISSIONS.PROJECT_EVALUATE) ||
       userPermissions?.includes(GO_PERMISSIONS.PROJECT_DOWNLOAD_ORIGINAL);
-
     const ttl = this.config.get<number>('FARM_URL_TTL_SECONDS') ?? 3600;
     const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
 
-    const profile = await findActiveRenderProfile(this.renderProfileRepo);
+    const [assets, analyses] = await Promise.all([
+      this.assetRepo.find({ where: { id: In(uniqueIds) } }),
+      this.analysisRepo.find({ where: { assetId: In(uniqueIds), isCurrent: true } }),
+    ]);
+    const analysisByAsset = new Map(analyses.map((a) => [a.assetId, a]));
+    const items: ResolvedAssetItem[] = [];
+    const missing: string[] = [];
 
-    const items: ResolvedSegmentItem[] = [];
-
-    for (const segment of segments) {
-      const asset = await this.assetRepo.findOne({ where: { id: segment.assetId } });
-      if (!asset) continue;
-
-      let url: string;
-      let sourceKind: 'original' | 'proxy' | 'preview';
-      let watermarked: boolean;
-      let contentType: string;
-      let sizeBytes: number | null = null;
-      let cacheKey: string | null = null;
+    for (const asset of assets) {
+      const analysis = analysisByAsset.get(asset.id) ?? null;
+      const durationMs = analysis?.durationMs ?? durationFromMetadata(asset);
+      const original = async (): Promise<ResolvedAssetItem> => ({
+        assetId: asset.id,
+        url: await this.storage.getPresignedGetUrl(asset.originalStorageKey, asset.mimeType, ttl),
+        sourceKind: 'original',
+        watermarked: false,
+        contentType: asset.mimeType,
+        sizeBytes: Number(asset.fileSizeBytes) || null,
+        durationMs,
+        cacheKey: `original:${asset.id}`,
+        expiresAt,
+      });
 
       if (canAccessOriginal) {
-        // Decision 8: user with download_original or evaluate gets original/proxy
-        if (purpose === 'final') {
-          // Original file
-          url = await this.storage.getPresignedGetUrl(
-            asset.originalStorageKey,
-            asset.mimeType,
-            ttl,
-          );
-          sourceKind = 'original';
-          watermarked = false;
-          contentType = asset.mimeType;
-          sizeBytes = Number(asset.fileSizeBytes) || null;
-          cacheKey = `original:${asset.id}`;
-        } else {
-          // Preview → analysis proxy.mp4, fallback to original
-          const analysis = await this.analysisRepo.findOne({
-            where: { assetId: segment.assetId, isCurrent: true },
-          });
-          if (analysis) {
-            const proxyKey = `${assetVariantsPrefix(asset.originalStorageKey, asset.id)}analysis/${analysis.id}/proxy.mp4`;
-            try {
-              const head = await this.storage.headObject(proxyKey);
-              if (head) {
-                url = await this.storage.getPresignedGetUrl(proxyKey, 'video/mp4', ttl);
-                sourceKind = 'proxy';
-                watermarked = false;
-                contentType = 'video/mp4';
-                sizeBytes = head.sizeBytes;
-                cacheKey = `proxy:${analysis.id}`;
-              } else {
-                throw new Error('proxy not found');
-              }
-            } catch {
-              url = await this.storage.getPresignedGetUrl(
-                asset.originalStorageKey,
-                asset.mimeType,
-                ttl,
-              );
-              sourceKind = 'original';
-              watermarked = false;
-              contentType = asset.mimeType;
-              sizeBytes = Number(asset.fileSizeBytes) || null;
-              cacheKey = `original:${asset.id}`;
-            }
-          } else {
-            url = await this.storage.getPresignedGetUrl(
-              asset.originalStorageKey,
-              asset.mimeType,
-              ttl,
-            );
-            sourceKind = 'original';
-            watermarked = false;
-            contentType = asset.mimeType;
-            sizeBytes = Number(asset.fileSizeBytes) || null;
-            cacheKey = `original:${asset.id}`;
-          }
-        }
-      } else {
-        // User without download rights → best servable preview variant (watermarked)
-        const variants = await this.variantRepo.find({
-          where: { assetId: segment.assetId, status: 'ready' },
-        });
-        const previews = variants
-          .filter((v) => isPreviewVariantCode(v.variantCode) && isVariantServable(v, profile))
-          .sort((a, b) => (b.width ?? 0) - (a.width ?? 0));
-        const bestPreview = previews[0];
-        if (!bestPreview) {
-          // No preview available; skip this segment
+        if (purpose === 'final' || !analysis) {
+          items.push(await original());
           continue;
         }
-        url = await this.storage.getPresignedGetUrl(
-          bestPreview.storageKey,
-          bestPreview.mimeType,
-          ttl,
-        );
-        sourceKind = 'preview';
-        watermarked = bestPreview.hasWatermark;
-        contentType = bestPreview.mimeType;
-        sizeBytes = Number(bestPreview.fileSizeBytes) || null;
-        cacheKey = `variant:${bestPreview.id}`;
+        const proxyKey = `${analysisPrefix(asset.originalStorageKey, asset.id, analysis.id)}proxy.mp4`;
+        const head = await this.storage.headObject(proxyKey).catch(() => null);
+        if (!head) {
+          items.push(await original());
+          continue;
+        }
+        items.push({
+          assetId: asset.id,
+          url: await this.storage.getPresignedGetUrl(proxyKey, 'video/mp4', ttl),
+          sourceKind: 'proxy',
+          watermarked: false,
+          contentType: 'video/mp4',
+          sizeBytes: head.sizeBytes,
+          durationMs,
+          cacheKey: `proxy:${analysis.id}`,
+          expiresAt,
+        });
+        continue;
       }
 
+      const preview = await this.bestPreview(asset.id);
+      if (!preview) {
+        missing.push(asset.id);
+        continue;
+      }
       items.push({
-        segmentId: segment.id,
-        assetId: segment.assetId,
-        startMs: segment.startMs,
-        endMs: segment.endMs,
-        url,
-        sourceKind,
-        watermarked,
-        contentType,
-        sizeBytes,
-        cacheKey,
+        assetId: asset.id,
+        url: await this.storage.getPresignedGetUrl(preview.storageKey, preview.mimeType, ttl),
+        sourceKind: 'preview',
+        watermarked: preview.hasWatermark,
+        contentType: preview.mimeType,
+        sizeBytes: Number(preview.fileSizeBytes) || null,
+        durationMs,
+        cacheKey: `variant:${preview.id}`,
         expiresAt,
       });
     }
 
-    // Audit
     try {
       await this.systemLog.write({
         level: 'info',
         category: 'footage',
         action: 'resolve',
-        message: `Resolved ${items.length} segments for userId=${userId} purpose=${purpose}`,
+        message: `Resolved ${items.length} videos for userId=${userId} purpose=${purpose}`,
         requestId,
         userId,
-        metadata: {
-          segmentCount: items.length,
-          purpose,
-          canAccessOriginal,
-        },
+        metadata: { videoCount: items.length, missing: missing.length, purpose, canAccessOriginal },
       });
     } catch {
       // Audit failure must not block the response
     }
-
-    return { items };
+    return { items, missing };
   }
 
   // ---------------------------------------------------------------------------
@@ -561,196 +455,51 @@ export class FootageService {
     query: FootageSearchQueryDto,
     userId: string,
     userType?: 'ADMIN' | 'USER',
-  ): Promise<{
-    items: Array<
-      CatalogItem & {
-        score: number;
-        keyframeUrl: string | null;
-        assetName: string;
-        projectNames: string[];
-      }
-    >;
-    nextCursor: string | null;
-  }> {
+  ): Promise<{ items: Array<FootageVideo & { score: number }>; nextCursor: string | null }> {
     const limit = Math.min(query.limit ?? 40, 100);
     const { offset } = decodeCursor(query.cursor);
+    const scope = await this.searchScope(query, userId, userType);
+    if (!scope) return { items: [], nextCursor: null };
+    const { cte, where, queryParams } = scope;
+    const approvedExists = this.scopeService.approvedExistsClause('aa');
 
-    const accessibleFolderIds = await this.folderAccess.accessibleFolderIds(userId, userType);
-    const scopeFolderIds = query.folderIds?.length
-      ? await this.scopeService.expandToAccessibleSubtree(query.folderIds, accessibleFolderIds)
-      : accessibleFolderIds;
-
-    if (scopeFolderIds.length === 0) {
-      return { items: [], nextCursor: null };
-    }
-
-    const isAdmin = isAdminUserType(userType);
-    const { cte, params } = this.scopeService.buildVisibleProjectsCte(
-      isAdmin,
-      scopeFolderIds,
-      userId,
-    );
-    const visibleExists = this.scopeService.visibleExistsClause('s');
-    const approvedExists = this.scopeService.approvedExistsClause('s');
-
-    const whereClauses: string[] = [`s.is_current = true`, visibleExists];
-    const queryParams: Record<string, unknown> = { ...params };
-
-    if (query.usableOnly !== false) {
-      whereClauses.push(`s.usable = true`);
-    }
-    if (query.orientations?.length) {
-      whereClauses.push(`s.orientation = ANY(:orientations)`);
-      queryParams['orientations'] = query.orientations;
-    }
-    if (query.shotSizes?.length) {
-      whereClauses.push(`s.shot_size = ANY(:shot_sizes)`);
-      queryParams['shot_sizes'] = query.shotSizes;
-    }
-    if (query.timesOfDay?.length) {
-      whereClauses.push(`s.time_of_day = ANY(:times_of_day)`);
-      queryParams['times_of_day'] = query.timesOfDay;
-    }
-    if (query.tags?.length) {
-      whereClauses.push(`s.tags && :filter_tags`);
-      queryParams['filter_tags'] = query.tags;
-    }
-    if (query.minDurationMs !== undefined) {
-      whereClauses.push(`(s.end_ms - s.start_ms) >= :min_dur`);
-      queryParams['min_dur'] = query.minDurationMs;
-    }
-    if (query.maxDurationMs !== undefined) {
-      whereClauses.push(`(s.end_ms - s.start_ms) <= :max_dur`);
-      queryParams['max_dur'] = query.maxDurationMs;
-    }
-    if (query.categoryIds?.length) {
-      whereClauses.push(`p.category_id = ANY(:category_ids)`);
-      queryParams['category_ids'] = query.categoryIds;
-    }
-    if (query.provinceIds?.length) {
-      whereClauses.push(`p.province_id = ANY(:province_ids)`);
-      queryParams['province_ids'] = query.provinceIds;
-    }
-
-    // FTS or trigram search
-    let scoreExpr = '1.0';
+    let scoreExpr = `(COALESCE(aa.quality, 0) * 0.1 + CASE WHEN (${approvedExists}) THEN 0.05 ELSE 0.0 END)`;
     if (query.q?.trim()) {
-      const q = query.q.trim();
-      queryParams['search_q'] = q;
-      // Use search_vector for FTS ranking + quality/approval boost
+      queryParams['search_q'] = query.q.trim();
+      where.push(textMatch());
       scoreExpr = `(
-        COALESCE(ts_rank(s.search_vector, websearch_to_tsquery('simple', immutable_unaccent(:search_q))), 0.0)
-        -- accent-exact bonus: reward segments whose original (non-de-accented) text closely
-        -- matches the original query (captures accented-query → accented-caption advantage)
-        + similarity(coalesce(s.caption_vi,''), :search_q) * 0.2
-        + similarity(coalesce(s.caption_en,''), :search_q) * 0.1
-        -- quality bonus (0–0.5)
-        + COALESCE(s.quality, 0) * 0.1
-        -- approved boost
+        COALESCE(ts_rank(aa.search_vector, websearch_to_tsquery('simple', immutable_unaccent(:search_q))), 0.0)
+        + similarity(coalesce(aa.description ->> 'title_vi', ''), :search_q) * 0.2
+        + similarity(coalesce(aa.description ->> 'summary_en', ''), :search_q) * 0.05
+        + COALESCE(aa.quality, 0) * 0.1
         + CASE WHEN (${approvedExists}) THEN 0.05 ELSE 0.0 END
       )`;
-      whereClauses.push(
-        `(s.search_vector @@ websearch_to_tsquery('simple', immutable_unaccent(:search_q))
-          OR similarity(immutable_unaccent(lower(coalesce(s.caption_vi,''))), immutable_unaccent(lower(:search_q))) > 0.15
-          OR similarity(immutable_unaccent(lower(coalesce(s.caption_en,''))), immutable_unaccent(lower(:search_q))) > 0.15)`,
-      );
     }
-
-    const whereStr = whereClauses.join(' AND ');
 
     const sql = `
       WITH ${cte}
-      SELECT
-        s.id            AS "segmentId",
-        s.asset_id      AS "assetId",
-        s.start_ms      AS "startMs",
-        s.end_ms        AS "endMs",
-        (s.end_ms - s.start_ms) AS "durationMs",
-        s.caption_vi    AS "captionVi",
-        s.caption_en    AS "captionEn",
-        s.tags,
-        s.keywords_vi   AS "keywordsVi",
-        s.subjects,
-        s.actions,
-        s.shot_size     AS "shotSize",
-        s.camera_motion AS "cameraMotion",
-        s.time_of_day   AS "timeOfDay",
-        s.setting,
-        s.people_count  AS "peopleCount",
-        s.orientation,
-        s.quality,
-        s.usable,
-        (${approvedExists}) AS approved,
-        ${scoreExpr} AS score,
-        a.original_filename AS "assetName",
-        array_agg(DISTINCT p.name) AS "projectNames",
-        s.keyframes     AS "keyframesRaw"
-      FROM media_segments s
-      JOIN assets a ON a.id = s.asset_id
-      JOIN project_media pm ON pm.asset_id = s.asset_id AND pm.evaluation_status <> 'rejected'
-      JOIN projects p ON p.id = pm.project_id AND p.folder_id = ANY(:scope_folder_ids)
-      JOIN visible_projects vp ON vp.id = p.id
-      WHERE ${whereStr}
-      GROUP BY s.id, a.original_filename, s.caption_vi, s.caption_en
-      ORDER BY score DESC, s.id
+      SELECT ${videoSelect(approvedExists)}, ${scoreExpr} AS score
+      ${VIDEO_FROM}
+      WHERE ${where.join(' AND ')}
+      GROUP BY aa.id, asst.id
+      ORDER BY score DESC, aa.asset_id
       LIMIT :limit OFFSET :offset
     `;
-
-    queryParams['scope_folder_ids'] = scopeFolderIds;
     queryParams['limit'] = limit + 1;
     queryParams['offset'] = offset;
-
-    type SearchRow = CatalogItem & {
-      score: number;
-      assetName: string;
-      projectNames: string[];
-      keyframesRaw: unknown[] | null;
-    };
-    const { sql: searchSql, params: searchParams } = FootageScopeService.toPositional(
+    const { sql: positionalSql, params: positional } = FootageScopeService.toPositional(
       sql,
       queryParams,
     );
-    const rows = (await this.dataSource.query(searchSql, searchParams)) as SearchRow[];
-
+    const rows = (await this.dataSource.query(positionalSql, positional)) as Array<
+      VideoRow & { score: number }
+    >;
     const hasMore = rows.length > limit;
-    const pageRows = hasMore ? rows.slice(0, limit) : rows;
-
-    const ttl = this.config.get<number>('R2_PRESIGNED_URL_TTL_SECONDS') ?? 900;
-
-    // Resolve first keyframe URL for each segment (best-effort)
-    const items = await Promise.all(
-      pageRows.map(async (row) => {
-        let keyframeUrl: string | null = null;
-        const kfs = Array.isArray(row.keyframesRaw) ? row.keyframesRaw : [];
-        const firstKf = (kfs[0] as { output?: string } | undefined)?.output;
-        if (firstKf) {
-          try {
-            const asset = await this.assetRepo.findOne({ where: { id: row.assetId } });
-            const analysis = asset
-              ? await this.analysisRepo.findOne({
-                  where: { assetId: row.assetId, isCurrent: true },
-                })
-              : null;
-            if (asset && analysis) {
-              const prefix = `${assetVariantsPrefix(asset.originalStorageKey, asset.id)}analysis/${analysis.id}/`;
-              keyframeUrl = await this.storage.getPresignedGetUrl(
-                `${prefix}${firstKf}`,
-                'image/jpeg',
-                ttl,
-              );
-            }
-          } catch {
-            // Skip
-          }
-        }
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { keyframesRaw: _kfr, ...rest } = row;
-        return { ...rest, keyframeUrl };
-      }),
-    );
-
+    const page = hasMore ? rows.slice(0, limit) : rows;
     return {
-      items,
+      items: await Promise.all(
+        page.map(async (row) => ({ ...(await this.toVideo(row)), score: Number(row.score) })),
+      ),
       nextCursor: hasMore ? encodeCursor(offset + limit) : null,
     };
   }
@@ -764,182 +513,220 @@ export class FootageService {
     userId: string,
     userType?: 'ADMIN' | 'USER',
   ): Promise<{
-    tags: Array<{ value: string; count: number }>;
-    shotSizes: Array<{ value: string; count: number }>;
-    timesOfDay: Array<{ value: string; count: number }>;
-    orientations: Array<{ value: string; count: number }>;
-    categories: Array<{ id: string; name: string; count: number }>;
-    provinces: Array<{ id: string; name: string; count: number }>;
+    tags: FacetValue[];
+    genres: FacetValue[];
+    timesOfDay: FacetValue[];
+    orientations: FacetValue[];
+    categories: FacetValue[];
+    provinces: FacetValue[];
   }> {
+    const empty = {
+      tags: [],
+      genres: [],
+      timesOfDay: [],
+      orientations: [],
+      categories: [],
+      provinces: [],
+    };
+    const scope = await this.searchScope(query, userId, userType);
+    if (!scope) return empty;
+    const { cte, where, queryParams } = scope;
+    if (query.q?.trim()) {
+      queryParams['search_q'] = query.q.trim();
+      where.push(textMatch());
+    }
+    const whereStr = where.join(' AND ');
+    const facet = async (
+      valueExpr: string,
+      extraWhere: string,
+    ): Promise<Array<{ value: string; count: string }>> => {
+      const sql = `
+        WITH ${cte}
+        SELECT ${valueExpr} AS value, COUNT(DISTINCT aa.asset_id) AS count
+        ${VIDEO_FROM}
+        WHERE ${whereStr} AND ${extraWhere}
+        GROUP BY 1 ORDER BY count DESC LIMIT 30
+      `;
+      const { sql: positionalSql, params: positional } = FootageScopeService.toPositional(
+        sql,
+        queryParams,
+      );
+      return (await this.dataSource.query(positionalSql, positional)) as Array<{
+        value: string;
+        count: string;
+      }>;
+    };
+    const [tags, genres, timesOfDay, orientations, categories, provinces] = await Promise.all([
+      facet(
+        `jsonb_array_elements_text(aa.description -> 'tags')`,
+        `jsonb_typeof(aa.description -> 'tags') = 'array'`,
+      ),
+      facet(`aa.description ->> 'genre'`, `coalesce(aa.description ->> 'genre', '') <> ''`),
+      facet(`aa.description ->> 'time_of_day'`, `aa.description ? 'time_of_day'`),
+      facet('aa.orientation', 'aa.orientation IS NOT NULL'),
+      facet('CAST(p.category_id AS text)', 'p.category_id IS NOT NULL'),
+      facet('CAST(p.province_id AS text)', 'p.province_id IS NOT NULL'),
+    ]);
+    const names = async (table: 'categories' | 'provinces', ids: string[]) =>
+      ids.length
+        ? new Map(
+            (
+              (await this.dataSource.query(
+                `SELECT id::text AS id, name FROM ${table} WHERE id::text = ANY($1)`,
+                [ids],
+              )) as Array<{ id: string; name: string }>
+            ).map((r) => [r.id, r.name]),
+          )
+        : new Map<string, string>();
+    const [categoryNames, provinceNames] = await Promise.all([
+      names(
+        'categories',
+        categories.map((r) => r.value),
+      ),
+      names(
+        'provinces',
+        provinces.map((r) => r.value),
+      ),
+    ]);
+    const plain = (rows: Array<{ value: string; count: string }>): FacetValue[] =>
+      rows.map((r) => ({ value: r.value, count: Number(r.count) }));
+    const labelled = (
+      rows: Array<{ value: string; count: string }>,
+      map: Map<string, string>,
+    ): FacetValue[] =>
+      rows.map((r) => ({
+        value: r.value,
+        label: map.get(r.value) ?? r.value,
+        count: Number(r.count),
+      }));
+    return {
+      tags: plain(tags),
+      genres: plain(genres),
+      timesOfDay: plain(timesOfDay),
+      orientations: plain(orientations),
+      categories: labelled(categories, categoryNames),
+      provinces: labelled(provinces, provinceNames),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  /** Scope CTE and filters shared by search and facets; null when the user can see no folder. */
+  private async searchScope(
+    query: Omit<FootageSearchQueryDto, 'limit' | 'cursor'>,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<{ cte: string; where: string[]; queryParams: Record<string, unknown> } | null> {
     const accessibleFolderIds = await this.folderAccess.accessibleFolderIds(userId, userType);
     const scopeFolderIds = query.folderIds?.length
       ? await this.scopeService.expandToAccessibleSubtree(query.folderIds, accessibleFolderIds)
       : accessibleFolderIds;
-
-    if (scopeFolderIds.length === 0) {
-      return {
-        tags: [],
-        shotSizes: [],
-        timesOfDay: [],
-        orientations: [],
-        categories: [],
-        provinces: [],
-      };
-    }
-
-    const isAdmin = isAdminUserType(userType);
+    if (scopeFolderIds.length === 0) return null;
     const { cte, params } = this.scopeService.buildVisibleProjectsCte(
-      isAdmin,
+      isAdminUserType(userType),
       scopeFolderIds,
       userId,
     );
-    const visibleExists = this.scopeService.visibleExistsClause('s');
-
-    const whereClauses: string[] = [`s.is_current = true`, visibleExists];
+    const where: string[] = ['aa.is_current = true', 'aa.description IS NOT NULL'];
     const queryParams: Record<string, unknown> = { ...params, scope_folder_ids: scopeFolderIds };
-
-    if (query.usableOnly !== false) {
-      whereClauses.push(`s.usable = true`);
-    }
+    if (query.usableOnly !== false) where.push('aa.usable = true');
     if (query.orientations?.length) {
-      whereClauses.push(`s.orientation = ANY(:orientations)`);
+      where.push('aa.orientation = ANY(:orientations)');
       queryParams['orientations'] = query.orientations;
     }
-    if (query.shotSizes?.length) {
-      whereClauses.push(`s.shot_size = ANY(:shot_sizes)`);
-      queryParams['shot_sizes'] = query.shotSizes;
-    }
     if (query.timesOfDay?.length) {
-      whereClauses.push(`s.time_of_day = ANY(:times_of_day)`);
+      where.push(`(aa.description ->> 'time_of_day') = ANY(:times_of_day)`);
       queryParams['times_of_day'] = query.timesOfDay;
     }
+    if (query.genres?.length) {
+      where.push(`(aa.description ->> 'genre') = ANY(:genres)`);
+      queryParams['genres'] = query.genres;
+    }
     if (query.tags?.length) {
-      whereClauses.push(`s.tags && :filter_tags`);
+      where.push(`(aa.description -> 'tags') ?| :filter_tags`);
       queryParams['filter_tags'] = query.tags;
     }
+    if (query.minDurationMs !== undefined) {
+      where.push('aa.duration_ms >= :min_dur');
+      queryParams['min_dur'] = query.minDurationMs;
+    }
+    if (query.maxDurationMs !== undefined) {
+      where.push('aa.duration_ms <= :max_dur');
+      queryParams['max_dur'] = query.maxDurationMs;
+    }
     if (query.categoryIds?.length) {
-      whereClauses.push(`p.category_id = ANY(:category_ids)`);
+      where.push('p.category_id = ANY(:category_ids)');
       queryParams['category_ids'] = query.categoryIds;
     }
     if (query.provinceIds?.length) {
-      whereClauses.push(`p.province_id = ANY(:province_ids)`);
+      where.push('p.province_id = ANY(:province_ids)');
       queryParams['province_ids'] = query.provinceIds;
     }
+    return { cte, where, queryParams };
+  }
 
-    const whereStr = whereClauses.join(' AND ');
-    const baseFrom = `
-      FROM media_segments s
-      JOIN project_media pm ON pm.asset_id = s.asset_id AND pm.evaluation_status <> 'rejected'
-      JOIN projects p ON p.id = pm.project_id AND p.folder_id = ANY(:scope_folder_ids)
-      JOIN visible_projects vp ON vp.id = p.id
-    `;
-
-    const tagsSql = `
-      WITH ${cte}
-      SELECT unnest(s.tags) AS value, COUNT(DISTINCT s.id) AS count
-      ${baseFrom}
-      WHERE ${whereStr} AND s.tags IS NOT NULL AND array_length(s.tags, 1) > 0
-      GROUP BY value ORDER BY count DESC LIMIT 30
-    `;
-    const shotSql = `
-      WITH ${cte}
-      SELECT s.shot_size AS value, COUNT(DISTINCT s.id) AS count
-      ${baseFrom}
-      WHERE ${whereStr} AND s.shot_size IS NOT NULL
-      GROUP BY value ORDER BY count DESC LIMIT 30
-    `;
-    const todSql = `
-      WITH ${cte}
-      SELECT s.time_of_day AS value, COUNT(DISTINCT s.id) AS count
-      ${baseFrom}
-      WHERE ${whereStr} AND s.time_of_day IS NOT NULL
-      GROUP BY value ORDER BY count DESC LIMIT 30
-    `;
-    const orientSql = `
-      WITH ${cte}
-      SELECT s.orientation AS value, COUNT(DISTINCT s.id) AS count
-      ${baseFrom}
-      WHERE ${whereStr} AND s.orientation IS NOT NULL
-      GROUP BY value ORDER BY count DESC LIMIT 30
-    `;
-    const catSql = `
-      WITH ${cte}
-      SELECT p.category_id AS id, COUNT(DISTINCT s.id) AS count
-      ${baseFrom}
-      WHERE ${whereStr} AND p.category_id IS NOT NULL
-      GROUP BY p.category_id ORDER BY count DESC LIMIT 30
-    `;
-    const provSql = `
-      WITH ${cte}
-      SELECT p.province_id AS id, COUNT(DISTINCT s.id) AS count
-      ${baseFrom}
-      WHERE ${whereStr} AND p.province_id IS NOT NULL
-      GROUP BY p.province_id ORDER BY count DESC LIMIT 30
-    `;
-
-    const toPos = (rawSql: string) => FootageScopeService.toPositional(rawSql, queryParams);
-    const [tagsRows, shotRows, todRows, orientRows, catRows, provRows] = await Promise.all([
-      (({ sql: s, params: p }) =>
-        this.dataSource.query(s, p) as Promise<Array<{ value: string; count: string }>>)(
-        toPos(tagsSql),
-      ),
-      (({ sql: s, params: p }) =>
-        this.dataSource.query(s, p) as Promise<Array<{ value: string; count: string }>>)(
-        toPos(shotSql),
-      ),
-      (({ sql: s, params: p }) =>
-        this.dataSource.query(s, p) as Promise<Array<{ value: string; count: string }>>)(
-        toPos(todSql),
-      ),
-      (({ sql: s, params: p }) =>
-        this.dataSource.query(s, p) as Promise<Array<{ value: string; count: string }>>)(
-        toPos(orientSql),
-      ),
-      (({ sql: s, params: p }) =>
-        this.dataSource.query(s, p) as Promise<Array<{ id: string; count: string }>>)(
-        toPos(catSql),
-      ),
-      (({ sql: s, params: p }) =>
-        this.dataSource.query(s, p) as Promise<Array<{ id: string; count: string }>>)(
-        toPos(provSql),
-      ),
-    ]);
-
-    // Enrich categories and provinces with names
-    const catIds = catRows.map((r) => r.id);
-    const provIds = provRows.map((r) => r.id);
-
-    const [catNames, provNames] = await Promise.all([
-      catIds.length
-        ? (this.dataSource.query(`SELECT id, name FROM categories WHERE id = ANY($1)`, [
-            catIds,
-          ]) as Promise<Array<{ id: string; name: string }>>)
-        : Promise.resolve<Array<{ id: string; name: string }>>([]),
-      provIds.length
-        ? (this.dataSource.query(`SELECT id, name FROM provinces WHERE id = ANY($1)`, [
-            provIds,
-          ]) as Promise<Array<{ id: string; name: string }>>)
-        : Promise.resolve<Array<{ id: string; name: string }>>([]),
-    ]);
-
-    const catNameMap = new Map(catNames.map((r) => [r.id, r.name]));
-    const provNameMap = new Map(provNames.map((r) => [r.id, r.name]));
-
+  private async toVideo(row: VideoRow): Promise<FootageVideo> {
+    const firstKeyframe = Array.isArray(row.keyframes) ? row.keyframes[0]?.output : undefined;
+    let thumbnailUrl: string | null = null;
+    if (firstKeyframe) {
+      const ttl = this.config.get<number>('R2_PRESIGNED_URL_TTL_SECONDS') ?? 900;
+      thumbnailUrl = await this.storage
+        .getPresignedGetUrl(
+          `${analysisPrefix(row.storageKey, row.assetId, row.analysisId)}${firstKeyframe}`,
+          'image/jpeg',
+          ttl,
+        )
+        .catch(() => null);
+    }
     return {
-      tags: tagsRows.map((r) => ({ value: r.value, count: Number(r.count) })),
-      shotSizes: shotRows.map((r) => ({ value: r.value, count: Number(r.count) })),
-      timesOfDay: todRows.map((r) => ({ value: r.value, count: Number(r.count) })),
-      orientations: orientRows.map((r) => ({ value: r.value, count: Number(r.count) })),
-      categories: catRows.map((r) => ({
-        id: r.id,
-        name: catNameMap.get(r.id) ?? r.id,
-        count: Number(r.count),
-      })),
-      provinces: provRows.map((r) => ({
-        id: r.id,
-        name: provNameMap.get(r.id) ?? r.id,
-        count: Number(r.count),
-      })),
+      ...descriptionView(row.description),
+      assetId: row.assetId,
+      name: row.name,
+      projectIds: row.projectIds ?? [],
+      projectNames: row.projectNames ?? [],
+      folderIds: row.folderIds ?? [],
+      durationMs: row.durationMs ?? 0,
+      width: row.width ?? 0,
+      height: row.height ?? 0,
+      orientation: row.orientation ?? 'landscape',
+      hasAudio: row.hasAudio ?? false,
+      hasSpeech: row.hasSpeech,
+      approved: Boolean(row.approved),
+      analyzedAt: row.analyzedAt ? new Date(row.analyzedAt).toISOString() : '',
+      thumbnailUrl,
     };
   }
+
+  /** Widest ready preview variant the active render profile lets everyone see. */
+  private async bestPreview(assetId: string): Promise<AssetVariantEntity | null> {
+    const [variants, profile] = await Promise.all([
+      this.variantRepo.find({ where: { assetId, status: 'ready' } }),
+      findActiveRenderProfile(this.renderProfileRepo),
+    ]);
+    const previews = variants
+      .filter((v) => isPreviewVariantCode(v.variantCode) && isVariantServable(v, profile))
+      .sort((a, b) => (b.width ?? 0) - (a.width ?? 0));
+    return previews[0] ?? null;
+  }
+}
+
+/** Full-text on the search vector, or trigram closeness to the title (accent-insensitive). */
+function textMatch(): string {
+  return `(aa.search_vector @@ websearch_to_tsquery('simple', immutable_unaccent(:search_q))
+    OR similarity(immutable_unaccent(lower(coalesce(aa.description ->> 'title_vi', ''))), immutable_unaccent(lower(:search_q))) > 0.15)`;
+}
+
+function analysisPrefix(originalStorageKey: string, assetId: string, analysisId: string): string {
+  return `${assetVariantsPrefix(originalStorageKey, assetId)}analysis/${analysisId}/`;
+}
+
+function durationFromMetadata(asset: AssetEntity | null): number | null {
+  const seconds = (asset?.sourceMetadata as { durationSeconds?: unknown } | null)?.durationSeconds;
+  return typeof seconds === 'number' ? Math.round(seconds * 1000) : null;
+}
+
+function stripUndefined<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(Object.entries(value).filter(([, v]) => v !== undefined)) as Partial<T>;
 }

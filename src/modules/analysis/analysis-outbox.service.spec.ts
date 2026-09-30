@@ -1,14 +1,19 @@
-import type { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import type { Repository } from 'typeorm';
-import type { AnalysisFarmJobEntity } from '../../database/entities/analysis-farm-job.entity';
 import type { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
 import type { AssetEntity } from '../../database/entities/asset.entity';
 import type { AnalysisLogService } from './analysis-log.service';
 import { AnalysisOutboxService } from './analysis-outbox.service';
-import type { FarmClient } from './farm/farm-client';
+import type { AnalysisPipelineService } from './analysis-pipeline.service';
+
+// uuid v14 is pure-ESM; mock it so Jest (CommonJS) can load the service under test.
+jest.mock('uuid', () => {
+  let n = 0;
+  return { v7: () => `00000000-0000-7000-0000-${String(++n).padStart(12, '0')}` };
+});
 
 jest.mock('@nestjs/typeorm', () => ({
+  InjectDataSource: () => () => undefined,
   InjectRepository: () => () => undefined,
 }));
 
@@ -31,11 +36,7 @@ const STUB_ASSET: AssetEntity = {
   storageProvider: 'r2',
   processingStatus: 'ready',
   sourceType: 'local',
-  sourceMetadata: {
-    durationSeconds: 15.5,
-    width: 1920,
-    height: 1080,
-  },
+  sourceMetadata: { durationSeconds: 15.5, width: 1920, height: 1080 },
   createdBy: 'test',
   createdAt: new Date(),
   updatedAt: new Date(),
@@ -54,14 +55,21 @@ const STUB_ANALYSIS: AssetAnalysisEntity = {
   summary: null,
   isCurrent: false,
   requestedBy: null,
+  batchId: null,
+  description: null,
+  describedAt: null,
+  technical: null,
+  keyframes: null,
+  usable: null,
+  quality: null,
+  durationMs: null,
+  orientation: null,
+  hasAudio: null,
+  hasSpeech: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   completedAt: null,
-};
-
-const FARM_JOB_RESPONSE = {
-  job: { id: randomUUID(), status: 'queued', type: 'scan.extract' },
-};
+} as unknown as AssetAnalysisEntity;
 
 // ---------------------------------------------------------------------------
 // Setup helper
@@ -70,16 +78,12 @@ const FARM_JOB_RESPONSE = {
 function makeService(overrides: {
   analysis?: AssetAnalysisEntity | null;
   asset?: AssetEntity | null;
-  isConfigured?: boolean;
-  submitJob?: jest.Mock;
-  extractVersion?: string;
+  submitExtract?: jest.Mock;
 }) {
   const {
     analysis = STUB_ANALYSIS,
     asset = STUB_ASSET,
-    isConfigured = true,
-    submitJob = jest.fn().mockResolvedValue(FARM_JOB_RESPONSE),
-    extractVersion = 'x2',
+    submitExtract = jest.fn().mockResolvedValue(undefined),
   } = overrides;
 
   const analysisRepo = {
@@ -91,37 +95,17 @@ function makeService(overrides: {
     findOne: jest.fn().mockResolvedValue(asset),
   } as unknown as Repository<AssetEntity>;
 
-  const farmJobRepo = {
-    create: jest.fn((data: Partial<AnalysisFarmJobEntity>) => data),
-    save: jest.fn().mockResolvedValue(undefined),
-  } as unknown as Repository<AnalysisFarmJobEntity>;
-
-  const farmClient = {
-    isConfigured,
-    submitJob,
-  } as unknown as FarmClient;
-
-  const config = {
-    get: jest.fn((key: string) => {
-      if (key === 'ANALYSIS_EXTRACT_VERSION') return extractVersion;
-      return undefined;
-    }),
-  } as unknown as ConfigService;
+  const pipeline = {
+    submitExtract,
+  } as unknown as AnalysisPipelineService;
 
   const analysisLog = {
     write: jest.fn().mockResolvedValue(undefined),
   } as unknown as jest.Mocked<AnalysisLogService>;
 
-  const service = new AnalysisOutboxService(
-    analysisRepo,
-    assetRepo,
-    farmJobRepo,
-    farmClient,
-    analysisLog,
-    config,
-  );
+  const service = new AnalysisOutboxService(analysisRepo, assetRepo, pipeline, analysisLog);
 
-  return { service, analysisRepo, assetRepo, farmJobRepo, submitJob, analysisLog };
+  return { service, analysisRepo, assetRepo, pipeline, submitExtract, analysisLog };
 }
 
 // ---------------------------------------------------------------------------
@@ -129,90 +113,20 @@ function makeService(overrides: {
 // ---------------------------------------------------------------------------
 
 describe('AnalysisOutboxService.handleAnalysisRequested', () => {
-  it('submits a scan.extract job with correlation_id = <analysisId>:extract', async () => {
-    const { service, submitJob } = makeService({});
+  it('calls pipeline.submitExtract with the analysis id', async () => {
+    const { service, submitExtract } = makeService({});
     await service.handleAnalysisRequested(ANALYSIS_ID);
-
-    expect(submitJob).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'scan.extract',
-        correlation_id: `${ANALYSIS_ID}:extract`,
-      }),
-    );
+    expect(submitExtract).toHaveBeenCalledWith(ANALYSIS_ID);
   });
 
-  it('sets priority from the analysis record', async () => {
-    const { service, submitJob } = makeService({});
-    await service.handleAnalysisRequested(ANALYSIS_ID);
-
-    expect(submitJob).toHaveBeenCalledWith(expect.objectContaining({ priority: 3 }));
-  });
-
-  it('includes correct asset kind "video" for video mime type', async () => {
-    const { service, submitJob } = makeService({});
-    await service.handleAnalysisRequested(ANALYSIS_ID);
-
-    const [req] = submitJob.mock.calls[0] as [{ payload: { asset: { kind: string } } }];
-    expect(req.payload.asset.kind).toBe('video');
-  });
-
-  it('includes correct asset kind "image" for image mime type', async () => {
-    const imageAsset = {
-      ...STUB_ASSET,
-      assetType: 'image' as const,
-      mimeType: 'image/jpeg',
-      sourceMetadata: { width: 800, height: 600 },
-    };
-    const { service, submitJob } = makeService({ asset: imageAsset });
-    await service.handleAnalysisRequested(ANALYSIS_ID);
-
-    const [req] = submitJob.mock.calls[0] as [{ payload: { asset: { kind: string } } }];
-    expect(req.payload.asset.kind).toBe('image');
-  });
-
-  it('includes extract_version from the analysis record', async () => {
-    const { service, submitJob } = makeService({ extractVersion: 'x2' });
-    await service.handleAnalysisRequested(ANALYSIS_ID);
-
-    const [req] = submitJob.mock.calls[0] as [{ payload: { extract_version: string } }];
-    expect(req.payload.extract_version).toBe('x2');
-  });
-
-  it('records a farm job row with type scan.extract', async () => {
-    const { service, farmJobRepo } = makeService({});
-    await service.handleAnalysisRequested(ANALYSIS_ID);
-
-    expect(farmJobRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'scan.extract', analysisId: ANALYSIS_ID }),
-    );
-  });
-
-  it('sets the analysis status to "extracting"', async () => {
-    const { service, analysisRepo } = makeService({});
-    await service.handleAnalysisRequested(ANALYSIS_ID);
-
-    expect(analysisRepo.update).toHaveBeenCalledWith(ANALYSIS_ID, {
-      status: 'extracting',
-      reason: null,
-    });
-  });
-
-  it('logs the submission to the processing log', async () => {
-    const { service, analysisLog } = makeService({});
-    await service.handleAnalysisRequested(ANALYSIS_ID);
-
-    expect(analysisLog.write).toHaveBeenCalledWith(
-      expect.objectContaining({
-        level: 'info',
-        action: 'analysis.extract.submitted',
-        metadata: expect.objectContaining({ analysisId: ANALYSIS_ID }),
-      }),
-    );
+  it('resolves without error when submitExtract succeeds', async () => {
+    const { service } = makeService({});
+    await expect(service.handleAnalysisRequested(ANALYSIS_ID)).resolves.toBeUndefined();
   });
 
   it('keeps a submit error on the queued analysis and logs it', async () => {
-    const submitJob = jest.fn().mockRejectedValue(new Error('farm unreachable'));
-    const { service, analysisRepo, analysisLog } = makeService({ submitJob });
+    const submitExtract = jest.fn().mockRejectedValue(new Error('farm unreachable'));
+    const { service, analysisRepo, analysisLog } = makeService({ submitExtract });
     await expect(service.handleAnalysisRequested(ANALYSIS_ID)).rejects.toThrow(/unreachable/);
 
     expect(analysisRepo.update).toHaveBeenCalledWith(ANALYSIS_ID, {
@@ -224,9 +138,9 @@ describe('AnalysisOutboxService.handleAnalysisRequested', () => {
   });
 
   it('does not log a retry that fails with the same error again', async () => {
-    const submitJob = jest.fn().mockRejectedValue(new Error('farm unreachable'));
+    const submitExtract = jest.fn().mockRejectedValue(new Error('farm unreachable'));
     const { service, analysisRepo, analysisLog } = makeService({
-      submitJob,
+      submitExtract,
       analysis: { ...STUB_ANALYSIS, reason: 'Could not submit to the farm: farm unreachable' },
     });
     await expect(service.handleAnalysisRequested(ANALYSIS_ID)).rejects.toThrow(/unreachable/);
@@ -235,27 +149,25 @@ describe('AnalysisOutboxService.handleAnalysisRequested', () => {
     expect(analysisLog.write).not.toHaveBeenCalled();
   });
 
-  it('throws when FARM_URL is not configured', async () => {
-    const { service } = makeService({ isConfigured: false });
-    await expect(service.handleAnalysisRequested(ANALYSIS_ID)).rejects.toThrow(/FARM_URL/);
+  it('rethrows the error from submitExtract', async () => {
+    const submitExtract = jest.fn().mockRejectedValue(new Error('FARM_URL is not configured'));
+    const { service } = makeService({ submitExtract });
+    await expect(service.handleAnalysisRequested(ANALYSIS_ID)).rejects.toThrow(
+      /FARM_URL is not configured/,
+    );
   });
 
-  it('throws when the analysis row is not found', async () => {
-    const { service } = makeService({ analysis: null });
-    await expect(service.handleAnalysisRequested(ANALYSIS_ID)).rejects.toThrow(/not found/);
-  });
+  it('logs submit failure with the asset filename when analysis row exists', async () => {
+    const submitExtract = jest.fn().mockRejectedValue(new Error('network error'));
+    const { service, analysisLog } = makeService({ submitExtract });
+    await expect(service.handleAnalysisRequested(ANALYSIS_ID)).rejects.toThrow();
 
-  it('throws when the asset row is not found', async () => {
-    const { service } = makeService({ asset: null });
-    await expect(service.handleAnalysisRequested(ANALYSIS_ID)).rejects.toThrow(/not found/);
-  });
-
-  it('converts durationSeconds from sourceMetadata to duration_ms', async () => {
-    const { service, submitJob } = makeService({});
-    await service.handleAnalysisRequested(ANALYSIS_ID);
-
-    const [req] = submitJob.mock.calls[0] as [{ payload: { asset: { duration_ms: number } } }];
-    // 15.5 s → 15500 ms (rounded)
-    expect(req.payload.asset.duration_ms).toBe(15500);
+    expect(analysisLog.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'warn',
+        action: 'analysis.extract.submit_failed',
+        metadata: expect.objectContaining({ analysisId: ANALYSIS_ID, assetId: ASSET_ID }),
+      }),
+    );
   });
 });

@@ -10,6 +10,7 @@ import { PermissionsGuard } from './common/auth/permissions.guard';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from './config/env.validation';
+import { AnalysisBatchEntity } from './database/entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './database/entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from './database/entities/asset-analysis.entity';
 import { AssetImportEntity } from './database/entities/asset-import.entity';
@@ -27,7 +28,6 @@ import { FolderEntity } from './database/entities/folder.entity';
 import { GoogleDriveConnectionEntity } from './database/entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from './database/entities/media-render-job.entity';
-import { MediaSegmentEntity } from './database/entities/media-segment.entity';
 import { OutboxEventEntity } from './database/entities/outbox-event.entity';
 import { ProjectAuditLogEntity } from './database/entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
@@ -109,7 +109,7 @@ import { TagsModule } from './modules/tags/tags.module';
           SystemLogEntity,
           OutboxEventEntity,
           AssetAnalysisEntity,
-          MediaSegmentEntity,
+          AnalysisBatchEntity,
           AnalysisFarmJobEntity,
         ],
         synchronize: false,
