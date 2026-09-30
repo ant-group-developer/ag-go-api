@@ -67,4 +67,33 @@ describe('FoldersService.create', () => {
     expect(manager.save).not.toHaveBeenCalled();
     expect(manager.insert).not.toHaveBeenCalled();
   });
+
+  it('rejects a root folder without the create-root permission', async () => {
+    const { service, manager } = createService(true);
+
+    await expect(
+      service.create({ name: 'Root' }, 'alice', 'USER', ['go.folder.manage']),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(manager.save).not.toHaveBeenCalled();
+  });
+
+  it('creates a root folder with the create-root permission', async () => {
+    const { service, manager, canAccess } = createService(true);
+    manager.findOne.mockResolvedValue(null);
+
+    await service.create({ name: 'Root' }, 'alice', 'USER', ['go.folder.create_root']);
+
+    expect(canAccess).not.toHaveBeenCalled();
+    expect(manager.save).toHaveBeenCalledWith(
+      expect.objectContaining({ parentId: null, depth: 0 }),
+    );
+  });
+
+  it('lets admins create a root folder without the permission', async () => {
+    const { service, manager } = createService(true);
+
+    await service.create({ name: 'Root' }, 'alice', 'ADMIN');
+
+    expect(manager.save).toHaveBeenCalled();
+  });
 });
