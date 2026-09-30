@@ -931,6 +931,50 @@ paths:
         - bearer: []
       summary: Enqueue analysis for a batch of assets
       tags: *a17
+  /analysis/logs:
+    get:
+      operationId: AnalysisController_getLogs
+      parameters:
+        - name: level
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - info
+              - warn
+              - error
+        - name: search
+          required: false
+          in: query
+          description: Matches the log message (file name) or metadata (ids)
+          schema:
+            type: string
+        - name: page
+          required: false
+          in: query
+          schema:
+            default: 1
+            allOf:
+              - $ref: "#/components/schemas/Object"
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            default: 50
+            allOf:
+              - $ref: "#/components/schemas/Object"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      summary: Processing log of the analysis pipeline, newest first
+      tags: *a17
   /assets/{assetId}/analysis:
     post:
       operationId: AnalysisController_enqueueForAsset
@@ -2123,9 +2167,61 @@ paths:
       operationId: GoogleDriveController_listImports
       parameters:
         - name: projectId
-          required: true
+          required: false
+          in: query
+          description:
+            Limit to one project (latest 50, not paged; the other params are
+            ignored)
+          schema:
+            type: string
+        - name: page
+          required: false
           in: query
           schema:
+            example: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          description: Max 100
+          schema:
+            example: 20
+            type: number
+        - name: status
+          required: false
+          in: query
+          schema:
+            enum:
+              - all
+              - active
+              - completed
+              - failed
+            type: string
+        - name: search
+          required: false
+          in: query
+          description: Matches the project name or a source folder name
+          schema:
+            type: string
+        - name: sortBy
+          required: false
+          in: query
+          schema:
+            enum:
+              - createdAt
+              - finishedAt
+              - project
+              - fileCount
+              - totalBytes
+              - progress
+            type: string
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            enum:
+              - asc
+              - desc
             type: string
       responses:
         "200":
@@ -2216,6 +2312,55 @@ paths:
           required: true
           in: path
           schema:
+            type: string
+        - name: page
+          required: false
+          in: query
+          schema:
+            example: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          description: Max 100
+          schema:
+            example: 20
+            type: number
+        - name: status
+          required: false
+          in: query
+          schema:
+            enum:
+              - all
+              - active
+              - completed
+              - failed
+            type: string
+        - name: search
+          required: false
+          in: query
+          description: Matches the file name
+          schema:
+            type: string
+        - name: sortBy
+          required: false
+          in: query
+          schema:
+            enum:
+              - createdAt
+              - name
+              - size
+              - resolution
+              - duration
+              - modifiedAt
+            type: string
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            enum:
+              - asc
+              - desc
             type: string
       responses:
         "200":
@@ -2759,6 +2904,9 @@ components:
           default: false
       required:
         - mode
+    Object:
+      type: object
+      properties: {}
     EnqueueAnalysisDto:
       type: object
       properties:
