@@ -1,11 +1,14 @@
-import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
+import { AnalysisOutboxService } from '../../modules/analysis/analysis-outbox.service';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../../modules/assets/storage/storage-adapter';
 import { ASSET_STORAGE_PURGE_EVENT } from '../../modules/projects/project-asset-cleanup';
 import { MediaQueueService } from './media-queue.service';
+
+export const ASSET_ANALYSIS_REQUESTED_EVENT = 'asset.analysis.requested';
 
 /** Retries wait 5 s, 10 s, 20 s, ... up to an hour; 30 attempts span about a day. */
 const RETRY_BASE_DELAY_MS = 5_000;
@@ -36,6 +39,9 @@ export class OutboxDispatcherService implements OnModuleDestroy {
     private readonly mediaQueue: MediaQueueService,
     private readonly config: ConfigService,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
+    @Optional()
+    @Inject(forwardRef(() => AnalysisOutboxService))
+    private readonly analysisOutbox?: AnalysisOutboxService,
   ) {}
 
   start(): void {
@@ -142,6 +148,19 @@ export class OutboxDispatcherService implements OnModuleDestroy {
         await this.purgeProjectStorage(event);
       } else if (event.eventType === ASSET_STORAGE_PURGE_EVENT) {
         await this.purgeAssetStorage(event);
+      } else if (event.eventType === ASSET_ANALYSIS_REQUESTED_EVENT) {
+        const analysisId = this.readString(event.payload.analysisId);
+        if (!analysisId) {
+          throw new Error('Outbox event asset.analysis.requested is missing analysisId');
+        }
+        if (!this.analysisOutbox) {
+          throw new Error('AnalysisOutboxService not available — AnalysisModule not loaded');
+        }
+        await this.analysisOutbox.handleAnalysisRequested(analysisId);
+      } else {
+        this.logger.warn(
+          `Outbox event ${event.id} has unknown type "${event.eventType}" — marking published`,
+        );
       }
       await this.dataSource.getRepository(OutboxEventEntity).update(event.id, {
         status: 'published',

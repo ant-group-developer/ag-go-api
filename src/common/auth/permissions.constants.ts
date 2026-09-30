@@ -19,6 +19,9 @@ export const GO_PERMISSIONS = {
   AUDIT_READ: 'go.audit.read',
   SETTINGS_MANAGE: 'go.settings.manage',
   LOGS_READ: 'go.logs.read',
+  ANALYSIS_MANAGE: 'go.analysis.manage',
+  FOOTAGE_SEARCH: 'go.footage.search',
+  FOOTAGE_PRODUCE: 'go.footage.produce',
 } as const;
 
 export type GoPermission = (typeof GO_PERMISSIONS)[keyof typeof GO_PERMISSIONS];

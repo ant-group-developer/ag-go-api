@@ -1,14 +1,20 @@
 import type { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'node:crypto';
 import type { DataSource } from 'typeorm';
 import type { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
+import type { AnalysisOutboxService } from '../../modules/analysis/analysis-outbox.service';
 import type { StorageAdapter } from '../../modules/assets/storage/storage-adapter';
 import type { MediaQueueService } from './media-queue.service';
 import { OutboxDispatcherService } from './outbox-dispatcher.service';
 
 jest.mock('@nestjs/typeorm', () => ({
   InjectDataSource: () => () => undefined,
+  InjectRepository: () => () => undefined,
 }));
 jest.mock('./media-queue.service', () => ({ MediaQueueService: class {} }));
+jest.mock('../../modules/analysis/analysis-outbox.service', () => ({
+  AnalysisOutboxService: class {},
+}));
 
 function purgeEvent(attemptCount: number): OutboxEventEntity {
   return {
@@ -246,6 +252,105 @@ describe('OutboxDispatcherService', () => {
     expect(update).toHaveBeenCalledWith(expect.any(String), {
       status: 'dead',
       lastError: 'AccessDenied',
+    });
+  });
+
+  describe('asset.analysis.requested branch', () => {
+    const ANALYSIS_ID = randomUUID();
+
+    function analysisEvent(): OutboxEventEntity {
+      return {
+        id: randomUUID(),
+        eventType: 'asset.analysis.requested',
+        aggregateType: 'asset_analysis',
+        aggregateId: ANALYSIS_ID,
+        payload: { analysisId: ANALYSIS_ID },
+        status: 'pending',
+        attemptCount: 0,
+        availableAt: new Date(),
+        publishedAt: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    }
+
+    function setupWithAnalysis(rows: OutboxEventEntity[], handleAnalysisRequested: jest.Mock) {
+      const orderBy = jest.fn();
+      const queryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: orderBy.mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        setLock: jest.fn().mockReturnThis(),
+        setOnLocked: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(rows),
+      };
+      const manager = {
+        createQueryBuilder: jest.fn(() => queryBuilder),
+        update: jest.fn().mockResolvedValue(undefined),
+      };
+      const update = jest.fn().mockResolvedValue(undefined);
+      const dataSource = {
+        transaction: jest.fn((work: (m: typeof manager) => unknown) => work(manager)),
+        getRepository: jest.fn(() => ({ update })),
+      } as unknown as DataSource;
+      const analysisOutbox = {
+        handleAnalysisRequested,
+      } as unknown as AnalysisOutboxService;
+      const service = new OutboxDispatcherService(
+        dataSource,
+        { addProcessingJob: jest.fn() } as unknown as MediaQueueService,
+        {} as ConfigService,
+        { deletePrefix: jest.fn() } as unknown as StorageAdapter,
+        analysisOutbox,
+      );
+      return { service, update };
+    }
+
+    it('calls handleAnalysisRequested with the analysisId', async () => {
+      const handleAnalysisRequested = jest.fn().mockResolvedValue(undefined);
+      const { service, update } = setupWithAnalysis([analysisEvent()], handleAnalysisRequested);
+
+      await service.dispatchPending();
+
+      expect(handleAnalysisRequested).toHaveBeenCalledWith(ANALYSIS_ID);
+      expect(update).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ status: 'published' }),
+      );
+    });
+
+    it('retries when handleAnalysisRequested throws', async () => {
+      const handleAnalysisRequested = jest
+        .fn()
+        .mockRejectedValue(new Error('FARM_URL not configured'));
+      const { service, update } = setupWithAnalysis([analysisEvent()], handleAnalysisRequested);
+
+      await service.dispatchPending();
+
+      expect(update).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ status: 'failed', lastError: 'FARM_URL not configured' }),
+      );
+    });
+
+    it('logs a warning and acks when analysisId is missing from the payload', async () => {
+      const brokenEvent = {
+        ...analysisEvent(),
+        payload: {} as Record<string, unknown>, // missing analysisId
+      };
+      const handleAnalysisRequested = jest.fn();
+      const { service, update } = setupWithAnalysis([brokenEvent], handleAnalysisRequested);
+
+      await service.dispatchPending();
+
+      expect(handleAnalysisRequested).not.toHaveBeenCalled();
+      expect(update).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ status: 'failed' }),
+      );
     });
   });
 });

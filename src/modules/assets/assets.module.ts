@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthContextService } from '../../common/auth-context.service';
 import { AssetUploadSessionEntity } from '../../database/entities/asset-upload-session.entity';
@@ -10,6 +10,7 @@ import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderBatchEntity } from '../../database/entities/render-batch.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { QueueModule } from '../../infra/queue/queue.module';
+import { AnalysisModule } from '../analysis/analysis.module';
 import { AuditModule } from '../audit/audit.module';
 import { FoldersModule } from '../folders/folders.module';
 import { AssetsController } from './assets.controller';
@@ -24,6 +25,7 @@ import { StorageModule } from './storage/storage.module';
     FoldersModule,
     StorageModule,
     QueueModule,
+    forwardRef(() => AnalysisModule),
     TypeOrmModule.forFeature([
       AssetEntity,
       AssetUploadSessionEntity,

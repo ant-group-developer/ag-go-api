@@ -99,6 +99,19 @@ export class R2StorageAdapter implements StorageAdapter {
     }
   }
 
+  async getObjectText(storageKey: string): Promise<string> {
+    const result = await this.client.send(
+      new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: storageKey,
+      }),
+    );
+    if (!result.Body) {
+      throw new Error(`R2 object body is empty: ${storageKey}`);
+    }
+    return result.Body.transformToString('utf-8');
+  }
+
   readObject(storageKey: string): Readable {
     const stream = this.client.send(
       new GetObjectCommand({
