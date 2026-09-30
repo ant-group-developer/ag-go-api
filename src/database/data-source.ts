@@ -64,6 +64,7 @@ import { NaturalSortCollationMigration1990000000000 } from './migrations/1990000
 import { RenderBatchPausedStatusMigration2000000000000 } from './migrations/2000000000000-render-batch-paused-status';
 import { RenderVariantsMigration2010000000000 } from './migrations/2010000000000-render-variants';
 import { MediaAnalysisMigration2020000000000 } from './migrations/2020000000000-media-analysis';
+import { FootageSearch2030000000000 } from './migrations/2030000000000-footage-search';
 
 loadEnv();
 
@@ -147,6 +148,7 @@ export const AppDataSource = new DataSource({
     RenderBatchPausedStatusMigration2000000000000,
     RenderVariantsMigration2010000000000,
     MediaAnalysisMigration2020000000000,
+    FootageSearch2030000000000,
   ],
   synchronize: false,
 });

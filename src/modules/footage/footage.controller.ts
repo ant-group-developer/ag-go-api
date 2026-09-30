@@ -1,0 +1,115 @@
+import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import { ApiBearerAuth, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import type { Request } from 'express';
+import { AuthContextService } from '../../common/auth-context.service';
+import { AllowServiceKey } from '../../common/auth/allow-service-key.decorator';
+import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
+import { RequirePermissions } from '../../common/auth/permissions.decorator';
+import { FootageCatalogBodyDto } from './dto/catalog-query.dto';
+import { ResolveSegmentsDto } from './dto/resolve-segments.dto';
+import { FootageSearchQueryDto } from './dto/search-query.dto';
+import { FootageService } from './footage.service';
+
+@ApiTags('footage')
+@ApiBearerAuth()
+@Controller('footage')
+export class FootageController {
+  constructor(
+    private readonly footageService: FootageService,
+    private readonly authContext: AuthContextService,
+  ) {}
+
+  // ---------------------------------------------------------------------------
+  // GET /footage/folders
+  // ---------------------------------------------------------------------------
+
+  @Get('folders')
+  @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
+  @AllowServiceKey('footage:read')
+  @ApiSecurity('service-key')
+  @ApiOperation({ summary: 'List accessible folders with segment counts' })
+  getFolders(@Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    return this.footageService.getFolders(ctx.userId, ctx.userType);
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /footage/catalog
+  // ---------------------------------------------------------------------------
+
+  @Post('catalog')
+  @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
+  @AllowServiceKey('footage:read')
+  @ApiSecurity('service-key')
+  @ApiOperation({ summary: 'Compact text catalog of segments for given folders (AI input)' })
+  getCatalog(@Body() dto: FootageCatalogBodyDto, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    return this.footageService.getCatalog(dto, ctx.userId, ctx.userType);
+  }
+
+  // ---------------------------------------------------------------------------
+  // GET /footage/segments/:segmentId/media
+  // ---------------------------------------------------------------------------
+
+  @Get('segments/:segmentId/media')
+  @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
+  @AllowServiceKey('footage:read')
+  @ApiSecurity('service-key')
+  @ApiOperation({ summary: 'Keyframe URLs and preview URL for a segment' })
+  getSegmentMedia(@Param('segmentId') segmentId: string, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    return this.footageService.getSegmentMedia(segmentId, ctx.userId, ctx.userType);
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /footage/segments/resolve
+  // ---------------------------------------------------------------------------
+
+  @Post('segments/resolve')
+  @RequirePermissions(GO_PERMISSIONS.FOOTAGE_PRODUCE)
+  @AllowServiceKey('footage:resolve')
+  @ApiSecurity('service-key')
+  @ApiOperation({ summary: 'Resolve source URLs for rendering (respects decision 8)' })
+  resolveSegments(@Body() dto: ResolveSegmentsDto, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    return this.footageService.resolveSegments(
+      dto.segmentIds,
+      dto.purpose,
+      ctx.userId,
+      ctx.userType,
+      ctx.permissions,
+      (req as Request & { requestId?: string }).requestId,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // GET /footage/search
+  // ---------------------------------------------------------------------------
+
+  @Get('search')
+  @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
+  @AllowServiceKey('footage:read')
+  @ApiSecurity('service-key')
+  @ApiOperation({ summary: 'Full-text + trigram search across segments' })
+  search(@Query() query: FootageSearchQueryDto, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    return this.footageService.search(query, ctx.userId, ctx.userType);
+  }
+
+  // ---------------------------------------------------------------------------
+  // GET /footage/facets
+  // ---------------------------------------------------------------------------
+
+  @Get('facets')
+  @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
+  @AllowServiceKey('footage:read')
+  @ApiSecurity('service-key')
+  @ApiOperation({ summary: 'Facet counts for search filters' })
+  getFacets(@Query() query: FootageSearchQueryDto, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    // Strip paging params for facets
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { limit: _l, cursor: _c, ...facetQuery } = query;
+    return this.footageService.getFacets(facetQuery, ctx.userId, ctx.userType);
+  }
+}

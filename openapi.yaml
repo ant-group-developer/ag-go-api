@@ -1367,7 +1367,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a20
-      summary: Các kích thước preview (có watermark) người xem có thể chọn
+      summary:
+        Các bản preview (độ phân giải, watermark, bitrate) người xem được chọn;
+        bản không watermark chỉ cho người có quyền xem file gốc
       tags: *a21
   /assets/{assetId}/preview/{variantCode}:
     get:
@@ -2293,6 +2295,309 @@ paths:
       security:
         - bearer: []
       tags: *a30
+  /footage/folders:
+    get:
+      operationId: FootageController_getFolders
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - &a31
+          bearer: []
+        - service-key: []
+      summary: List accessible folders with segment counts
+      tags: &a32
+        - footage
+  /footage/catalog:
+    post:
+      operationId: FootageController_getCatalog
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FootageCatalogBodyDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a31
+        - service-key: []
+      summary: Compact text catalog of segments for given folders (AI input)
+      tags: *a32
+  /footage/segments/{segmentId}/media:
+    get:
+      operationId: FootageController_getSegmentMedia
+      parameters:
+        - name: segmentId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a31
+        - service-key: []
+      summary: Keyframe URLs and preview URL for a segment
+      tags: *a32
+  /footage/segments/resolve:
+    post:
+      operationId: FootageController_resolveSegments
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveSegmentsDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a31
+        - service-key: []
+      summary: Resolve source URLs for rendering (respects decision 8)
+      tags: *a32
+  /footage/search:
+    get:
+      operationId: FootageController_search
+      parameters:
+        - name: q
+          required: false
+          in: query
+          description: Free-text search query.
+          schema:
+            type: string
+        - name: folderIds
+          required: false
+          in: query
+          description: Comma-separated folder IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: categoryIds
+          required: false
+          in: query
+          description: Comma-separated category IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: tags
+          required: false
+          in: query
+          description: Comma-separated tag values.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: provinceIds
+          required: false
+          in: query
+          description: Comma-separated province IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: shotSizes
+          required: false
+          in: query
+          description: Comma-separated shot sizes.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: timesOfDay
+          required: false
+          in: query
+          description: Comma-separated times of day.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: orientations
+          required: false
+          in: query
+          description: Comma-separated orientations.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: minDurationMs
+          required: false
+          in: query
+          description: Minimum duration in milliseconds.
+          schema:
+            type: number
+        - name: maxDurationMs
+          required: false
+          in: query
+          description: Maximum duration in milliseconds.
+          schema:
+            type: number
+        - name: usableOnly
+          required: false
+          in: query
+          description: Include only usable segments (default true).
+          schema:
+            default: true
+            type: boolean
+        - name: limit
+          required: false
+          in: query
+          description: Max items per page (default 40, max 100).
+          schema:
+            default: 40
+            type: number
+        - name: cursor
+          required: false
+          in: query
+          description: Opaque pagination cursor.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a31
+        - service-key: []
+      summary: Full-text + trigram search across segments
+      tags: *a32
+  /footage/facets:
+    get:
+      operationId: FootageController_getFacets
+      parameters:
+        - name: q
+          required: false
+          in: query
+          description: Free-text search query.
+          schema:
+            type: string
+        - name: folderIds
+          required: false
+          in: query
+          description: Comma-separated folder IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: categoryIds
+          required: false
+          in: query
+          description: Comma-separated category IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: tags
+          required: false
+          in: query
+          description: Comma-separated tag values.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: provinceIds
+          required: false
+          in: query
+          description: Comma-separated province IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: shotSizes
+          required: false
+          in: query
+          description: Comma-separated shot sizes.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: timesOfDay
+          required: false
+          in: query
+          description: Comma-separated times of day.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: orientations
+          required: false
+          in: query
+          description: Comma-separated orientations.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: minDurationMs
+          required: false
+          in: query
+          description: Minimum duration in milliseconds.
+          schema:
+            type: number
+        - name: maxDurationMs
+          required: false
+          in: query
+          description: Maximum duration in milliseconds.
+          schema:
+            type: number
+        - name: usableOnly
+          required: false
+          in: query
+          description: Include only usable segments (default true).
+          schema:
+            default: true
+            type: boolean
+        - name: limit
+          required: false
+          in: query
+          description: Max items per page (default 40, max 100).
+          schema:
+            default: 40
+            type: number
+        - name: cursor
+          required: false
+          in: query
+          description: Opaque pagination cursor.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a31
+        - service-key: []
+      summary: Facet counts for search filters
+      tags: *a32
 info:
   title: AG Go API
   description: AG Go backend API
@@ -2748,6 +3053,63 @@ components:
     UpdateSettingsDto:
       type: object
       properties: {}
+    CatalogFiltersDto:
+      type: object
+      properties:
+        usableOnly:
+          type: boolean
+          description: Include only usable segments (default true).
+        minQuality:
+          type: number
+          description: Minimum quality score (0–5).
+        orientations:
+          description: Comma-separated orientations.
+          type: array
+          items:
+            type: string
+        shotSizes:
+          description: Comma-separated shot sizes.
+          type: array
+          items:
+            type: string
+        q:
+          type: string
+          description: Free-text search within captions/tags.
+    FootageCatalogBodyDto:
+      type: object
+      properties:
+        folderIds:
+          description:
+            Folder IDs to scope. Each must be within the user scope, else 404.
+            1–50.
+          type: array
+          items:
+            type: string
+        filters:
+          $ref: "#/components/schemas/CatalogFiltersDto"
+        limit:
+          type: number
+          description: Max items to return (default 500, max 1000).
+          default: 500
+        cursor:
+          type: string
+          description: Opaque pagination cursor from the previous response.
+    ResolveSegmentsDto:
+      type: object
+      properties:
+        segmentIds:
+          description: Segment IDs to resolve (1–500).
+          type: array
+          items:
+            type: string
+        purpose:
+          type: string
+          enum:
+            - preview
+            - final
+      required:
+        - segmentIds
+        - purpose
     ApiError:
       type: object
       required:

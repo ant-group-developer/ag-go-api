@@ -15,6 +15,7 @@ import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { Public } from '../../common/auth/public.decorator';
+import { RawResponse } from '../../common/raw-response.decorator';
 import { AnalysisSignService } from './analysis-sign.service';
 import { AnalysisService } from './analysis.service';
 import { BackfillAnalysisDto } from './dto/backfill-analysis.dto';
@@ -37,6 +38,8 @@ export class AnalysisController {
 
   @Post('analysis/farm/sign')
   @Public()
+  // Workers read the ag-farm sign contract ({ results }), not the API envelope
+  @RawResponse()
   @UseGuards(FarmTicketGuard)
   @ApiOperation({ summary: 'Sign storage URLs for a farm worker (Ticket auth)' })
   async farmSign(@Body() body: unknown, @Req() req: Request) {
