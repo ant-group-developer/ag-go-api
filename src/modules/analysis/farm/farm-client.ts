@@ -1,13 +1,18 @@
 // Copied from ag-farm packages/protocol v0.1.0 — keep in sync
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { readApiError, unwrapApiResponse } from './api-envelope';
 import type { JobView, SubmitJobRequest, SubmitJobResponse } from './protocol';
-import { ListJobsResponseSchema, SubmitJobResponseSchema } from './protocol';
+import { GetJobResponseSchema, ListJobsResponseSchema, SubmitJobResponseSchema } from './protocol';
 
 /**
  * Minimal HTTP client for ag-farm owner API.
  * Uses `Authorization: Owner <key>` authentication.
  * Validates responses with zod schemas.
+ *
+ * Handles both the legacy raw-body format and the new envelope format
+ * `{ data, requestId, timestamp, success, error }` transparently via
+ * `unwrapApiResponse` / `readApiError` applied before any zod parsing.
  */
 @Injectable()
 export class FarmClient {
@@ -33,6 +38,16 @@ export class FarmClient {
       throw new Error(`Farm submit response invalid: ${parsed.error.message}`);
     }
     return parsed.data;
+  }
+
+  /** Fetches a single job by id. */
+  async getJob(farmJobId: string): Promise<JobView> {
+    const data = await this.get<unknown>(`/v1/owner/jobs/${farmJobId}`);
+    const parsed = GetJobResponseSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new Error(`Farm get-job response invalid: ${parsed.error.message}`);
+    }
+    return parsed.data.job;
   }
 
   /** Lists unacked completed/failed jobs. */
@@ -74,11 +89,11 @@ export class FarmClient {
       },
       body: JSON.stringify(body),
     });
+    const rawBody = await this.parseResponseBody(response);
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`Farm POST ${path} returned ${response.status}: ${text}`);
+      throw readApiError(response.status, path, rawBody);
     }
-    return response.json() as Promise<T>;
+    return unwrapApiResponse(rawBody) as T;
   }
 
   private async get<T>(path: string): Promise<T> {
@@ -90,10 +105,21 @@ export class FarmClient {
         Authorization: `Owner ${this.ownerKey}`,
       },
     });
+    const rawBody = await this.parseResponseBody(response);
     if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      throw new Error(`Farm GET ${path} returned ${response.status}: ${text}`);
+      throw readApiError(response.status, path, rawBody);
     }
-    return response.json() as Promise<T>;
+    return unwrapApiResponse(rawBody) as T;
+  }
+
+  /** Reads the response body as text, then attempts JSON.parse. Falls back to the raw string. */
+  private async parseResponseBody(response: Response): Promise<unknown> {
+    const text = await response.text().catch(() => '');
+    if (!text) return text;
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return text;
+    }
   }
 }

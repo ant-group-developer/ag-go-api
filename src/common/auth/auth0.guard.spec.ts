@@ -289,6 +289,29 @@ describe('Auth0Guard', () => {
     expect(systemLog.write).toHaveBeenCalled();
   });
 
+  it('acts as the Account user id when the caller sends the full Auth0 subject', async () => {
+    const raw = 'my-key';
+    const getUserAccess = jest
+      .fn()
+      .mockResolvedValue({ user_type: 'ADMIN', permissions: ['go.footage.search'] });
+    const guard = buildGuard(
+      { ...baseConfig, SERVICE_KEYS: SERVICE_KEYS_JSON(raw) },
+      { serviceKeyScopes: ['footage:read'] },
+      {
+        accountApi: { getUserAccess },
+        systemLog: { write: jest.fn().mockResolvedValue(undefined) },
+      },
+    );
+    const request = createRequest({
+      'x-service-key': raw,
+      'x-act-as-user': 'auth0|0668552e-206a-4401-bf69-2e15a1108cbb',
+    });
+
+    await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
+    expect(getUserAccess).toHaveBeenCalledWith('0668552e-206a-4401-bf69-2e15a1108cbb');
+    expect(request.authContext).toMatchObject({ userId: '0668552e-206a-4401-bf69-2e15a1108cbb' });
+  });
+
   it('refuses to act as a deactivated user', async () => {
     const raw = 'my-key';
     const getUserAccess = jest.fn().mockResolvedValue({

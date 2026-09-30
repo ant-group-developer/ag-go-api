@@ -120,6 +120,11 @@ export const SubmitJobResponseSchema = z.strictObject({
 });
 export type SubmitJobResponse = z.infer<typeof SubmitJobResponseSchema>;
 
+export const GetJobResponseSchema = z.strictObject({
+  job: JobViewSchema,
+});
+export type GetJobResponse = z.infer<typeof GetJobResponseSchema>;
+
 export const ListJobsResponseSchema = z.strictObject({
   jobs: z.array(JobViewSchema),
   next_cursor: z.string().nullable(),

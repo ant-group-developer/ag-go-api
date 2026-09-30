@@ -147,7 +147,9 @@ export class Auth0Guard implements CanActivate {
     if (!actAsUserId?.trim()) {
       throw new UnauthorizedException('X-Act-As-User header is required for service-key requests');
     }
-    const userId = actAsUserId.trim();
+    // Same id as a user's own token gives (Auth0 subject without `auth0|`): Account API and folder ACLs
+    // key users by it, and callers such as AG Studio send the full subject.
+    const userId = this.normalizeUserId(actAsUserId.trim());
 
     // Load user access from Account API (cached 60 s)
     let access: { user_type: 'ADMIN' | 'USER'; permissions: string[]; is_active?: boolean };

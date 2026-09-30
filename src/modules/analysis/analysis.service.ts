@@ -94,30 +94,23 @@ export class AnalysisService {
     ];
     for (const s of statuses) counts[s] = 0;
 
-    let assetQuery = this.assetRepo.createQueryBuilder('asset');
-    if (folderIds && folderIds.length > 0) {
-      assetQuery = assetQuery
-        .innerJoin(ProjectMediaEntity, 'pm', 'pm.asset_id = asset.id')
-        .innerJoin(ProjectEntity, 'p', 'p.id = pm.project_id')
-        .where('p.folder_id IN (:...folderIds)', { folderIds });
-    }
-    const assets = await assetQuery
-      .select('asset.id', 'id')
-      .distinct(true)
-      .getRawMany<{ id: string }>();
-    const assetIds = assets.map((a) => a.id);
+    const assetIds = await this.findScopedAssetIds({ folderIds });
 
     if (assetIds.length === 0) {
       return { counts: counts as AnalysisStatsResult['counts'], segments: { total: 0, usable: 0 } };
     }
 
-    // Count assets by their latest analysis status
+    // Count assets by the status of their latest run. Only completed runs ever become
+    // is_current, so filtering on it would hide queued/in-flight/failed runs as "none".
     const rows = await this.dataSource.query<{ status: string; cnt: string }[]>(
-      `SELECT a.status, COUNT(*) AS cnt
-       FROM asset_analyses a
-       WHERE a.asset_id = ANY($1::uuid[])
-         AND a.is_current = true
-       GROUP BY a.status`,
+      `SELECT latest.status, COUNT(*) AS cnt
+       FROM (
+         SELECT DISTINCT ON (a.asset_id) a.status
+         FROM asset_analyses a
+         WHERE a.asset_id = ANY($1::uuid[])
+         ORDER BY a.asset_id, a.created_at DESC, a.id DESC
+       ) latest
+       GROUP BY latest.status`,
       [assetIds],
     );
     let analysedCount = 0;
@@ -158,39 +151,7 @@ export class AnalysisService {
     const extractVersion = this.config.get<string>('ANALYSIS_EXTRACT_VERSION') ?? 'x1';
     const promptVersion = this.config.get<string>('ANALYSIS_PROMPT_VERSION') ?? 'p1';
 
-    // Build the list of asset ids to consider
-    let assetQuery = this.assetRepo
-      .createQueryBuilder('asset')
-      .distinct(true)
-      .select('asset.id', 'id')
-      .innerJoin(ProjectMediaEntity, 'pm', 'pm.asset_id = asset.id')
-      .innerJoin(ProjectEntity, 'p', 'p.id = pm.project_id');
-
-    const conditions: string[] = [];
-    const params: Record<string, unknown> = {};
-
-    if (projectIds && projectIds.length > 0) {
-      conditions.push('p.id IN (:...projectIds)');
-      params['projectIds'] = projectIds;
-    }
-
-    if (folderIds && folderIds.length > 0) {
-      // Include subfolders via closure table
-      const closureRows = await this.closureRepo.find({
-        where: { ancestorId: In(folderIds) },
-        select: { descendantId: true },
-      });
-      const allFolderIds = [...new Set([...folderIds, ...closureRows.map((r) => r.descendantId)])];
-      conditions.push('p.folder_id IN (:...allFolderIds)');
-      params['allFolderIds'] = allFolderIds;
-    }
-
-    if (conditions.length > 0) {
-      assetQuery = assetQuery.where(conditions.join(' AND '), params);
-    }
-
-    const assetRows = await assetQuery.getRawMany<{ id: string }>();
-    const assetIds = assetRows.map((r) => r.id);
+    const assetIds = await this.findScopedAssetIds({ folderIds, projectIds });
 
     if (assetIds.length === 0) {
       return { matched: 0, enqueued: 0, skipped: 0, dryRun };
@@ -255,6 +216,42 @@ export class AnalysisService {
     }
 
     return { matched: assetIds.length, enqueued, skipped: toSkip.length, dryRun };
+  }
+
+  /**
+   * Assets that stats and backfill operate on: finished uploads (`ready`) linked to at
+   * least one project, optionally narrowed to projects and/or folders (subfolders included).
+   * Orphans, incomplete/cancelled uploads and watermark logos are left out.
+   */
+  private async findScopedAssetIds(scope: {
+    folderIds?: string[];
+    projectIds?: string[];
+  }): Promise<string[]> {
+    const { folderIds, projectIds } = scope;
+    const assetQuery = this.assetRepo
+      .createQueryBuilder('asset')
+      .distinct(true)
+      .select('asset.id', 'id')
+      .innerJoin(ProjectMediaEntity, 'pm', 'pm.asset_id = asset.id')
+      .innerJoin(ProjectEntity, 'p', 'p.id = pm.project_id')
+      .where('asset.processing_status = :ready', { ready: 'ready' });
+
+    if (projectIds && projectIds.length > 0) {
+      assetQuery.andWhere('p.id IN (:...projectIds)', { projectIds });
+    }
+
+    if (folderIds && folderIds.length > 0) {
+      // Include subfolders via closure table
+      const closureRows = await this.closureRepo.find({
+        where: { ancestorId: In(folderIds) },
+        select: { descendantId: true },
+      });
+      const allFolderIds = [...new Set([...folderIds, ...closureRows.map((r) => r.descendantId)])];
+      assetQuery.andWhere('p.folder_id IN (:...allFolderIds)', { allFolderIds });
+    }
+
+    const rows = await assetQuery.getRawMany<{ id: string }>();
+    return rows.map((r) => r.id);
   }
 
   // ---------------------------------------------------------------------------
