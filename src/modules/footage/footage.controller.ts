@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
@@ -6,7 +6,7 @@ import { AllowServiceKey } from '../../common/auth/allow-service-key.decorator';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { FootageCatalogBodyDto } from './dto/catalog-query.dto';
-import { ResolveSegmentsDto } from './dto/resolve-segments.dto';
+import { ResolveAssetsDto } from './dto/resolve-assets.dto';
 import { FootageSearchQueryDto } from './dto/search-query.dto';
 import { FootageService } from './footage.service';
 
@@ -27,7 +27,7 @@ export class FootageController {
   @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
   @AllowServiceKey('footage:read')
   @ApiSecurity('service-key')
-  @ApiOperation({ summary: 'List accessible folders with segment counts' })
+  @ApiOperation({ summary: 'List accessible folders with analysed video counts' })
   getFolders(@Req() req: Request) {
     const ctx = this.authContext.getContext(req);
     return this.footageService.getFolders(ctx.userId, ctx.userType);
@@ -41,39 +41,41 @@ export class FootageController {
   @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
   @AllowServiceKey('footage:read')
   @ApiSecurity('service-key')
-  @ApiOperation({ summary: 'Compact text catalog of segments for given folders (AI input)' })
+  @ApiOperation({
+    summary: 'Analysed videos of the given folders with their descriptions (AI input)',
+  })
   getCatalog(@Body() dto: FootageCatalogBodyDto, @Req() req: Request) {
     const ctx = this.authContext.getContext(req);
     return this.footageService.getCatalog(dto, ctx.userId, ctx.userType);
   }
 
   // ---------------------------------------------------------------------------
-  // GET /footage/segments/:segmentId/media
+  // GET /footage/assets/:assetId/media
   // ---------------------------------------------------------------------------
 
-  @Get('segments/:segmentId/media')
+  @Get('assets/:assetId/media')
   @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
   @AllowServiceKey('footage:read')
   @ApiSecurity('service-key')
-  @ApiOperation({ summary: 'Keyframe URLs and preview URL for a segment' })
-  getSegmentMedia(@Param('segmentId') segmentId: string, @Req() req: Request) {
+  @ApiOperation({ summary: 'Preview URL of the whole video, keyframes and contact sheet' })
+  getAssetMedia(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() req: Request) {
     const ctx = this.authContext.getContext(req);
-    return this.footageService.getSegmentMedia(segmentId, ctx.userId, ctx.userType);
+    return this.footageService.getAssetMedia(assetId, ctx.userId, ctx.userType);
   }
 
   // ---------------------------------------------------------------------------
-  // POST /footage/segments/resolve
+  // POST /footage/assets/resolve
   // ---------------------------------------------------------------------------
 
-  @Post('segments/resolve')
+  @Post('assets/resolve')
   @RequirePermissions(GO_PERMISSIONS.FOOTAGE_PRODUCE)
   @AllowServiceKey('footage:resolve')
   @ApiSecurity('service-key')
-  @ApiOperation({ summary: 'Resolve source URLs for rendering (respects decision 8)' })
-  resolveSegments(@Body() dto: ResolveSegmentsDto, @Req() req: Request) {
+  @ApiOperation({ summary: 'Signed URLs of whole video files for rendering (respects decision 8)' })
+  resolveAssets(@Body() dto: ResolveAssetsDto, @Req() req: Request) {
     const ctx = this.authContext.getContext(req);
-    return this.footageService.resolveSegments(
-      dto.segmentIds,
+    return this.footageService.resolveAssets(
+      dto.assetIds,
       dto.purpose,
       ctx.userId,
       ctx.userType,
@@ -90,7 +92,7 @@ export class FootageController {
   @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
   @AllowServiceKey('footage:read')
   @ApiSecurity('service-key')
-  @ApiOperation({ summary: 'Full-text + trigram search across segments' })
+  @ApiOperation({ summary: 'Full-text + trigram search across analysed videos' })
   search(@Query() query: FootageSearchQueryDto, @Req() req: Request) {
     const ctx = this.authContext.getContext(req);
     return this.footageService.search(query, ctx.userId, ctx.userType);

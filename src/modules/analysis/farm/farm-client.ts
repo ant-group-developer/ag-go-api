@@ -2,8 +2,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { readApiError, unwrapApiResponse } from './api-envelope';
-import type { JobView, SubmitJobRequest, SubmitJobResponse } from './protocol';
-import { GetJobResponseSchema, ListJobsResponseSchema, SubmitJobResponseSchema } from './protocol';
+import type { JobControlAction, JobView, SubmitJobRequest, SubmitJobResponse } from './protocol';
+import {
+  GetJobResponseSchema,
+  JobControlResponseSchema,
+  ListJobsResponseSchema,
+  SubmitJobResponseSchema,
+} from './protocol';
 
 /**
  * Minimal HTTP client for ag-farm owner API.
@@ -70,6 +75,23 @@ export class FarmClient {
   /** Cancels a job (best-effort). */
   async cancelJob(farmJobId: string): Promise<void> {
     await this.post<unknown>(`/v1/owner/jobs/${farmJobId}/cancel`, {});
+  }
+
+  /**
+   * Pauses / resumes / cancels jobs by ids or by group (`batch:<id>`). Paused jobs are not handed to
+   * workers; a running job loses its lease without the attempt being counted. Returns how many changed.
+   */
+  async controlJobs(
+    action: JobControlAction,
+    selector: { ids: string[] } | { group_key: string },
+  ): Promise<number> {
+    if ('ids' in selector && selector.ids.length === 0) return 0;
+    const data = await this.post<unknown>(`/v1/owner/jobs/${action}`, selector);
+    const parsed = JobControlResponseSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new Error(`Farm ${action} response invalid: ${parsed.error.message}`);
+    }
+    return parsed.data.affected;
   }
 
   private requireConfigured(): void {

@@ -1,5 +1,5 @@
 /**
- * DB-level integration tests for FarmResultPollerService.
+ * DB-level integration tests for FarmResultPollerService (v2: per-asset scan).
  *
  * Runs against a real Postgres instance (port 55434, started by docker-compose.test.yml).
  * The global setup creates the ag_go_test database and runs all migrations once before any
@@ -18,19 +18,25 @@ import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { OutboxService } from '../../common/outbox.service';
 import { AppDataSource } from '../../database/data-source';
+import { AnalysisBatchEntity } from '../../database/entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from '../../database/entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
-import { MediaSegmentEntity } from '../../database/entities/media-segment.entity';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
 import { SystemLogEntity } from '../../database/entities/system-log.entity';
 import type { StorageAdapter } from '../assets/storage/storage-adapter';
 import { SystemLogService } from '../logs/system-log.service';
 import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
 import { AnalysisLogService } from './analysis-log.service';
+import { AnalysisPipelineService } from './analysis-pipeline.service';
 import { FarmResultPollerService } from './farm-result-poller.service';
 import type { FarmClient } from './farm/farm-client';
-import type { JobView, SubmitJobRequest, SubmitJobResponse } from './farm/protocol';
+import type {
+  JobControlAction,
+  JobView,
+  SubmitJobRequest,
+  SubmitJobResponse,
+} from './farm/protocol';
 import type { AiManifest, ExtractManifest } from './farm/scan';
 
 // uuid v14 is pure-ESM; @nestjs/typeorm is also ESM-only — mock both so Jest (CommonJS) can
@@ -60,13 +66,17 @@ const TEST_DB_URL =
 class FakeFarmClient {
   public submissions: Array<SubmitJobRequest & { submittedJobId: string }> = [];
   public cancelledIds: string[] = [];
+  public controlActions: Array<{
+    action: JobControlAction;
+    selector: { ids?: string[]; group_key?: string };
+  }> = [];
   private failOnCallIndex: number | null = null;
   private callCount = 0;
   /**
    * Persistent correlation_id → farm_job_id map.
    * NOT cleared by reset() because the real farm keeps job records between retries.
-   * This lets processJob re-submit a chunk with the same correlation_id and get back
-   * the same farm_job_id, so insertFarmJob's ON CONFLICT DO NOTHING suppresses the duplicate row.
+   * This lets processJob re-submit with the same correlation_id and get back the same farm_job_id,
+   * so recordFarmJob's ON CONFLICT DO NOTHING suppresses the duplicate row.
    */
   private readonly correlationMap = new Map<string, string>();
 
@@ -74,7 +84,6 @@ class FakeFarmClient {
     return true;
   }
 
-  /** Make the next submit call at (0-indexed) position `n` throw. */
   setFailOnCall(n: number): void {
     this.failOnCallIndex = n;
   }
@@ -82,6 +91,7 @@ class FakeFarmClient {
   reset(): void {
     this.submissions = [];
     this.cancelledIds = [];
+    this.controlActions = [];
     this.failOnCallIndex = null;
     this.callCount = 0;
     // correlationMap intentionally preserved: the real farm keeps jobs between calls.
@@ -92,7 +102,6 @@ class FakeFarmClient {
       this.callCount++;
       throw new Error('FakeFarmClient: simulated submission failure');
     }
-    // Dedup by correlation_id, mirroring the real farm's idempotency guarantee.
     const corrKey = request.correlation_id ?? '';
     let jobId = corrKey ? this.correlationMap.get(corrKey) : undefined;
     if (!jobId) {
@@ -111,6 +120,7 @@ class FakeFarmClient {
         priority: request.priority ?? 0,
         correlation_id: request.correlation_id,
         affinity_key: request.affinity_key ?? null,
+        group_key: request.group_key ?? null,
         attempt_count: 0,
         max_attempts: request.max_attempts ?? 3,
         node_id: null,
@@ -134,6 +144,13 @@ class FakeFarmClient {
   async cancelJob(farmJobId: string): Promise<void> {
     this.cancelledIds.push(farmJobId);
   }
+  async controlJobs(
+    action: JobControlAction,
+    selector: { ids: string[] } | { group_key: string },
+  ): Promise<number> {
+    this.controlActions.push({ action, selector });
+    return 0;
+  }
 }
 
 /** Storage that serves registered paths; throws on anything else. */
@@ -155,92 +172,95 @@ class FakeStorage {
 }
 
 // ---------------------------------------------------------------------------
-// Manifest builders
+// Manifest builders (v2)
 // ---------------------------------------------------------------------------
 
 function makeExtractManifest(
   assetId: string,
-  numSegments: number,
+  numKeyframes: number,
   allDead = false,
 ): ExtractManifest {
   return {
-    schema: 'ag.scan.extract/v1',
+    schema: 'ag.scan.extract/v2',
     asset_id: assetId,
-    extract_version: 'x1',
+    extract_version: 'x2',
     media: {
       kind: 'video',
-      duration_ms: numSegments * 5000,
+      duration_ms: numKeyframes * 5000,
       width: 1920,
       height: 1080,
       fps: 30,
       has_audio: true,
       rotation: 0,
     },
-    proxy: null,
+    orientation: 'landscape',
+    proxy: { output: 'proxy.mp4', width: 1280, height: 720, size_bytes: 102400 },
     contact_sheet: null,
-    segments: Array.from({ length: numSegments }, (_, i) => ({
+    scenes: Array.from({ length: Math.max(numKeyframes, 1) }, (_, i) => ({
       index: i,
       start_ms: i * 5000,
       end_ms: (i + 1) * 5000,
-      boundary_reason: (i === numSegments - 1 ? 'end' : 'scene_cut') as 'end' | 'scene_cut',
-      orientation: 'landscape' as const,
-      keyframes: [
-        {
-          output: `keyframes/seg-${i}-frame-0.jpg`,
-          t_ms: i * 5000 + 100,
-          width: 640,
-          height: 360,
-          dhash: '0123456789abcdef',
-        },
-      ],
-      technical: {
-        brightness: 0.5,
-        blur: 30,
-        black_ratio: 0,
-        frozen_ratio: 0,
-        silence_ratio: null,
-        dead: allDead,
-        dead_reason: allDead ? ('black' as const) : null,
-      },
     })),
-    tools: { ffmpeg: '6.0', worker_version: '0.1.0' },
+    keyframes: Array.from({ length: Math.max(numKeyframes, 1) }, (_, i) => ({
+      output: `keyframes/${String(i).padStart(4, '0')}.jpg`,
+      t_ms: i * 5000 + 100,
+      width: 640,
+      height: 360,
+      dhash: '0123456789abcdef',
+      scene_index: i,
+    })),
+    technical: {
+      brightness: 0.5,
+      blur: 30,
+      black_ratio: allDead ? 0.95 : 0,
+      frozen_ratio: 0,
+      silence_ratio: null,
+      has_speech_hint: null,
+      dead: allDead,
+      dead_reason: allDead ? 'black' : null,
+    },
+    tools: { ffmpeg: '6.0', worker_version: '0.2.0' },
   };
 }
 
-function makeAiManifest(assetId: string, chunk: number, segmentIds: string[]): AiManifest {
+function makeAiManifest(assetId: string, descriptionNull = false): AiManifest {
   return {
-    schema: 'ag.scan.ai/v1',
+    schema: 'ag.scan.ai/v2',
     asset_id: assetId,
-    chunk,
     model: 'qwen2.5vl:7b',
-    prompt_version: 'p1',
-    items: segmentIds.map((segId) => ({
-      segment_id: segId,
-      description: {
-        caption_vi: 'Cảnh quay thử nghiệm',
-        caption_en: 'Test scene description',
-        tags: ['test'],
-        keywords_vi: ['thử nghiệm'],
-        subjects: ['building'],
-        actions: ['static'],
-        shot_size: 'wide' as const,
-        camera_motion: 'static' as const,
-        time_of_day: 'day' as const,
-        setting: 'outdoor' as const,
-        people_count: 'none' as const,
-        visible_text: '',
-        has_watermark: false,
-        usable: true,
-        usable_reason: '',
-        quality: 4,
-      },
-      error: null,
-      duration_ms: 5000,
-    })),
+    prompt_version: 'p2',
+    description: descriptionNull
+      ? null
+      : {
+          title_vi: 'Cảnh quay thử nghiệm',
+          summary_vi: 'Video kiểm tra hệ thống',
+          summary_en: 'System test video',
+          genre: 'test',
+          topics: ['testing'],
+          subjects: ['building'],
+          places: ['Hà Nội'],
+          actions: ['static'],
+          keywords_vi: ['kiểm tra'],
+          tags: ['test'],
+          mood: 'calm',
+          setting: 'outdoor',
+          time_of_day: 'day',
+          people_count: 'none',
+          shot_variety: ['wide'],
+          camera_motions: ['static'],
+          visible_text: '',
+          has_watermark: false,
+          usable: true,
+          usable_reason: '',
+          quality: 4,
+        },
+    notes: ['Nhóm 1: cảnh ngoài trời'],
+    error: descriptionNull ? 'Model failed to produce a valid description' : null,
+    duration_ms: 1500,
   };
 }
 
-/** Builds a minimal completed JobView for testing processJob. */
+/** Builds a minimal finished JobView for testing processJob. */
 function makeJobView(
   farmJobId: string,
   status: 'completed' | 'failed' | 'cancelled',
@@ -256,6 +276,7 @@ function makeJobView(
     priority: 0,
     correlation_id: correlationId,
     affinity_key: null,
+    group_key: null,
     attempt_count: 1,
     max_attempts: 3,
     node_id: null,
@@ -276,12 +297,10 @@ function makeJobView(
 
 let ds: DataSource;
 
-/** Computes the storage prefix for a given asset/analysis pair. */
 function computePrefix(assetStorageKey: string, assetId: string, analysisId: string): string {
   return `${assetVariantsPrefix(assetStorageKey, assetId)}analysis/${analysisId}/`;
 }
 
-/** Standard storage key pattern matching insertAsset. */
 function storageKey(assetId: string): string {
   return `projects/p1/originals/${assetId}/clip.mp4`;
 }
@@ -317,23 +336,23 @@ async function insertAnalysis(
     id?: string;
     status?: string;
     isCurrent?: boolean;
-    summary?: Record<string, unknown> | null;
+    batchId?: string | null;
   } = {},
 ): Promise<string> {
   const id = options.id ?? randomUUID();
   await ds.query(
     `INSERT INTO asset_analyses
-       (id, asset_id, status, priority, extract_version, prompt_version, is_current, summary)
+       (id, asset_id, status, priority, extract_version, prompt_version, is_current, batch_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
     [
       id,
       assetId,
       options.status ?? 'queued',
       0,
-      'x1',
-      'p1',
+      'x2',
+      'p2',
       options.isCurrent ?? false,
-      options.summary !== undefined ? JSON.stringify(options.summary) : null,
+      options.batchId ?? null,
     ],
   );
   return id;
@@ -343,40 +362,14 @@ async function insertFarmJobRow(
   farmJobId: string,
   analysisId: string,
   type: string,
-  chunk: number | null,
   options: { status?: string; ingestedAt?: Date | null } = {},
 ): Promise<void> {
   await ds.query(
     `INSERT INTO analysis_farm_jobs
        (farm_job_id, analysis_id, type, chunk, status, ingested_at)
      VALUES ($1,$2,$3,$4,$5,$6)`,
-    [farmJobId, analysisId, type, chunk, options.status ?? 'submitted', options.ingestedAt ?? null],
+    [farmJobId, analysisId, type, null, options.status ?? 'submitted', options.ingestedAt ?? null],
   );
-}
-
-async function insertSegmentRow(
-  analysisId: string,
-  assetId: string,
-  segmentIndex: number,
-  options: { id?: string; isCurrent?: boolean; usable?: boolean | null } = {},
-): Promise<string> {
-  const id = options.id ?? randomUUID();
-  await ds.query(
-    `INSERT INTO media_segments
-       (id, analysis_id, asset_id, segment_index, start_ms, end_ms, is_current, usable)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [
-      id,
-      analysisId,
-      assetId,
-      segmentIndex,
-      segmentIndex * 5000,
-      (segmentIndex + 1) * 5000,
-      options.isCurrent ?? false,
-      options.usable ?? null,
-    ],
-  );
-  return id;
 }
 
 async function insertFolder(name: string = 'test-folder'): Promise<string> {
@@ -391,74 +384,7 @@ async function insertFolder(name: string = 'test-folder'): Promise<string> {
   return id;
 }
 
-async function insertCountry(name: string = 'Test Country'): Promise<string> {
-  const id = randomUUID();
-  await ds.query(`INSERT INTO countries (id, name) VALUES ($1, $2)`, [
-    id,
-    `${name} ${id.slice(0, 8)}`,
-  ]);
-  return id;
-}
-
-async function insertProvince(countryId: string, name: string = 'Test Province'): Promise<string> {
-  const id = randomUUID();
-  await ds.query(`INSERT INTO provinces (id, country_id, name) VALUES ($1,$2,$3)`, [
-    id,
-    countryId,
-    name,
-  ]);
-  return id;
-}
-
-async function insertCategory(
-  name: string = 'Test Category',
-): Promise<{ id: string; name: string }> {
-  const id = randomUUID();
-  const uniqueName = `${name}-${id.slice(0, 8)}`;
-  await ds.query(`INSERT INTO categories (id, name, slug) VALUES ($1,$2,$3)`, [
-    id,
-    uniqueName,
-    `slug-${id.slice(0, 8)}`,
-  ]);
-  return { id, name: uniqueName };
-}
-
-async function insertProject(
-  folderId: string,
-  options: {
-    name?: string;
-    categoryId?: string | null;
-    provinceId?: string | null;
-  } = {},
-): Promise<string> {
-  const id = randomUUID();
-  await ds.query(
-    `INSERT INTO projects
-       (id, owner_user_id, folder_id, name, category_id, province_id)
-     VALUES ($1,$2,$3,$4,$5,$6)`,
-    [
-      id,
-      'test-user',
-      folderId,
-      options.name ?? `Project ${id.slice(0, 8)}`,
-      options.categoryId ?? null,
-      options.provinceId ?? null,
-    ],
-  );
-  return id;
-}
-
-async function insertProjectMedia(projectId: string, assetId: string): Promise<string> {
-  const id = randomUUID();
-  await ds.query(
-    `INSERT INTO project_media (id, project_id, asset_id, created_by) VALUES ($1,$2,$3,$4)`,
-    [id, projectId, assetId, 'test'],
-  );
-  return id;
-}
-
 async function cleanupAsset(assetId: string): Promise<void> {
-  // Cascades on asset_analyses → media_segments, analysis_farm_jobs, outbox_events (via aggregateId)
   await ds.query(
     `DELETE FROM outbox_events WHERE aggregate_id IN (SELECT id FROM asset_analyses WHERE asset_id=$1)`,
     [assetId],
@@ -473,6 +399,7 @@ async function cleanupAsset(assetId: string): Promise<void> {
 let fakeClient: FakeFarmClient;
 let fakeStorage: FakeStorage;
 let poller: FarmResultPollerService;
+let pipeline: AnalysisPipelineService;
 
 beforeAll(async () => {
   if (AppDataSource.isInitialized) await AppDataSource.destroy();
@@ -484,28 +411,38 @@ beforeAll(async () => {
   fakeStorage = new FakeStorage();
 
   const outboxService = new OutboxService(ds.getRepository(OutboxEventEntity));
+  const sysLog = new SystemLogService(ds.getRepository(SystemLogEntity));
+  const analysisLog = new AnalysisLogService(sysLog, ds.getRepository(SystemLogEntity));
 
   const config = {
     get: (key: string) => {
       if (key === 'ANALYSIS_MODEL') return 'qwen2.5vl:7b';
-      if (key === 'ANALYSIS_PROMPT_VERSION') return 'p1';
+      if (key === 'ANALYSIS_PROMPT_VERSION') return 'p2';
       return undefined;
     },
   } as unknown as ConfigService;
 
+  pipeline = new AnalysisPipelineService(
+    ds,
+    ds.getRepository(AssetAnalysisEntity),
+    ds.getRepository(AnalysisBatchEntity),
+    ds.getRepository(AssetEntity),
+    ds.getRepository(AnalysisFarmJobEntity),
+    fakeClient as unknown as FarmClient,
+    outboxService,
+    analysisLog,
+    config,
+  );
+
   poller = new FarmResultPollerService(
     ds,
     ds.getRepository(AssetAnalysisEntity),
-    ds.getRepository(MediaSegmentEntity),
     ds.getRepository(AssetEntity),
     ds.getRepository(AnalysisFarmJobEntity),
     fakeStorage as unknown as StorageAdapter,
     fakeClient as unknown as FarmClient,
-    outboxService,
-    new AnalysisLogService(
-      new SystemLogService(ds.getRepository(SystemLogEntity)),
-      ds.getRepository(SystemLogEntity),
-    ),
+    pipeline,
+    analysisLog,
     config,
   );
 });
@@ -520,10 +457,10 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// 1. Extract completed → segments + chunks submitted + status describing
+// 1. Extract completed (v2) → keyframes/technical stored, one scan.ai submitted
 // ---------------------------------------------------------------------------
 
-describe('extract completed', () => {
+describe('extract completed (v2)', () => {
   let assetId: string;
   let analysisId: string;
   let extractJobId: string;
@@ -532,65 +469,99 @@ describe('extract completed', () => {
     assetId = await insertAsset();
     analysisId = await insertAnalysis(assetId, { status: 'extracting' });
     extractJobId = randomUUID();
-    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', null);
-    // 2 segments → 1 AI chunk (below SCAN_AI_MAX_CHUNK of 30)
+    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract');
     const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
-    fakeStorage.register(`${prefix}extract.json`, JSON.stringify(makeExtractManifest(assetId, 2)));
+    fakeStorage.register(`${prefix}extract.json`, JSON.stringify(makeExtractManifest(assetId, 3)));
   });
 
   afterEach(async () => {
     await cleanupAsset(assetId);
   });
 
-  it('inserts 2 segments with is_current=false', async () => {
+  it('stores keyframes on the analysis row', async () => {
     await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
-    const rows = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM media_segments WHERE analysis_id=$1 ORDER BY segment_index`,
+    const [row] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT keyframes FROM asset_analyses WHERE id=$1`,
       [analysisId],
     );
-    expect(rows).toHaveLength(2);
-    expect(rows.every((r) => r['is_current'] === false)).toBe(true);
+    const kfs = row['keyframes'] as Array<{ output: string }>;
+    expect(Array.isArray(kfs)).toBe(true);
+    expect(kfs.length).toBe(3);
+    expect(kfs[0].output).toMatch(/keyframes\//);
   });
 
-  it('submits exactly one scan.ai chunk with the correct correlation id', async () => {
+  it('stores technical metrics on the analysis row', async () => {
+    await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
+    const [row] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT technical FROM asset_analyses WHERE id=$1`,
+      [analysisId],
+    );
+    const tech = row['technical'] as Record<string, unknown>;
+    expect(tech).toBeDefined();
+    expect(tech['dead']).toBe(false);
+  });
+
+  it('submits exactly one scan.ai job with the correct correlation id', async () => {
     await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
     expect(fakeClient.submissions).toHaveLength(1);
-    expect(fakeClient.submissions[0].correlation_id).toBe(`${analysisId}:ai:0`);
+    expect(fakeClient.submissions[0].correlation_id).toBe(`${analysisId}:ai`);
     expect(fakeClient.submissions[0].type).toBe('scan.ai');
   });
 
-  it('inserts an analysis_farm_jobs row for the submitted AI chunk', async () => {
+  it('includes asset_name in the scan.ai payload context', async () => {
     await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
-    const aiJobs = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM analysis_farm_jobs WHERE analysis_id=$1 AND type='scan.ai'`,
-      [analysisId],
-    );
-    expect(aiJobs).toHaveLength(1);
-    expect(aiJobs[0]['chunk']).toBe(0);
+    const payload = fakeClient.submissions[0].payload as {
+      context: { asset_name: string };
+    };
+    expect(payload.context.asset_name).toBe('clip.mp4');
   });
 
   it('marks the extract farm job as ingested and sets analysis status to describing', async () => {
     await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
     const [extractJob] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM analysis_farm_jobs WHERE farm_job_id=$1`,
+      `SELECT ingested_at FROM analysis_farm_jobs WHERE farm_job_id=$1`,
       [extractJobId],
     );
     expect(extractJob['ingested_at']).not.toBeNull();
 
     const [analysis] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM asset_analyses WHERE id=$1`,
+      `SELECT status FROM asset_analyses WHERE id=$1`,
       [analysisId],
     );
     expect(analysis['status']).toBe('describing');
-    expect((analysis['summary'] as { aiChunks: number } | null)?.aiChunks).toBe(1);
+  });
+
+  it('submits scan.ai with the batch group_key when analysis has a batch', async () => {
+    const batchId = randomUUID();
+    await ds.query(
+      `INSERT INTO analysis_batches (id, name, kind, status) VALUES ($1,'Test batch','backfill','running')`,
+      [batchId],
+    );
+    const assetId2 = await insertAsset();
+    const analysisId2 = await insertAnalysis(assetId2, { status: 'extracting', batchId });
+    const extractJobId2 = randomUUID();
+    await insertFarmJobRow(extractJobId2, analysisId2, 'scan.extract');
+    const prefix2 = computePrefix(storageKey(assetId2), assetId2, analysisId2);
+    fakeStorage.register(
+      `${prefix2}extract.json`,
+      JSON.stringify(makeExtractManifest(assetId2, 2)),
+    );
+    fakeClient.reset();
+
+    await poller.processJob(makeJobView(extractJobId2, 'completed', `${analysisId2}:extract`));
+
+    expect(fakeClient.submissions[0].group_key).toBe(`batch:${batchId}`);
+
+    await cleanupAsset(assetId2);
+    await ds.query(`DELETE FROM analysis_batches WHERE id=$1`, [batchId]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 2. Submit failure on chunk 1 → retry succeeds, no duplicate segments / farm rows
+// 2. Dead video extract → completes directly without AI
 // ---------------------------------------------------------------------------
 
-describe('extract: submit failure and retry', () => {
+describe('dead video extract', () => {
   let assetId: string;
   let analysisId: string;
   let extractJobId: string;
@@ -599,315 +570,11 @@ describe('extract: submit failure and retry', () => {
     assetId = await insertAsset();
     analysisId = await insertAnalysis(assetId, { status: 'extracting' });
     extractJobId = randomUUID();
-    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', null);
-    // 31 segments → 2 AI chunks (chunk 0: segs 0-29, chunk 1: seg 30)
-    const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
-    fakeStorage.register(`${prefix}extract.json`, JSON.stringify(makeExtractManifest(assetId, 31)));
-  });
-
-  afterEach(async () => {
-    await cleanupAsset(assetId);
-  });
-
-  it('does not mark the extract job ingested when chunk submission fails', async () => {
-    fakeClient.setFailOnCall(1); // chunk 0 succeeds (call 0), chunk 1 fails (call 1)
-    await expect(
-      poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`)),
-    ).rejects.toThrow('simulated submission failure');
-
-    const [extractJob] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM analysis_farm_jobs WHERE farm_job_id=$1`,
-      [extractJobId],
-    );
-    expect(extractJob['ingested_at']).toBeNull();
-  });
-
-  it('retry does not insert duplicate segments', async () => {
-    fakeClient.setFailOnCall(1);
-    await expect(
-      poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`)),
-    ).rejects.toThrow('simulated submission failure');
-    fakeClient.reset(); // now both submits succeed
-
-    await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
-
-    const segments = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM media_segments WHERE analysis_id=$1`,
-      [analysisId],
-    );
-    expect(segments).toHaveLength(31);
-  });
-
-  it('retry does not insert duplicate analysis_farm_jobs rows', async () => {
-    fakeClient.setFailOnCall(1);
-    await expect(
-      poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`)),
-    ).rejects.toThrow('simulated submission failure');
-    fakeClient.reset();
-
-    await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
-
-    const aiJobs = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM analysis_farm_jobs WHERE analysis_id=$1 AND type='scan.ai'`,
-      [analysisId],
-    );
-    expect(aiJobs).toHaveLength(2); // chunk 0 and chunk 1, no duplicates
-  });
-
-  it('retry marks the extract job ingested after all chunks succeed', async () => {
-    fakeClient.setFailOnCall(1);
-    await expect(
-      poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`)),
-    ).rejects.toThrow('simulated submission failure');
-    fakeClient.reset();
-
-    await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
-
-    const [extractJob] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM analysis_farm_jobs WHERE farm_job_id=$1`,
-      [extractJobId],
-    );
-    expect(extractJob['ingested_at']).not.toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 3. AI chunk completions → finalize exactly once, correct counts, outbox event
-// ---------------------------------------------------------------------------
-
-describe('AI completions → finalize', () => {
-  let assetId: string;
-  let analysisId: string;
-  let seg0Id: string;
-  let seg1Id: string;
-  let aiJob0Id: string;
-  let aiJob1Id: string;
-  const extractJobId = randomUUID();
-
-  beforeEach(async () => {
-    assetId = await insertAsset();
-    analysisId = await insertAnalysis(assetId, {
-      status: 'describing',
-      summary: { aiChunks: 2 },
-    });
-    seg0Id = await insertSegmentRow(analysisId, assetId, 0, { usable: null });
-    seg1Id = await insertSegmentRow(analysisId, assetId, 1, { usable: null });
-    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', null, {
-      status: 'ingested',
-      ingestedAt: new Date(),
-    });
-    aiJob0Id = randomUUID();
-    aiJob1Id = randomUUID();
-    await insertFarmJobRow(aiJob0Id, analysisId, 'scan.ai', 0);
-    await insertFarmJobRow(aiJob1Id, analysisId, 'scan.ai', 1);
-
-    const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
-    fakeStorage.register(
-      `${prefix}ai-0000.json`,
-      JSON.stringify(makeAiManifest(assetId, 0, [seg0Id])),
-    );
-    fakeStorage.register(
-      `${prefix}ai-0001.json`,
-      JSON.stringify(makeAiManifest(assetId, 1, [seg1Id])),
-    );
-  });
-
-  afterEach(async () => {
-    await cleanupAsset(assetId);
-  });
-
-  it('does not finalize after only the first AI chunk is ingested', async () => {
-    await poller.processJob(makeJobView(aiJob0Id, 'completed', `${analysisId}:ai:0`));
-    const [analysis] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT status FROM asset_analyses WHERE id=$1`,
-      [analysisId],
-    );
-    expect(analysis['status']).not.toBe('completed');
-  });
-
-  it('finalizes after both AI chunks are ingested', async () => {
-    await poller.processJob(makeJobView(aiJob0Id, 'completed', `${analysisId}:ai:0`));
-    await poller.processJob(makeJobView(aiJob1Id, 'completed', `${analysisId}:ai:1`));
-    const [analysis] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM asset_analyses WHERE id=$1`,
-      [analysisId],
-    );
-    expect(analysis['status']).toBe('completed');
-    expect(analysis['is_current']).toBe(true);
-  });
-
-  it('sets the correct segment and usable counts in the summary', async () => {
-    await poller.processJob(makeJobView(aiJob0Id, 'completed', `${analysisId}:ai:0`));
-    await poller.processJob(makeJobView(aiJob1Id, 'completed', `${analysisId}:ai:1`));
-    const [analysis] = await ds.query<
-      Array<{ summary: { segmentCount: number; usableCount: number } }>
-    >(`SELECT summary FROM asset_analyses WHERE id=$1`, [analysisId]);
-    expect(analysis.summary.segmentCount).toBe(2);
-    // AI manifest sets usable=true for both segments
-    expect(analysis.summary.usableCount).toBe(2);
-  });
-
-  it('emits exactly one asset.analysis.completed outbox event', async () => {
-    await poller.processJob(makeJobView(aiJob0Id, 'completed', `${analysisId}:ai:0`));
-    await poller.processJob(makeJobView(aiJob1Id, 'completed', `${analysisId}:ai:1`));
-    const events = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM outbox_events WHERE event_type='asset.analysis.completed' AND aggregate_id=$1`,
-      [analysisId],
-    );
-    expect(events).toHaveLength(1);
-    const payload = events[0]['payload'] as { analysisId: string; assetId: string };
-    expect(payload.analysisId).toBe(analysisId);
-    expect(payload.assetId).toBe(assetId);
-  });
-
-  it('writes each step to the analysis processing log', async () => {
-    await poller.processJob(makeJobView(aiJob0Id, 'completed', `${analysisId}:ai:0`));
-    await poller.processJob(makeJobView(aiJob1Id, 'completed', `${analysisId}:ai:1`));
-    const logs = await ds.query<Array<{ action: string; message: string }>>(
-      `SELECT action, message FROM system_logs
-        WHERE category='analysis' AND metadata->>'analysisId'=$1
-        ORDER BY id`,
-      [analysisId],
-    );
-    expect(logs.map((log) => log.action)).toEqual([
-      'analysis.ai_ingested',
-      'analysis.ai_ingested',
-      'analysis.completed',
-    ]);
-    expect(logs[2].message).toBe('Completed clip.mp4: 2 segments, 2 usable');
-    await ds.query(`DELETE FROM system_logs WHERE metadata->>'analysisId'=$1`, [analysisId]);
-  });
-
-  it('sets is_current=true on all segments of the completed analysis', async () => {
-    await poller.processJob(makeJobView(aiJob0Id, 'completed', `${analysisId}:ai:0`));
-    await poller.processJob(makeJobView(aiJob1Id, 'completed', `${analysisId}:ai:1`));
-    const segments = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM media_segments WHERE analysis_id=$1`,
-      [analysisId],
-    );
-    expect(segments).toHaveLength(2);
-    expect(segments.every((s) => s['is_current'] === true)).toBe(true);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 4. One chunk failed → analysis failed; the other chunk completing later stays failed; siblings cancelled
-// ---------------------------------------------------------------------------
-
-describe('one chunk failed', () => {
-  let assetId: string;
-  let analysisId: string;
-  let aiJob0Id: string;
-  let aiJob1Id: string;
-  const extractJobId = randomUUID();
-
-  beforeEach(async () => {
-    assetId = await insertAsset();
-    analysisId = await insertAnalysis(assetId, {
-      status: 'describing',
-      summary: { aiChunks: 2 },
-    });
-    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', null, {
-      status: 'ingested',
-      ingestedAt: new Date(),
-    });
-    aiJob0Id = randomUUID();
-    aiJob1Id = randomUUID();
-    await insertFarmJobRow(aiJob0Id, analysisId, 'scan.ai', 0);
-    await insertFarmJobRow(aiJob1Id, analysisId, 'scan.ai', 1);
-
-    // Register AI manifest only for job 1 (used in the later-completion test)
-    const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
-    fakeStorage.register(`${prefix}ai-0001.json`, JSON.stringify(makeAiManifest(assetId, 1, [])));
-  });
-
-  afterEach(async () => {
-    await cleanupAsset(assetId);
-  });
-
-  it('marks analysis as failed with the farm error reason', async () => {
-    await poller.processJob(
-      makeJobView(aiJob0Id, 'failed', `${analysisId}:ai:0`, {
-        code: 'WORKER_CRASH',
-        message: 'Out of memory',
-      }),
-    );
-    const [analysis] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM asset_analyses WHERE id=$1`,
-      [analysisId],
-    );
-    expect(analysis['status']).toBe('failed');
-    expect(analysis['reason']).toMatch(/WORKER_CRASH/);
-  });
-
-  it('marks the failed farm job as ingested with status=failed', async () => {
-    await poller.processJob(
-      makeJobView(aiJob0Id, 'failed', `${analysisId}:ai:0`, {
-        code: 'WORKER_CRASH',
-        message: 'Out of memory',
-      }),
-    );
-    const [job] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM analysis_farm_jobs WHERE farm_job_id=$1`,
-      [aiJob0Id],
-    );
-    expect(job['status']).toBe('failed');
-    expect(job['ingested_at']).not.toBeNull();
-  });
-
-  it('cancels the sibling AI job at the farm', async () => {
-    await poller.processJob(
-      makeJobView(aiJob0Id, 'failed', `${analysisId}:ai:0`, {
-        code: 'WORKER_CRASH',
-        message: 'Out of memory',
-      }),
-    );
-    expect(fakeClient.cancelledIds).toContain(aiJob1Id);
-  });
-
-  it('completing the sibling AI job later does NOT flip analysis to completed', async () => {
-    // First: fail job 0 → analysis=failed
-    await poller.processJob(
-      makeJobView(aiJob0Id, 'failed', `${analysisId}:ai:0`, {
-        code: 'WORKER_CRASH',
-        message: 'Out of memory',
-      }),
-    );
-    // Then: job 1 arrives as completed (e.g. was already running when cancelled)
-    await poller.processJob(makeJobView(aiJob1Id, 'completed', `${analysisId}:ai:1`));
-
-    const [analysis] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT status FROM asset_analyses WHERE id=$1`,
-      [analysisId],
-    );
-    expect(analysis['status']).toBe('failed');
-
-    const events = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM outbox_events WHERE event_type='asset.analysis.completed' AND aggregate_id=$1`,
-      [analysisId],
-    );
-    expect(events).toHaveLength(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// 5. All-dead extract → completes directly (no AI chunks needed)
-// ---------------------------------------------------------------------------
-
-describe('all-dead extract', () => {
-  let assetId: string;
-  let analysisId: string;
-  let extractJobId: string;
-
-  beforeEach(async () => {
-    assetId = await insertAsset();
-    analysisId = await insertAnalysis(assetId, { status: 'extracting' });
-    extractJobId = randomUUID();
-    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', null);
+    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract');
     const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
     fakeStorage.register(
       `${prefix}extract.json`,
-      JSON.stringify(makeExtractManifest(assetId, 2, /* allDead */ true)),
+      JSON.stringify(makeExtractManifest(assetId, 1, /* allDead */ true)),
     );
   });
 
@@ -919,11 +586,11 @@ describe('all-dead extract', () => {
     await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
     expect(fakeClient.submissions).toHaveLength(0);
     const [analysis] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM asset_analyses WHERE id=$1`,
+      `SELECT status, usable FROM asset_analyses WHERE id=$1`,
       [analysisId],
     );
     expect(analysis['status']).toBe('completed');
-    expect(analysis['is_current']).toBe(true);
+    expect(analysis['usable']).toBe(false);
   });
 
   it('emits an asset.analysis.completed outbox event', async () => {
@@ -935,20 +602,231 @@ describe('all-dead extract', () => {
     expect(events).toHaveLength(1);
   });
 
-  it('inserts segments with usable=false and is_current=true after finalize', async () => {
+  it('sets is_current=true after finalize', async () => {
     await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
-    const segments = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM media_segments WHERE analysis_id=$1`,
+    const [analysis] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT is_current FROM asset_analyses WHERE id=$1`,
       [analysisId],
     );
-    expect(segments).toHaveLength(2);
-    expect(segments.every((s) => s['usable'] === false)).toBe(true);
-    expect(segments.every((s) => s['is_current'] === true)).toBe(true);
+    expect(analysis['is_current']).toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 6. Second analysis of the same asset → previous flipped off, exactly one current
+// 3. AI completed → description stored, search_vector populated, finalized
+// ---------------------------------------------------------------------------
+
+describe('AI completed → finalize', () => {
+  let assetId: string;
+  let analysisId: string;
+  let aiJobId: string;
+
+  beforeEach(async () => {
+    assetId = await insertAsset();
+    analysisId = await insertAnalysis(assetId, { status: 'describing' });
+    const extractJobId = randomUUID();
+    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', {
+      status: 'ingested',
+      ingestedAt: new Date(),
+    });
+    // Store keyframes so submitAi path (if ever triggered) has something to work with
+    await ds.query(
+      `UPDATE asset_analyses SET keyframes=$1, duration_ms=$2, has_audio=$3 WHERE id=$4`,
+      [
+        JSON.stringify([
+          {
+            output: 'keyframes/0000.jpg',
+            t_ms: 100,
+            width: 640,
+            height: 360,
+            dhash: '0123456789abcdef',
+            scene_index: 0,
+          },
+        ]),
+        5000,
+        true,
+        analysisId,
+      ],
+    );
+    aiJobId = randomUUID();
+    await insertFarmJobRow(aiJobId, analysisId, 'scan.ai');
+
+    const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
+    fakeStorage.register(`${prefix}ai.json`, JSON.stringify(makeAiManifest(assetId)));
+  });
+
+  afterEach(async () => {
+    await ds.query(`DELETE FROM system_logs WHERE metadata->>'analysisId'=$1`, [analysisId]);
+    await cleanupAsset(assetId);
+  });
+
+  it('stores the description on the analysis row', async () => {
+    await poller.processJob(makeJobView(aiJobId, 'completed', `${analysisId}:ai`));
+    const [row] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT description FROM asset_analyses WHERE id=$1`,
+      [analysisId],
+    );
+    const desc = row['description'] as Record<string, unknown>;
+    expect(desc).toBeDefined();
+    expect(desc['title_vi']).toBe('Cảnh quay thử nghiệm');
+  });
+
+  it('populates search_vector so the analysis is findable by text search', async () => {
+    await poller.processJob(makeJobView(aiJobId, 'completed', `${analysisId}:ai`));
+    const matches = await ds.query<Array<{ id: string }>>(
+      `SELECT id FROM asset_analyses
+       WHERE search_vector @@ plainto_tsquery('simple', immutable_unaccent('canh quay'))
+         AND id=$1`,
+      [analysisId],
+    );
+    expect(matches).toHaveLength(1);
+  });
+
+  it('finalizes with status=completed and is_current=true', async () => {
+    await poller.processJob(makeJobView(aiJobId, 'completed', `${analysisId}:ai`));
+    const [analysis] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT status, is_current FROM asset_analyses WHERE id=$1`,
+      [analysisId],
+    );
+    expect(analysis['status']).toBe('completed');
+    expect(analysis['is_current']).toBe(true);
+  });
+
+  it('emits exactly one asset.analysis.completed outbox event', async () => {
+    await poller.processJob(makeJobView(aiJobId, 'completed', `${analysisId}:ai`));
+    const events = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT * FROM outbox_events WHERE event_type='asset.analysis.completed' AND aggregate_id=$1`,
+      [analysisId],
+    );
+    expect(events).toHaveLength(1);
+    const payload = events[0]['payload'] as { analysisId: string; assetId: string };
+    expect(payload.analysisId).toBe(analysisId);
+    expect(payload.assetId).toBe(assetId);
+  });
+
+  it('writes analysis.ai_ingested and analysis.completed log entries', async () => {
+    await poller.processJob(makeJobView(aiJobId, 'completed', `${analysisId}:ai`));
+    const logs = await ds.query<Array<{ action: string }>>(
+      `SELECT action FROM system_logs
+       WHERE category='analysis' AND metadata->>'analysisId'=$1
+       ORDER BY id`,
+      [analysisId],
+    );
+    expect(logs.map((l) => l.action)).toEqual(
+      expect.arrayContaining(['analysis.ai_ingested', 'analysis.completed']),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. AI completed with null description → analysis failed
+// ---------------------------------------------------------------------------
+
+describe('AI completed with null description', () => {
+  let assetId: string;
+  let analysisId: string;
+  let aiJobId: string;
+
+  beforeEach(async () => {
+    assetId = await insertAsset();
+    analysisId = await insertAnalysis(assetId, { status: 'describing' });
+    const extractJobId = randomUUID();
+    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', {
+      status: 'ingested',
+      ingestedAt: new Date(),
+    });
+    aiJobId = randomUUID();
+    await insertFarmJobRow(aiJobId, analysisId, 'scan.ai');
+
+    const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
+    fakeStorage.register(
+      `${prefix}ai.json`,
+      JSON.stringify(makeAiManifest(assetId, /* descriptionNull */ true)),
+    );
+  });
+
+  afterEach(async () => {
+    await cleanupAsset(assetId);
+  });
+
+  it('marks the analysis as failed with a descriptive reason', async () => {
+    await poller.processJob(makeJobView(aiJobId, 'completed', `${analysisId}:ai`));
+    const [analysis] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT status, reason FROM asset_analyses WHERE id=$1`,
+      [analysisId],
+    );
+    expect(analysis['status']).toBe('failed');
+    expect(analysis['reason'] as string).toMatch(/No description/);
+  });
+
+  it('does not emit a completed outbox event', async () => {
+    await poller.processJob(makeJobView(aiJobId, 'completed', `${analysisId}:ai`));
+    const events = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT * FROM outbox_events WHERE event_type='asset.analysis.completed' AND aggregate_id=$1`,
+      [analysisId],
+    );
+    expect(events).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5. Farm job failed → analysis failed; siblings cancelled
+// ---------------------------------------------------------------------------
+
+describe('farm job failed', () => {
+  let assetId: string;
+  let analysisId: string;
+  let aiJobId: string;
+
+  beforeEach(async () => {
+    assetId = await insertAsset();
+    analysisId = await insertAnalysis(assetId, { status: 'describing' });
+    const extractJobId = randomUUID();
+    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', {
+      status: 'ingested',
+      ingestedAt: new Date(),
+    });
+    aiJobId = randomUUID();
+    await insertFarmJobRow(aiJobId, analysisId, 'scan.ai');
+  });
+
+  afterEach(async () => {
+    await cleanupAsset(assetId);
+  });
+
+  it('marks analysis as failed with the farm error reason', async () => {
+    await poller.processJob(
+      makeJobView(aiJobId, 'failed', `${analysisId}:ai`, {
+        code: 'WORKER_CRASH',
+        message: 'Out of memory',
+      }),
+    );
+    const [analysis] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT status, reason FROM asset_analyses WHERE id=$1`,
+      [analysisId],
+    );
+    expect(analysis['status']).toBe('failed');
+    expect(analysis['reason'] as string).toMatch(/WORKER_CRASH/);
+  });
+
+  it('marks the failed farm job as ingested with status=failed', async () => {
+    await poller.processJob(
+      makeJobView(aiJobId, 'failed', `${analysisId}:ai`, {
+        code: 'WORKER_CRASH',
+        message: 'Out of memory',
+      }),
+    );
+    const [job] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT status, ingested_at FROM analysis_farm_jobs WHERE farm_job_id=$1`,
+      [aiJobId],
+    );
+    expect(job['status']).toBe('failed');
+    expect(job['ingested_at']).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 6. Second analysis flips the previous one off, exactly one current
 // ---------------------------------------------------------------------------
 
 describe('second analysis flips the previous one off', () => {
@@ -959,30 +837,25 @@ describe('second analysis flips the previous one off', () => {
   beforeEach(async () => {
     assetId = await insertAsset();
     analysis1Id = await insertAnalysis(assetId, { status: 'completed', isCurrent: true });
-    // seg1 belongs to first analysis (current)
-    await insertSegmentRow(analysis1Id, assetId, 0, { isCurrent: true });
 
-    // Second analysis: has its extract job ingested and one AI job ingested too.
-    // We set up the data manually and call finalizeIfDone directly.
-    analysis2Id = await insertAnalysis(assetId, {
-      status: 'describing',
-      isCurrent: false,
-      summary: { aiChunks: 1 },
-    });
-    const seg2Id = await insertSegmentRow(analysis2Id, assetId, 0, { isCurrent: false });
-
+    analysis2Id = await insertAnalysis(assetId, { status: 'describing', isCurrent: false });
     const extractJobId2 = randomUUID();
-    await insertFarmJobRow(extractJobId2, analysis2Id, 'scan.extract', null, {
+    await insertFarmJobRow(extractJobId2, analysis2Id, 'scan.extract', {
       status: 'ingested',
       ingestedAt: new Date(),
     });
     const aiJob2Id = randomUUID();
-    await insertFarmJobRow(aiJob2Id, analysis2Id, 'scan.ai', 0, {
+    await insertFarmJobRow(aiJob2Id, analysis2Id, 'scan.ai', {
       status: 'ingested',
       ingestedAt: new Date(),
     });
-    // Store seg2Id for use in tests (suppress unused-variable lint)
-    void seg2Id;
+    // Set the description directly so finalizeIfDone will proceed
+    await ds.query(`UPDATE asset_analyses SET description=$1, usable=$2, quality=$3 WHERE id=$4`, [
+      JSON.stringify({ title_vi: 'Test', usable: true, quality: 4 }),
+      true,
+      4,
+      analysis2Id,
+    ]);
   });
 
   afterEach(async () => {
@@ -990,9 +863,9 @@ describe('second analysis flips the previous one off', () => {
   });
 
   it('leaves exactly one is_current=true analysis after finalizing the second', async () => {
-    await poller.finalizeIfDone(analysis2Id);
+    await pipeline.finalizeIfDone(analysis2Id);
     const currentAnalyses = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM asset_analyses WHERE asset_id=$1 AND is_current=true`,
+      `SELECT id FROM asset_analyses WHERE asset_id=$1 AND is_current=true`,
       [assetId],
     );
     expect(currentAnalyses).toHaveLength(1);
@@ -1000,21 +873,12 @@ describe('second analysis flips the previous one off', () => {
   });
 
   it('flips the first analysis to is_current=false', async () => {
-    await poller.finalizeIfDone(analysis2Id);
+    await pipeline.finalizeIfDone(analysis2Id);
     const [analysis1] = await ds.query<Array<Record<string, unknown>>>(
       `SELECT is_current FROM asset_analyses WHERE id=$1`,
       [analysis1Id],
     );
     expect(analysis1['is_current']).toBe(false);
-  });
-
-  it('sets all segments of the second analysis to is_current=true', async () => {
-    await poller.finalizeIfDone(analysis2Id);
-    const segments = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM media_segments WHERE analysis_id=$1`,
-      [analysis2Id],
-    );
-    expect(segments.every((s) => s['is_current'] === true)).toBe(true);
   });
 });
 
@@ -1029,20 +893,35 @@ describe('concurrent processJob calls on the same farm job', () => {
 
   beforeEach(async () => {
     assetId = await insertAsset();
-    analysisId = await insertAnalysis(assetId, {
-      status: 'describing',
-      summary: { aiChunks: 1 },
-    });
+    analysisId = await insertAnalysis(assetId, { status: 'describing' });
     const extractJobId = randomUUID();
-    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', null, {
+    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', {
       status: 'ingested',
       ingestedAt: new Date(),
     });
+    await ds.query(
+      `UPDATE asset_analyses SET keyframes=$1, duration_ms=$2, has_audio=$3 WHERE id=$4`,
+      [
+        JSON.stringify([
+          {
+            output: 'keyframes/0000.jpg',
+            t_ms: 100,
+            width: 640,
+            height: 360,
+            dhash: '0123456789abcdef',
+            scene_index: 0,
+          },
+        ]),
+        5000,
+        true,
+        analysisId,
+      ],
+    );
     aiJobId = randomUUID();
-    await insertFarmJobRow(aiJobId, analysisId, 'scan.ai', 0);
+    await insertFarmJobRow(aiJobId, analysisId, 'scan.ai');
 
     const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
-    fakeStorage.register(`${prefix}ai-0000.json`, JSON.stringify(makeAiManifest(assetId, 0, [])));
+    fakeStorage.register(`${prefix}ai.json`, JSON.stringify(makeAiManifest(assetId)));
   });
 
   afterEach(async () => {
@@ -1050,22 +929,19 @@ describe('concurrent processJob calls on the same farm job', () => {
   });
 
   it('exactly one call ingests the result; the other skips', async () => {
-    const job = makeJobView(aiJobId, 'completed', `${analysisId}:ai:0`);
+    const job = makeJobView(aiJobId, 'completed', `${analysisId}:ai`);
     const [r1, r2] = await Promise.all([poller.processJob(job), poller.processJob(job)]);
-
-    // At least one call must succeed (return true). If the second call detects the row is
-    // already ingested before checking the lock it also returns true (valid short-circuit).
-    // If the lock fires before that, the second returns false. Both outcomes are correct;
-    // the invariant that matters — single ingestion — is verified by the next test.
+    // At least one must return true (both returning true is also valid when the second
+    // skips via the already-ingested early-exit path)
     expect(r1 || r2).toBe(true);
   });
 
   it('the farm job row is ingested exactly once', async () => {
-    const job = makeJobView(aiJobId, 'completed', `${analysisId}:ai:0`);
+    const job = makeJobView(aiJobId, 'completed', `${analysisId}:ai`);
     await Promise.all([poller.processJob(job), poller.processJob(job)]);
 
     const [farmJobRow] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM analysis_farm_jobs WHERE farm_job_id=$1`,
+      `SELECT ingested_at FROM analysis_farm_jobs WHERE farm_job_id=$1`,
       [aiJobId],
     );
     expect(farmJobRow['ingested_at']).not.toBeNull();
@@ -1094,15 +970,13 @@ describe('adoption from correlation_id', () => {
 
   it('creates the local row and processes normally when only correlation_id is available', async () => {
     const phantomJobId = randomUUID();
-    // processJob with a job id that is NOT in analysis_farm_jobs — adoption path
     const result = await poller.processJob(
       makeJobView(phantomJobId, 'completed', `${analysisId}:extract`),
     );
     expect(result).toBe(true);
 
-    // The adopted row should now exist and be ingested
     const [adopted] = await ds.query<Array<Record<string, unknown>>>(
-      `SELECT * FROM analysis_farm_jobs WHERE farm_job_id=$1`,
+      `SELECT ingested_at FROM analysis_farm_jobs WHERE farm_job_id=$1`,
       [phantomJobId],
     );
     expect(adopted).toBeDefined();
@@ -1118,38 +992,50 @@ describe('getAssetContext', () => {
   let assetId: string;
   let analysisId: string;
   let extractJobId: string;
-  let countryId: string;
-  let provinceId: string;
-  let categoryId: string;
-  let categoryName: string;
   let folderId: string;
   let projectId: string;
+  let categoryId: string;
+  let provinceId: string;
+  let countryId: string;
 
   beforeEach(async () => {
-    // Set up full project hierarchy
-    countryId = await insertCountry('Test Country');
-    provinceId = await insertProvince(countryId, 'Hà Nội');
-    const category = await insertCategory('Phim tài liệu');
-    categoryId = category.id;
-    categoryName = category.name;
+    countryId = randomUUID();
+    await ds.query(`INSERT INTO countries (id, name) VALUES ($1, $2)`, [
+      countryId,
+      `Country ${countryId.slice(0, 8)}`,
+    ]);
+    provinceId = randomUUID();
+    await ds.query(`INSERT INTO provinces (id, country_id, name) VALUES ($1,$2,$3)`, [
+      provinceId,
+      countryId,
+      'Hà Nội',
+    ]);
+    categoryId = randomUUID();
+    await ds.query(`INSERT INTO categories (id, name, slug) VALUES ($1,$2,$3)`, [
+      categoryId,
+      'Phim tài liệu',
+      `slug-${categoryId.slice(0, 8)}`,
+    ]);
     folderId = await insertFolder();
     assetId = await insertAsset();
-    projectId = await insertProject(folderId, {
-      name: 'AG Test Project',
-      categoryId,
-      provinceId,
-    });
-    await insertProjectMedia(projectId, assetId);
+    projectId = randomUUID();
+    await ds.query(
+      `INSERT INTO projects (id, owner_user_id, folder_id, name, category_id, province_id)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [projectId, 'test-user', folderId, 'AG Test Project', categoryId, provinceId],
+    );
+    await ds.query(
+      `INSERT INTO project_media (id, project_id, asset_id, created_by) VALUES ($1,$2,$3,$4)`,
+      [randomUUID(), projectId, assetId, 'test'],
+    );
     analysisId = await insertAnalysis(assetId, { status: 'extracting' });
     extractJobId = randomUUID();
-    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract', null);
-    // 1 segment → 1 AI chunk → getAssetContext will be called during submission
+    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract');
     const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
     fakeStorage.register(`${prefix}extract.json`, JSON.stringify(makeExtractManifest(assetId, 1)));
   });
 
   afterEach(async () => {
-    // Delete project_media explicitly before asset (in case there is no ON DELETE CASCADE)
     await ds.query(`DELETE FROM project_media WHERE asset_id=$1`, [assetId]);
     await cleanupAsset(assetId);
     await ds.query(`DELETE FROM projects WHERE id=$1`, [projectId]);
@@ -1163,17 +1049,9 @@ describe('getAssetContext', () => {
     await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
     expect(fakeClient.submissions).toHaveLength(1);
     const payload = fakeClient.submissions[0].payload as {
-      context: { project_names: string[]; category_names: string[]; province_names: string[] };
+      context: { project_names: string[]; province_names: string[] };
     };
     expect(payload.context.project_names).toContain('AG Test Project');
-  });
-
-  it('includes the category name in the submitted AI payload context', async () => {
-    await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
-    const payload = fakeClient.submissions[0].payload as {
-      context: { category_names: string[] };
-    };
-    expect(payload.context.category_names).toContain(categoryName);
   });
 
   it('includes the province name in the submitted AI payload context', async () => {
@@ -1182,5 +1060,73 @@ describe('getAssetContext', () => {
       context: { province_names: string[] };
     };
     expect(payload.context.province_names).toContain('Hà Nội');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. Extract: submit failure and retry (idempotent — no duplicates)
+// ---------------------------------------------------------------------------
+
+describe('extract: submit failure and retry', () => {
+  let assetId: string;
+  let analysisId: string;
+  let extractJobId: string;
+
+  beforeEach(async () => {
+    assetId = await insertAsset();
+    analysisId = await insertAnalysis(assetId, { status: 'extracting' });
+    extractJobId = randomUUID();
+    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract');
+    const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
+    fakeStorage.register(`${prefix}extract.json`, JSON.stringify(makeExtractManifest(assetId, 2)));
+  });
+
+  afterEach(async () => {
+    await cleanupAsset(assetId);
+  });
+
+  it('does not mark the extract job ingested when AI submission fails', async () => {
+    fakeClient.setFailOnCall(0); // scan.ai submission fails
+    await expect(
+      poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`)),
+    ).rejects.toThrow('simulated submission failure');
+
+    const [extractJob] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT ingested_at FROM analysis_farm_jobs WHERE farm_job_id=$1`,
+      [extractJobId],
+    );
+    expect(extractJob['ingested_at']).toBeNull();
+  });
+
+  it('retry marks the extract job ingested after AI submit succeeds', async () => {
+    fakeClient.setFailOnCall(0);
+    await expect(
+      poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`)),
+    ).rejects.toThrow('simulated submission failure');
+    fakeClient.reset();
+
+    await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
+
+    const [extractJob] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT ingested_at FROM analysis_farm_jobs WHERE farm_job_id=$1`,
+      [extractJobId],
+    );
+    expect(extractJob['ingested_at']).not.toBeNull();
+  });
+
+  it('retry does not insert a duplicate scan.ai farm job row', async () => {
+    fakeClient.setFailOnCall(0);
+    await expect(
+      poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`)),
+    ).rejects.toThrow('simulated submission failure');
+    fakeClient.reset();
+
+    await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
+
+    const aiJobs = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT * FROM analysis_farm_jobs WHERE analysis_id=$1 AND type='scan.ai'`,
+      [analysisId],
+    );
+    expect(aiJobs).toHaveLength(1);
   });
 });

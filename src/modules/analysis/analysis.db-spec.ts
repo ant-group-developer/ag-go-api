@@ -1,5 +1,5 @@
 /**
- * DB-level integration tests for the media-analysis module.
+ * DB-level integration tests for the media-analysis module (v2: per-asset analysis).
  * These run against a real Postgres instance (the test DB started by docker-compose.test.yml).
  * The global setup (jest.db-global-setup.ts) creates the database and runs all migrations
  * before any test in this file executes.
@@ -11,9 +11,8 @@ import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { AppDataSource } from '../../database/data-source';
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
-import { MediaSegmentEntity } from '../../database/entities/media-segment.entity';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
-import { MediaAnalysisMigration2020000000000 } from '../../database/migrations/2020000000000-media-analysis';
+import { AssetAnalysisV22040000000000 } from '../../database/migrations/2040000000000-asset-analysis-v2';
 
 const TEST_DB_URL =
   process.env['TEST_DATABASE_URL'] ?? 'postgres://postgres:postgres@localhost:55434/ag_go_test';
@@ -76,6 +75,7 @@ async function insertAnalysis(
     is_current: boolean;
     extract_version: string;
     prompt_version: string;
+    description: Record<string, unknown> | null;
   }> = {},
 ): Promise<string> {
   const id = overrides.id ?? randomUUID();
@@ -88,72 +88,81 @@ async function insertAnalysis(
       assetId,
       overrides.status ?? 'queued',
       0,
-      overrides.extract_version ?? 'x1',
-      overrides.prompt_version ?? 'p1',
+      overrides.extract_version ?? 'x2',
+      overrides.prompt_version ?? 'p2',
       overrides.is_current ?? false,
     ],
   );
-  return id;
-}
-
-async function insertSegment(
-  analysisId: string,
-  assetId: string,
-  overrides: Partial<{
-    id: string;
-    segment_index: number;
-    is_current: boolean;
-    usable: boolean | null;
-  }> = {},
-): Promise<string> {
-  const id = overrides.id ?? randomUUID();
-  await ds.query(
-    `INSERT INTO media_segments
-       (id, analysis_id, asset_id, segment_index, start_ms, end_ms, is_current)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-    [id, analysisId, assetId, overrides.segment_index ?? 0, 0, 5000, overrides.is_current ?? false],
-  );
-  if (overrides.usable !== undefined) {
-    await ds.query(`UPDATE media_segments SET usable=$1 WHERE id=$2`, [overrides.usable, id]);
+  if (overrides.description) {
+    await ds.query(`UPDATE asset_analyses SET description=$1 WHERE id=$2`, [
+      JSON.stringify(overrides.description),
+      id,
+    ]);
   }
   return id;
 }
 
 async function cleanupAsset(assetId: string): Promise<void> {
-  // Cascades handle child rows
   await ds.query(`DELETE FROM assets WHERE id=$1`, [assetId]);
 }
 
 // ---------------------------------------------------------------------------
-// Migration: run → revert → run
+// Migration: run → revert → run (2040)
 // ---------------------------------------------------------------------------
 
-describe('MediaAnalysisMigration2020000000000', () => {
+describe('AssetAnalysisV22040000000000', () => {
   it('can be reverted and re-applied without errors', async () => {
-    // Ensure no analysis data remains that would block revert
+    // Ensure no v2 data remains
     await ds.query(`DELETE FROM analysis_farm_jobs`);
-    await ds.query(`DELETE FROM media_segments`);
     await ds.query(`DELETE FROM asset_analyses`);
+    await ds.query(`DELETE FROM analysis_batches`);
 
-    const migration = new MediaAnalysisMigration2020000000000();
+    const migration = new AssetAnalysisV22040000000000();
     const runner = ds.createQueryRunner();
 
     try {
       await migration.down(runner);
-      // Tables should be gone
+
+      // analysis_batches should be gone; asset_analyses should lose v2 columns
       const afterDown = await ds.query<Array<{ tablename: string }>>(
         `SELECT tablename FROM pg_tables WHERE schemaname='public'
-         AND tablename IN ('asset_analyses','media_segments','analysis_farm_jobs')`,
+         AND tablename IN ('analysis_batches')`,
       );
       expect(afterDown).toHaveLength(0);
 
+      // media_segments is re-created on down
+      const segsBack = await ds.query<Array<{ tablename: string }>>(
+        `SELECT tablename FROM pg_tables WHERE schemaname='public'
+         AND tablename = 'media_segments'`,
+      );
+      expect(segsBack).toHaveLength(1);
+
       await migration.up(runner);
-      // Tables should be back
+
+      // analysis_batches should be back
       const afterUp = await ds.query<Array<{ tablename: string }>>(
         `SELECT tablename FROM pg_tables WHERE schemaname='public'
-         AND tablename IN ('asset_analyses','media_segments','analysis_farm_jobs')`,
+         AND tablename IN ('analysis_batches')`,
       );
-      expect(afterUp).toHaveLength(3);
+      expect(afterUp).toHaveLength(1);
+
+      // media_segments should be gone after up
+      const segsGone = await ds.query<Array<{ tablename: string }>>(
+        `SELECT tablename FROM pg_tables WHERE schemaname='public'
+         AND tablename = 'media_segments'`,
+      );
+      expect(segsGone).toHaveLength(0);
+
+      // asset_analyses should have search_vector column
+      const cols = await ds.query<Array<{ column_name: string }>>(
+        `SELECT column_name FROM information_schema.columns
+         WHERE table_name='asset_analyses' AND column_name IN ('description','search_vector','batch_id')`,
+      );
+      expect(cols.map((c) => c.column_name).sort()).toEqual([
+        'batch_id',
+        'description',
+        'search_vector',
+      ]);
     } finally {
       await runner.release();
     }
@@ -183,7 +192,7 @@ describe('enqueue inside transaction', () => {
         `INSERT INTO asset_analyses
            (id, asset_id, status, priority, extract_version, prompt_version, is_current)
          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [analysisId, assetId, 'queued', 0, 'x1', 'p1', false],
+        [analysisId, assetId, 'queued', 0, 'x2', 'p2', false],
       );
       await manager.query(
         `INSERT INTO outbox_events
@@ -214,7 +223,6 @@ describe('enqueue inside transaction', () => {
       [analysisId],
     );
     expect(events).toHaveLength(1);
-    // Raw SQL returns snake_case column names
     expect((events[0] as unknown as Record<string, unknown>)['event_type']).toBe(
       'asset.analysis.requested',
     );
@@ -222,95 +230,28 @@ describe('enqueue inside transaction', () => {
     // Cleanup
     await ds.query(`DELETE FROM outbox_events WHERE aggregate_id=$1`, [analysisId]);
   });
-});
 
-// ---------------------------------------------------------------------------
-// Segment insertion from extract manifest
-// ---------------------------------------------------------------------------
-
-describe('segment insertion', () => {
-  let assetId: string;
-  let analysisId: string;
-
-  beforeEach(async () => {
-    assetId = await insertAsset();
-    analysisId = await insertAnalysis(assetId, { status: 'extracting' });
-  });
-
-  afterEach(async () => {
-    await cleanupAsset(assetId);
-  });
-
-  it('inserts segments with is_current=false after extract', async () => {
-    const seg0Id = randomUUID();
-    const seg1Id = randomUUID();
-
+  it('stores batchId when provided', async () => {
+    // Insert an auto batch
+    const batchId = randomUUID();
     await ds.query(
-      `INSERT INTO media_segments
-         (id, analysis_id, asset_id, segment_index, start_ms, end_ms, is_current)
-       VALUES ($1,$2,$3,$4,$5,$6,$7),($8,$9,$10,$11,$12,$13,$14)`,
-      [
-        seg0Id,
-        analysisId,
-        assetId,
-        0,
-        0,
-        5000,
-        false,
-        seg1Id,
-        analysisId,
-        assetId,
-        1,
-        5000,
-        10000,
-        false,
-      ],
+      `INSERT INTO analysis_batches (id, name, kind, status) VALUES ($1,'Tự động','auto','running')`,
+      [batchId],
     );
-
-    const segments = await ds.query<MediaSegmentEntity[]>(
-      `SELECT * FROM media_segments WHERE analysis_id=$1 ORDER BY segment_index`,
+    const analysisId = randomUUID();
+    await ds.query(
+      `INSERT INTO asset_analyses
+         (id, asset_id, status, priority, extract_version, prompt_version, is_current, batch_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [analysisId, assetId, 'queued', 0, 'x2', 'p2', false, batchId],
+    );
+    const [row] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT batch_id FROM asset_analyses WHERE id=$1`,
       [analysisId],
     );
-    expect(segments).toHaveLength(2);
-    // Raw SQL returns snake_case column names
-    expect(
-      segments.every((s) => (s as unknown as Record<string, unknown>)['is_current'] === false),
-    ).toBe(true);
-  });
+    expect(row['batch_id']).toBe(batchId);
 
-  it('marks dead segments with usable=false and a reason', async () => {
-    const segId = randomUUID();
-    await ds.query(
-      `INSERT INTO media_segments
-         (id, analysis_id, asset_id, segment_index, start_ms, end_ms, is_current, usable, usable_reason)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [segId, analysisId, assetId, 0, 0, 5000, false, false, 'black'],
-    );
-
-    const [seg] = await ds.query<MediaSegmentEntity[]>(`SELECT * FROM media_segments WHERE id=$1`, [
-      segId,
-    ]);
-    const rawSeg = seg as unknown as Record<string, unknown>;
-    expect(rawSeg['usable']).toBe(false);
-    expect(rawSeg['usable_reason']).toBe('black');
-  });
-
-  it('enforces the unique constraint on (analysis_id, segment_index)', async () => {
-    await ds.query(
-      `INSERT INTO media_segments
-         (id, analysis_id, asset_id, segment_index, start_ms, end_ms, is_current)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [randomUUID(), analysisId, assetId, 0, 0, 5000, false],
-    );
-
-    await expect(
-      ds.query(
-        `INSERT INTO media_segments
-           (id, analysis_id, asset_id, segment_index, start_ms, end_ms, is_current)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-        [randomUUID(), analysisId, assetId, 0, 0, 5000, false],
-      ),
-    ).rejects.toThrow();
+    await ds.query(`DELETE FROM analysis_batches WHERE id=$1`, [batchId]);
   });
 });
 
@@ -330,42 +271,18 @@ describe('is_current flip', () => {
   });
 
   it('leaves exactly one current analysis after completing a second run', async () => {
-    // First analysis: completed and current
-    const analysis1Id = await insertAnalysis(assetId, {
-      status: 'completed',
-      is_current: true,
-    });
-    const seg1Id = await insertSegment(analysis1Id, assetId, { is_current: true });
+    const analysis1Id = await insertAnalysis(assetId, { status: 'completed', is_current: true });
+    const analysis2Id = await insertAnalysis(assetId, { status: 'extracted', is_current: false });
 
-    // Second analysis: completed, not yet current
-    const analysis2Id = await insertAnalysis(assetId, {
-      status: 'extracted',
-      is_current: false,
-    });
-    const seg2Id = await insertSegment(analysis2Id, assetId, {
-      segment_index: 0,
-      is_current: false,
-    });
-
-    // Simulate the finalize transaction
     await ds.transaction(async (manager) => {
-      // Flip old current off first
       await manager.query(
         `UPDATE asset_analyses SET is_current=false WHERE asset_id=$1 AND is_current=true`,
         [assetId],
       );
       await manager.query(
-        `UPDATE media_segments SET is_current=false WHERE asset_id=$1 AND is_current=true`,
-        [assetId],
-      );
-      // Flip new analysis on
-      await manager.query(
         `UPDATE asset_analyses SET is_current=true, status='completed' WHERE id=$1`,
         [analysis2Id],
       );
-      await manager.query(`UPDATE media_segments SET is_current=true WHERE analysis_id=$1`, [
-        analysis2Id,
-      ]);
     });
 
     const currentAnalyses = await ds.query<AssetAnalysisEntity[]>(
@@ -375,31 +292,86 @@ describe('is_current flip', () => {
     expect(currentAnalyses).toHaveLength(1);
     expect(currentAnalyses[0].id).toBe(analysis2Id);
 
-    const currentSegs = await ds.query<MediaSegmentEntity[]>(
-      `SELECT * FROM media_segments WHERE asset_id=$1 AND is_current=true`,
-      [assetId],
-    );
-    expect(currentSegs).toHaveLength(1);
-    expect(currentSegs[0].id).toBe(seg2Id);
-
-    // Old analysis and segment should no longer be current
     const [oldAnalysis] = await ds.query<Array<Record<string, unknown>>>(
       `SELECT * FROM asset_analyses WHERE id=$1`,
       [analysis1Id],
     );
-    // Raw SQL returns snake_case column names
     expect(oldAnalysis?.['is_current']).toBe(false);
-    // Unused variable seg1Id intentionally kept; suppress lint warning
-    void seg1Id;
   });
 
   it('the partial unique index prevents two concurrent is_current=true rows', async () => {
     await insertAnalysis(assetId, { status: 'completed', is_current: true });
-
-    // Inserting a second is_current=true row for the same asset must fail
     await expect(
       insertAnalysis(assetId, { status: 'completed', is_current: true }),
     ).rejects.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// search_vector populated by trigger after description update
+// ---------------------------------------------------------------------------
+
+describe('search_vector trigger', () => {
+  let assetId: string;
+
+  beforeEach(async () => {
+    assetId = await insertAsset();
+  });
+
+  afterEach(async () => {
+    await cleanupAsset(assetId);
+  });
+
+  it('populates search_vector when description is set', async () => {
+    const analysisId = await insertAnalysis(assetId, {
+      description: {
+        title_vi: 'Phở bò Hà Nội',
+        keywords_vi: ['ẩm thực', 'đường phố'],
+        summary_vi: 'Tô phở bò truyền thống',
+        summary_en: 'Traditional beef noodle soup',
+        tags: ['pho', 'food'],
+        genre: 'ẩm thực',
+        topics: [],
+        subjects: [],
+        places: ['Hà Nội'],
+        actions: [],
+        mood: '',
+        setting: 'outdoor',
+        time_of_day: 'day',
+        people_count: 'none',
+        shot_variety: [],
+        camera_motions: [],
+        visible_text: '',
+        has_watermark: false,
+        usable: true,
+        usable_reason: '',
+        quality: 4,
+      },
+    });
+
+    const [row] = await ds.query<Array<{ has_sv: boolean }>>(
+      `SELECT (search_vector IS NOT NULL) AS has_sv FROM asset_analyses WHERE id=$1`,
+      [analysisId],
+    );
+    expect(row.has_sv).toBe(true);
+
+    // Query the search vector
+    const matches = await ds.query<Array<{ id: string }>>(
+      `SELECT id FROM asset_analyses
+       WHERE search_vector @@ plainto_tsquery('simple', immutable_unaccent('pho bo'))
+       AND id=$1`,
+      [analysisId],
+    );
+    expect(matches).toHaveLength(1);
+  });
+
+  it('search_vector is null when description is null', async () => {
+    const analysisId = await insertAnalysis(assetId, { status: 'extracting' });
+    const [row] = await ds.query<Array<{ sv: unknown }>>(
+      `SELECT search_vector AS sv FROM asset_analyses WHERE id=$1`,
+      [analysisId],
+    );
+    expect(row.sv).toBeNull();
   });
 });
 
@@ -419,19 +391,17 @@ describe('backfill dryRun vs real', () => {
   });
 
   it('dryRun counts assets needing analysis without inserting rows', async () => {
-    // Asset has no current analysis → needs backfill
     const [countRow] = await ds.query<[{ count: string }]>(
       `SELECT COUNT(*) AS count FROM assets a
        WHERE NOT EXISTS (
          SELECT 1 FROM asset_analyses aa
          WHERE aa.asset_id = a.id AND aa.is_current = true
-         AND aa.extract_version = 'x1' AND aa.prompt_version = 'p1'
+         AND aa.extract_version = 'x2' AND aa.prompt_version = 'p2'
        ) AND a.id = $1`,
       [assetId],
     );
     expect(Number(countRow.count)).toBe(1);
 
-    // No rows were inserted by the dry-run query
     const rows = await ds.query<AssetAnalysisEntity[]>(
       `SELECT * FROM asset_analyses WHERE asset_id=$1`,
       [assetId],
@@ -445,7 +415,7 @@ describe('backfill dryRun vs real', () => {
       `INSERT INTO asset_analyses
          (id, asset_id, status, priority, extract_version, prompt_version, is_current)
        VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [analysisId, assetId, 'queued', 0, 'x1', 'p1', false],
+      [analysisId, assetId, 'queued', 0, 'x2', 'p2', false],
     );
 
     const rows = await ds.query<AssetAnalysisEntity[]>(
@@ -457,12 +427,11 @@ describe('backfill dryRun vs real', () => {
   });
 
   it('backfill skips assets that already have a current analysis at the target versions', async () => {
-    // Insert a current analysis at x1/p1
     await insertAnalysis(assetId, {
       status: 'completed',
       is_current: true,
-      extract_version: 'x1',
-      prompt_version: 'p1',
+      extract_version: 'x2',
+      prompt_version: 'p2',
     });
 
     const [countRow] = await ds.query<[{ count: string }]>(
@@ -470,7 +439,7 @@ describe('backfill dryRun vs real', () => {
        WHERE NOT EXISTS (
          SELECT 1 FROM asset_analyses aa
          WHERE aa.asset_id = a.id AND aa.is_current = true
-         AND aa.extract_version = 'x1' AND aa.prompt_version = 'p1'
+         AND aa.extract_version = 'x2' AND aa.prompt_version = 'p2'
        ) AND a.id = $1`,
       [assetId],
     );

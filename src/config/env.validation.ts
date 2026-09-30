@@ -121,7 +121,7 @@ export const envValidationSchema = Joi.object({
 
   // Content analysis
   ANALYSIS_AUTO_ENQUEUE: Joi.boolean().truthy('true').falsy('false').default(false),
-  ANALYSIS_EXTRACT_VERSION: Joi.string().trim().min(1).default('x1'),
-  ANALYSIS_PROMPT_VERSION: Joi.string().trim().min(1).default('p1'),
+  ANALYSIS_EXTRACT_VERSION: Joi.string().trim().min(1).default('x2'),
+  ANALYSIS_PROMPT_VERSION: Joi.string().trim().min(1).default('p2'),
   ANALYSIS_MODEL: Joi.string().trim().min(1).default('qwen2.5vl:7b'),
 }).unknown(true);

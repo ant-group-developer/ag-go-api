@@ -4,6 +4,7 @@ import {
   Controller,
   Get,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   Req,
@@ -16,9 +17,11 @@ import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { Public } from '../../common/auth/public.decorator';
 import { RawResponse } from '../../common/raw-response.decorator';
+import { AnalysisBatchService } from './analysis-batch.service';
 import { AnalysisLogService } from './analysis-log.service';
 import { AnalysisSignService } from './analysis-sign.service';
 import { AnalysisService } from './analysis.service';
+import { AnalysisBatchesQueryDto } from './dto/analysis-batches-query.dto';
 import { AnalysisLogsQueryDto } from './dto/analysis-logs-query.dto';
 import { BackfillAnalysisDto } from './dto/backfill-analysis.dto';
 import { EnqueueAnalysisDto } from './dto/enqueue-analysis.dto';
@@ -30,6 +33,7 @@ import { SignRequestSchema } from './farm/sign';
 export class AnalysisController {
   constructor(
     private readonly analysisService: AnalysisService,
+    private readonly batchService: AnalysisBatchService,
     private readonly analysisLog: AnalysisLogService,
     private readonly signService: AnalysisSignService,
     private readonly authContext: AuthContextService,
@@ -84,6 +88,7 @@ export class AnalysisController {
   backfill(@Body() dto: BackfillAnalysisDto, @Req() req: Request) {
     const context = this.authContext.getContext(req);
     return this.analysisService.backfill({
+      name: dto.name,
       folderIds: dto.folderIds,
       projectIds: dto.projectIds,
       mode: dto.mode,
@@ -91,6 +96,42 @@ export class AnalysisController {
       dryRun: dto.dryRun,
       requestedBy: context.userId,
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scan batches
+  // ---------------------------------------------------------------------------
+
+  @Get('analysis/batches')
+  @ApiBearerAuth()
+  @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
+  @ApiOperation({ summary: 'Scan batches with their progress, newest first by default' })
+  listBatches(@Query() query: AnalysisBatchesQueryDto) {
+    return this.batchService.list(query);
+  }
+
+  @Post('analysis/batches/:batchId/pause')
+  @ApiBearerAuth()
+  @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
+  @ApiOperation({ summary: 'Pause a scan batch (its farm jobs and unfinished analyses)' })
+  pauseBatch(@Param('batchId', ParseUUIDPipe) batchId: string, @Req() req: Request) {
+    return this.batchService.pause(batchId, this.authContext.getContext(req).userId);
+  }
+
+  @Post('analysis/batches/:batchId/resume')
+  @ApiBearerAuth()
+  @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
+  @ApiOperation({ summary: 'Resume a paused scan batch' })
+  resumeBatch(@Param('batchId', ParseUUIDPipe) batchId: string, @Req() req: Request) {
+    return this.batchService.resume(batchId, this.authContext.getContext(req).userId);
+  }
+
+  @Post('analysis/batches/:batchId/cancel')
+  @ApiBearerAuth()
+  @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
+  @ApiOperation({ summary: 'Cancel everything unfinished in a scan batch' })
+  cancelBatch(@Param('batchId', ParseUUIDPipe) batchId: string, @Req() req: Request) {
+    return this.batchService.cancel(batchId, this.authContext.getContext(req).userId);
   }
 
   // ---------------------------------------------------------------------------
@@ -126,18 +167,52 @@ export class AnalysisController {
 
   @Get('assets/:assetId/analysis')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current and latest analysis for an asset' })
+  @ApiOperation({ summary: 'Latest analysis run of an asset with the whole-video description' })
   getAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
     const context = this.authContext.getContext(req);
     return this.analysisService.getAnalysisForAsset(assetId, context.userId, context.userType);
   }
 
-  @Get('assets/:assetId/segments')
+  @Post('assets/:assetId/analysis/pause')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get current segments for an asset' })
-  getSegments(@Param('assetId') assetId: string, @Req() req: Request) {
+  @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
+  @ApiOperation({ summary: 'Pause the in-flight analysis of an asset' })
+  pauseAssetAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
     const context = this.authContext.getContext(req);
-    return this.analysisService.getSegmentsForAsset(assetId, context.userId, context.userType);
+    return this.analysisService.controlAssetAnalysis(
+      assetId,
+      'pause',
+      context.userId,
+      context.userType,
+    );
+  }
+
+  @Post('assets/:assetId/analysis/resume')
+  @ApiBearerAuth()
+  @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
+  @ApiOperation({ summary: 'Resume the paused analysis of an asset' })
+  resumeAssetAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
+    const context = this.authContext.getContext(req);
+    return this.analysisService.controlAssetAnalysis(
+      assetId,
+      'resume',
+      context.userId,
+      context.userType,
+    );
+  }
+
+  @Post('assets/:assetId/analysis/cancel')
+  @ApiBearerAuth()
+  @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
+  @ApiOperation({ summary: 'Cancel the in-flight analysis of an asset' })
+  cancelAssetAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
+    const context = this.authContext.getContext(req);
+    return this.analysisService.controlAssetAnalysis(
+      assetId,
+      'cancel',
+      context.userId,
+      context.userType,
+    );
   }
 
   // ---------------------------------------------------------------------------
