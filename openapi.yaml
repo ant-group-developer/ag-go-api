@@ -1367,7 +1367,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a20
-      summary: Các kích thước preview (có watermark) người xem có thể chọn
+      summary:
+        Các bản preview (độ phân giải, watermark, bitrate) người xem được chọn;
+        bản không watermark chỉ cho người có quyền xem file gốc
       tags: *a21
   /assets/{assetId}/preview/{variantCode}:
     get:
