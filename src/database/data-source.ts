@@ -65,6 +65,8 @@ import { RenderBatchPausedStatusMigration2000000000000 } from './migrations/2000
 import { RenderVariantsMigration2010000000000 } from './migrations/2010000000000-render-variants';
 import { MediaAnalysisMigration2020000000000 } from './migrations/2020000000000-media-analysis';
 import { FootageSearch2030000000000 } from './migrations/2030000000000-footage-search';
+import { AssetSourceShortEdge2040000000000 } from './migrations/2040000000000-asset-source-short-edge';
+import { EvaluationPreviousStatus2050000000000 } from './migrations/2050000000000-evaluation-previous-status';
 
 loadEnv();
 
@@ -149,6 +151,8 @@ export const AppDataSource = new DataSource({
     RenderVariantsMigration2010000000000,
     MediaAnalysisMigration2020000000000,
     FootageSearch2030000000000,
+    AssetSourceShortEdge2040000000000,
+    EvaluationPreviousStatus2050000000000,
   ],
   synchronize: false,
 });

@@ -1,4 +1,8 @@
-import { sortRows, StatisticsBreakdownService } from './statistics-breakdown.service';
+import {
+  breakdownTotals,
+  sortRows,
+  StatisticsBreakdownService,
+} from './statistics-breakdown.service';
 import type { StatisticsBreakdownRow } from './statistics.types';
 
 jest.mock('@nestjs/typeorm', () => ({
@@ -26,16 +30,12 @@ describe('StatisticsBreakdownService', () => {
 
   function createService(empty = false) {
     const dataSource = {
-      query: jest.fn<Promise<unknown[]>, [string, unknown[]]>((sql) =>
-        Promise.resolve(
-          sql.includes('GROUP BY key')
-            ? [
-                row(null, { projects: 1, media: 2, images: 2 }),
-                row('cat-2', { label: 'Beach', projects: '3' as never, media: 10, videos: 10 }),
-                row('cat-1', { label: 'City', projects: 5, media: 4, images: 4 }),
-              ]
-            : [{ projects: 9, media: 16, images: 6, videos: 10 }],
-        ),
+      query: jest.fn<Promise<unknown[]>, [string, unknown[]]>(() =>
+        Promise.resolve([
+          row(null, { projects: 1, media: 2, images: 2 }),
+          row('cat-2', { label: 'Beach', projects: '3' as never, media: 10, videos: 10 }),
+          row('cat-1', { label: 'City', projects: 5, media: 4, images: 4 }),
+        ]),
       ),
     };
     const scopeService = {
@@ -50,13 +50,14 @@ describe('StatisticsBreakdownService', () => {
     return { service, dataSource };
   }
 
-  it('groups by the requested dimension and returns the distinct totals', async () => {
+  it('groups by the requested dimension and sums the rows into totals', async () => {
     const { service, dataSource } = createService();
 
     const result = await service.breakdown(context, { ...period, dimension: 'category' });
 
     expect(result.range).toBe('all');
     expect(result.totals).toEqual({ projects: 9, media: 16, images: 6, videos: 10 });
+    expect(dataSource.query).toHaveBeenCalledTimes(1);
     expect(result.rows.map((item) => [item.key, item.projects])).toEqual([
       ['cat-1', 5],
       ['cat-2', 3],
@@ -64,7 +65,9 @@ describe('StatisticsBreakdownService', () => {
     ]);
     const [sql, values] = dataSource.query.mock.calls[0] as [string, unknown[]];
     expect(sql).toContain('categories');
-    expect(values[5]).toBe(true);
+    // The whole scope reads the project counters and binds only the scope.
+    expect(sql).toContain('media_count');
+    expect(values).toHaveLength(3);
   });
 
   it('only counts the period when asked to', async () => {
@@ -73,8 +76,9 @@ describe('StatisticsBreakdownService', () => {
     await service.breakdown(context, { ...period, dimension: 'resolution', range: 'period' });
 
     const [sql, values] = dataSource.query.mock.calls[0] as [string, unknown[]];
-    expect(sql).toContain('short_edge');
-    expect(values[5]).toBe(false);
+    expect(sql).toContain('source_short_edge');
+    expect(sql).toContain('pm.created_at >= $4');
+    expect(values).toHaveLength(5);
   });
 
   it('returns nothing without querying when the user has no folder', async () => {
@@ -84,7 +88,36 @@ describe('StatisticsBreakdownService', () => {
 
     expect(dataSource.query).not.toHaveBeenCalled();
     expect(result.rows).toEqual([]);
-    expect(result.totals.projects).toBe(0);
+    expect(result.totals).toBeNull();
+  });
+});
+
+describe('breakdownTotals', () => {
+  const rows = [
+    row('a', { projects: 2, media: 5, images: 1, videos: 4 }),
+    row(null, { projects: 1, media: 1, images: 1 }),
+  ];
+
+  it('sums every column for single-valued groupings', () => {
+    expect(breakdownTotals('country', rows)).toEqual({
+      projects: 3,
+      media: 6,
+      images: 2,
+      videos: 4,
+    });
+  });
+
+  it('leaves out the project total when a project spans several rows', () => {
+    expect(breakdownTotals('extension', rows)).toEqual({
+      projects: null,
+      media: 6,
+      images: 2,
+      videos: 4,
+    });
+  });
+
+  it('has no totals for tags', () => {
+    expect(breakdownTotals('tag', rows)).toBeNull();
   });
 });
 
