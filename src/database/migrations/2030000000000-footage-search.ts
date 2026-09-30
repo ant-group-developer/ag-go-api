@@ -15,6 +15,8 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * with CREATE privilege on the database can CREATE EXTENSION IF NOT EXISTS directly. If the
  * role does NOT have that privilege, the migration fails with a clear message telling an
  * operator to run `CREATE EXTENSION unaccent; CREATE EXTENSION pg_trgm;` as a superuser.
+ * If the server lacks the contrib files altogether ("extension ... is not available"), the
+ * message says to install the contrib package on the database host instead.
  */
 export class FootageSearch2030000000000 implements MigrationInterface {
   name = 'FootageSearch2030000000000';
@@ -23,30 +25,22 @@ export class FootageSearch2030000000000 implements MigrationInterface {
     // -----------------------------------------------------------------------
     // 1. Extensions
     // -----------------------------------------------------------------------
-    try {
-      await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS unaccent`);
-    } catch (err) {
-      throw new Error(
-        `Migration ${this.name} failed: could not create extension "unaccent". ` +
-          `Run: CREATE EXTENSION unaccent; as a superuser, then retry. Original: ${String(err)}`,
-      );
-    }
-
-    try {
-      await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`);
-    } catch (err) {
-      throw new Error(
-        `Migration ${this.name} failed: could not create extension "pg_trgm". ` +
-          `Run: CREATE EXTENSION pg_trgm; as a superuser, then retry. Original: ${String(err)}`,
-      );
-    }
+    await this.createExtension(queryRunner, 'unaccent');
+    await this.createExtension(queryRunner, 'pg_trgm');
 
     // -----------------------------------------------------------------------
     // 2. IMMUTABLE unaccent wrapper
     //    Postgres' built-in unaccent() is STABLE, not IMMUTABLE, so it cannot
     //    be used directly in GIN/tsvector expressions. The C-language call
     //    through unaccent(regdictionary, text) IS safe to mark IMMUTABLE.
+    //    The extension lands in the first schema of search_path (e.g. "$user"),
+    //    not necessarily public, so qualify it with wherever it actually lives.
     // -----------------------------------------------------------------------
+    const [{ schema: unaccentSchema }] = (await queryRunner.query(
+      `SELECT quote_ident(n.nspname) AS schema
+         FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+        WHERE e.extname = 'unaccent'`,
+    )) as { schema: string }[];
     await queryRunner.query(`
       CREATE OR REPLACE FUNCTION immutable_unaccent(text)
         RETURNS text
@@ -55,7 +49,7 @@ export class FootageSearch2030000000000 implements MigrationInterface {
         PARALLEL SAFE
         STRICT
       AS $$
-        SELECT public.unaccent('public.unaccent', $1)
+        SELECT ${unaccentSchema}.unaccent('${unaccentSchema}.unaccent', $1)
       $$
     `);
 
@@ -146,6 +140,23 @@ export class FootageSearch2030000000000 implements MigrationInterface {
           immutable_unaccent(lower(coalesce(caption_vi, ''))) gin_trgm_ops
         )
     `);
+  }
+
+  private async createExtension(queryRunner: QueryRunner, name: string): Promise<void> {
+    try {
+      await queryRunner.query(`CREATE EXTENSION IF NOT EXISTS ${name}`);
+    } catch (err) {
+      // "is not available" means the extension's files are missing on the Postgres server,
+      // which no amount of privilege fixes; anything else is usually a privilege problem.
+      const hint = /is not available/.test(String(err))
+        ? `The Postgres server has no "${name}" files: install the contrib package on the ` +
+          `database host (e.g. apt install postgresql-contrib, or use the official postgres image)`
+        : `Run: CREATE EXTENSION ${name}; as a superuser`;
+      throw new Error(
+        `Migration ${this.name} failed: could not create extension "${name}". ${hint}, then retry. ` +
+          `Original: ${String(err)}`,
+      );
+    }
   }
 
   async down(queryRunner: QueryRunner): Promise<void> {
