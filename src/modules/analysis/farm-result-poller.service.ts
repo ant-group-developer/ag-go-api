@@ -10,6 +10,7 @@ import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaSegmentEntity } from '../../database/entities/media-segment.entity';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
+import { AnalysisLogService } from './analysis-log.service';
 import { FarmClient } from './farm/farm-client';
 import type { JobView } from './farm/protocol';
 import {
@@ -45,6 +46,12 @@ export class FarmResultPollerService implements OnModuleDestroy {
   private readonly logger = new Logger(FarmResultPollerService.name);
   private timer?: NodeJS.Timeout;
   private polling = false;
+  /**
+   * The last error written to the processing log, per farm job and for the poll itself. A failing
+   * result is retried every poll; only a new error text is logged, not every repeat of the same one.
+   */
+  private readonly loggedJobErrors = new Map<string, string>();
+  private loggedPollError?: string;
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,
@@ -59,6 +66,7 @@ export class FarmResultPollerService implements OnModuleDestroy {
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     private readonly farmClient: FarmClient,
     private readonly outboxService: OutboxService,
+    private readonly analysisLog: AnalysisLogService,
     private readonly config: ConfigService,
   ) {}
 
@@ -89,18 +97,39 @@ export class FarmResultPollerService implements OnModuleDestroy {
     this.polling = true;
     try {
       const jobs = await this.farmClient.listUnackedFinished(50);
+      this.loggedPollError = undefined;
       for (const job of jobs) {
         try {
           if (await this.processJob(job)) {
             await this.farmClient.ackJob(job.id);
           }
+          this.loggedJobErrors.delete(job.id);
         } catch (error) {
           // Not acked: the result shows up again next poll and is processed again.
-          this.logger.error(`Failed to process farm job ${job.id}: ${errorMessage(error)}`);
+          const message = errorMessage(error);
+          this.logger.error(`Failed to process farm job ${job.id}: ${message}`);
+          if (this.loggedJobErrors.get(job.id) !== message) {
+            this.loggedJobErrors.set(job.id, message);
+            await this.analysisLog.write({
+              level: 'error',
+              action: 'analysis.ingest_failed',
+              message: `Could not process farm result ${job.type} (${job.correlation_id}): ${message} (retrying)`,
+              metadata: { farmJobId: job.id, correlationId: job.correlation_id, type: job.type },
+            });
+          }
         }
       }
     } catch (error) {
-      this.logger.error(`Farm poll failed: ${errorMessage(error)}`);
+      const message = errorMessage(error);
+      this.logger.error(`Farm poll failed: ${message}`);
+      if (this.loggedPollError !== message) {
+        this.loggedPollError = message;
+        await this.analysisLog.write({
+          level: 'error',
+          action: 'analysis.poll_failed',
+          message: `Could not read results from the farm: ${message}`,
+        });
+      }
     } finally {
       this.polling = false;
     }
@@ -250,6 +279,20 @@ export class FarmResultPollerService implements OnModuleDestroy {
       });
       await this.markIngested(manager, row, 'ingested');
     });
+    await this.analysisLog.write({
+      level: 'info',
+      action: 'analysis.extracted',
+      message:
+        `Extracted ${asset.originalFilename}: ${stored.length} segments (${stored.length - live.length} unusable), ` +
+        `${chunks.length} AI chunk(s) sent for description`,
+      metadata: {
+        analysisId: analysis.id,
+        assetId: asset.id,
+        farmJobId: row.farmJobId,
+        segmentCount: stored.length,
+        aiChunks: chunks.length,
+      },
+    });
     await this.finalizeIfDone(analysis.id);
   }
 
@@ -263,7 +306,7 @@ export class FarmResultPollerService implements OnModuleDestroy {
       await this.markIngested(this.dataSource.manager, row, 'ingested');
       return;
     }
-    const { analysis, prefix } = loaded;
+    const { analysis, asset, prefix } = loaded;
     const aiPath = `ai-${String(row.chunk ?? 0).padStart(4, '0')}.json`;
 
     let manifest: AiManifest;
@@ -308,6 +351,17 @@ export class FarmResultPollerService implements OnModuleDestroy {
       }
       await this.markIngested(manager, row, 'ingested');
     });
+    await this.analysisLog.write({
+      level: 'info',
+      action: 'analysis.ai_ingested',
+      message: `Described ${manifest.items.filter((item) => item.description).length}/${manifest.items.length} segments of ${asset.originalFilename} (chunk ${row.chunk ?? 0})`,
+      metadata: {
+        analysisId: analysis.id,
+        assetId: asset.id,
+        farmJobId: row.farmJobId,
+        chunk: row.chunk ?? 0,
+      },
+    });
     await this.finalizeIfDone(analysis.id);
   }
 
@@ -333,7 +387,7 @@ export class FarmResultPollerService implements OnModuleDestroy {
   }
 
   private async markAnalysisFailed(row: AnalysisFarmJobEntity, reason: string): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
+    const assetId = await this.dataSource.transaction(async (manager) => {
       const analysis = await manager.findOne(AssetAnalysisEntity, {
         where: { id: row.analysisId },
         lock: { mode: 'pessimistic_write' },
@@ -344,8 +398,15 @@ export class FarmResultPollerService implements OnModuleDestroy {
       }
       await manager.update(AnalysisFarmJobEntity, row.farmJobId, { error: { reason } });
       await this.markIngested(manager, row, 'failed');
+      return analysis?.assetId ?? null;
     });
     this.logger.warn(`Analysis ${row.analysisId} failed: ${reason}`);
+    await this.analysisLog.write({
+      level: 'error',
+      action: 'analysis.failed',
+      message: `${await this.assetLabel(assetId)}: ${row.type}${row.chunk === null ? '' : ` chunk ${row.chunk}`} failed — ${reason}`,
+      metadata: { analysisId: row.analysisId, assetId, farmJobId: row.farmJobId, type: row.type },
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -406,13 +467,26 @@ export class FarmResultPollerService implements OnModuleDestroy {
           payload: { analysisId, assetId: analysis.assetId, segmentCount, usableCount },
         }),
       );
-      return { segmentCount, usableCount };
+      return { assetId: analysis.assetId, segmentCount, usableCount };
     });
     if (completed) {
       this.logger.log(
         `Analysis ${analysisId} completed: ${completed.segmentCount} segments, ${completed.usableCount} usable`,
       );
+      await this.analysisLog.write({
+        level: 'info',
+        action: 'analysis.completed',
+        message: `Completed ${await this.assetLabel(completed.assetId)}: ${completed.segmentCount} segments, ${completed.usableCount} usable`,
+        metadata: { analysisId, ...completed },
+      });
     }
+  }
+
+  /** The asset's file name for a log message, or its id when it cannot be read. */
+  private async assetLabel(assetId: string | null): Promise<string> {
+    if (!assetId) return 'Unknown asset';
+    const asset = await this.assetRepo.findOne({ where: { id: assetId } }).catch(() => null);
+    return asset?.originalFilename ?? assetId;
   }
 
   // ---------------------------------------------------------------------------

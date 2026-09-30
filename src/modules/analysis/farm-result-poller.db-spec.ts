@@ -23,8 +23,11 @@ import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.enti
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaSegmentEntity } from '../../database/entities/media-segment.entity';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
+import { SystemLogEntity } from '../../database/entities/system-log.entity';
 import type { StorageAdapter } from '../assets/storage/storage-adapter';
+import { SystemLogService } from '../logs/system-log.service';
 import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
+import { AnalysisLogService } from './analysis-log.service';
 import { FarmResultPollerService } from './farm-result-poller.service';
 import type { FarmClient } from './farm/farm-client';
 import type { JobView, SubmitJobRequest, SubmitJobResponse } from './farm/protocol';
@@ -499,6 +502,10 @@ beforeAll(async () => {
     fakeStorage as unknown as StorageAdapter,
     fakeClient as unknown as FarmClient,
     outboxService,
+    new AnalysisLogService(
+      new SystemLogService(ds.getRepository(SystemLogEntity)),
+      ds.getRepository(SystemLogEntity),
+    ),
     config,
   );
 });
@@ -751,6 +758,24 @@ describe('AI completions → finalize', () => {
     const payload = events[0]['payload'] as { analysisId: string; assetId: string };
     expect(payload.analysisId).toBe(analysisId);
     expect(payload.assetId).toBe(assetId);
+  });
+
+  it('writes each step to the analysis processing log', async () => {
+    await poller.processJob(makeJobView(aiJob0Id, 'completed', `${analysisId}:ai:0`));
+    await poller.processJob(makeJobView(aiJob1Id, 'completed', `${analysisId}:ai:1`));
+    const logs = await ds.query<Array<{ action: string; message: string }>>(
+      `SELECT action, message FROM system_logs
+        WHERE category='analysis' AND metadata->>'analysisId'=$1
+        ORDER BY id`,
+      [analysisId],
+    );
+    expect(logs.map((log) => log.action)).toEqual([
+      'analysis.ai_ingested',
+      'analysis.ai_ingested',
+      'analysis.completed',
+    ]);
+    expect(logs[2].message).toBe('Completed clip.mp4: 2 segments, 2 usable');
+    await ds.query(`DELETE FROM system_logs WHERE metadata->>'analysisId'=$1`, [analysisId]);
   });
 
   it('sets is_current=true on all segments of the completed analysis', async () => {

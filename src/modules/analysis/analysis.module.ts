@@ -8,10 +8,12 @@ import { FolderClosureEntity } from '../../database/entities/folder-closure.enti
 import { MediaSegmentEntity } from '../../database/entities/media-segment.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
+import { SystemLogEntity } from '../../database/entities/system-log.entity';
 import { QueueModule } from '../../infra/queue/queue.module';
 import { StorageModule } from '../assets/storage/storage.module';
 import { LogsModule } from '../logs/logs.module';
 import { AnalysisEnqueueService } from './analysis-enqueue.service';
+import { AnalysisLogService } from './analysis-log.service';
 import { AnalysisOutboxService } from './analysis-outbox.service';
 import { AnalysisSignService } from './analysis-sign.service';
 import { AnalysisController } from './analysis.controller';
@@ -33,6 +35,7 @@ import { FarmTicketGuard } from './farm/farm-ticket.guard';
       ProjectEntity,
       ProjectMediaEntity,
       FolderClosureEntity,
+      SystemLogEntity,
     ]),
   ],
   controllers: [AnalysisController],
@@ -41,6 +44,7 @@ import { FarmTicketGuard } from './farm/farm-ticket.guard';
     FarmClient,
     FarmTicketGuard,
     AnalysisEnqueueService,
+    AnalysisLogService,
     AnalysisOutboxService,
     AnalysisService,
     AnalysisSignService,
