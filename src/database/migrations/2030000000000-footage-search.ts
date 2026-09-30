@@ -16,8 +16,8 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * role does NOT have that privilege, the migration fails with a clear message telling an
  * operator to run `CREATE EXTENSION unaccent; CREATE EXTENSION pg_trgm;` as a superuser.
  */
-export class FootageSearch2020000000000 implements MigrationInterface {
-  name = 'FootageSearch2020000000000';
+export class FootageSearch2030000000000 implements MigrationInterface {
+  name = 'FootageSearch2030000000000';
 
   async up(queryRunner: QueryRunner): Promise<void> {
     // -----------------------------------------------------------------------
