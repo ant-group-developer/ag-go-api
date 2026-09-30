@@ -150,7 +150,7 @@ export class Auth0Guard implements CanActivate {
     const userId = actAsUserId.trim();
 
     // Load user access from Account API (cached 60 s)
-    let access: { user_type: 'ADMIN' | 'USER'; permissions: string[] };
+    let access: { user_type: 'ADMIN' | 'USER'; permissions: string[]; is_active?: boolean };
     try {
       if (!this.accountApi) {
         throw new ServiceUnavailableException('AccountApiService is not available');
@@ -166,6 +166,11 @@ export class Auth0Guard implements CanActivate {
         throw error;
       }
       throw new ServiceUnavailableException('Account API is unavailable');
+    }
+
+    // A deactivated account may not be acted as, whatever its permissions still say.
+    if (access.is_active === false) {
+      throw new ForbiddenException('The acted-as user is deactivated');
     }
 
     // Populate auth context

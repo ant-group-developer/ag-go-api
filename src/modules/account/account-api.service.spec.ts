@@ -170,6 +170,52 @@ describe('AccountApiService', () => {
     );
   });
 
+  it('asks for the caller permissions in this application, whatever web app issued the token', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          statusCode: 200,
+          data: { id: 'user-1', user_type: 'USER', permissions: ['go.footage.search'] },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const me = await new AccountApiService(config).getCurrentUser('studio-token');
+
+    expect(me.permissions).toEqual(['go.footage.search']);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://account.test/v2/users/me?application=ant-go-v2',
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: 'Bearer studio-token' }),
+      }),
+    );
+  });
+
+  it('passes is_active through from the act-as access lookup', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          statusCode: 200,
+          data: {
+            user_id: 'u-9',
+            application: 'ant-go-v2',
+            is_active: false,
+            user_type: 'USER',
+            permissions: [],
+          },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await expect(new AccountApiService(config).getUserAccess('u-9')).resolves.toEqual({
+      user_type: 'USER',
+      permissions: [],
+      is_active: false,
+    });
+  });
+
   it('maps upstream failures to a gateway error', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue(new Response('error', { status: 500 }));
 

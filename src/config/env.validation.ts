@@ -85,6 +85,7 @@ export const envValidationSchema = Joi.object({
   // Account API path template for looking up user_type + permissions by userId.
   // {userId} is replaced with the encoded userId.
   ACCOUNT_API_USER_ACCESS_PATH: Joi.string().trim().allow('').optional(),
+  ACCOUNT_APPLICATION_CODE: Joi.string().trim().allow('').optional(),
 
   // Account API
   ACCOUNT_API_URL: Joi.string()

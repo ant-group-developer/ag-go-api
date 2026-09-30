@@ -289,6 +289,25 @@ describe('Auth0Guard', () => {
     expect(systemLog.write).toHaveBeenCalled();
   });
 
+  it('refuses to act as a deactivated user', async () => {
+    const raw = 'my-key';
+    const getUserAccess = jest.fn().mockResolvedValue({
+      user_type: 'ADMIN',
+      permissions: ['go.footage.search'],
+      is_active: false,
+    });
+    const guard = buildGuard(
+      { ...baseConfig, SERVICE_KEYS: SERVICE_KEYS_JSON(raw) },
+      { serviceKeyScopes: ['footage:read'] },
+      { accountApi: { getUserAccess }, systemLog: { write: jest.fn() } },
+    );
+    await expect(
+      guard.canActivate(
+        createContext(createRequest({ 'x-service-key': raw, 'x-act-as-user': 'gone-user' })),
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
   it('PermissionsGuard sees permissions from act-as context (user missing permission → 403)', async () => {
     // This test uses PermissionsGuard directly to verify it reads the pre-populated context.
     const { ForbiddenException: FE } = await import('@nestjs/common');

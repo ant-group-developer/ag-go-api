@@ -48,7 +48,12 @@ const ACTOR_FIELDS = 'id,name,email,avatar';
 export type AccountUserAccess = {
   user_type: UserType;
   permissions: string[];
+  /** Account API's `is_active`; absent from older Account API versions (treated as active). */
+  is_active?: boolean;
 };
+
+/** Code of this application in Account API: every user_type/permission lookup is made for it. */
+const DEFAULT_APPLICATION_CODE = 'ant-go-v2';
 
 @Injectable()
 export class AccountApiService {
@@ -170,7 +175,12 @@ export class AccountApiService {
       throw new ServiceUnavailableException('Account API returned an invalid access response');
     }
 
-    const result: AccountUserAccess = { user_type: data.user_type, permissions: data.permissions };
+    const isActive = (data as { is_active?: unknown }).is_active;
+    const result: AccountUserAccess = {
+      user_type: data.user_type,
+      permissions: data.permissions,
+      ...(typeof isActive === 'boolean' ? { is_active: isActive } : {}),
+    };
     this.accessCache.set(userId, { expiresAt: now + 60_000, value: result });
     return result;
   }
@@ -187,17 +197,24 @@ export class AccountApiService {
     );
   }
 
+  /**
+   * The caller's profile, user_type and permissions IN THIS APPLICATION. Account API otherwise picks the
+   * application from the token's client id, and a token issued to another web app (ag-studio-web calling
+   * this API) would get that app's permissions. Older Account API versions ignore the parameter.
+   */
   async getCurrentUser(accessToken: string): Promise<AccountCurrentUser> {
-    const payload = await this.request<AccountCurrentUser>(
-      this.buildAccountUrl('users/me').toString(),
-      false,
-      accessToken,
-    );
+    const url = this.buildAccountUrl('users/me');
+    url.searchParams.set('application', this.applicationCode());
+    const payload = await this.request<AccountCurrentUser>(url.toString(), false, accessToken);
     const result = this.unwrap(payload);
     if (!this.isCurrentUserResponse(result)) {
       throw new BadGatewayException('Account API returned an invalid current user response');
     }
     return result;
+  }
+
+  private applicationCode(): string {
+    return this.config.get<string>('ACCOUNT_APPLICATION_CODE')?.trim() || DEFAULT_APPLICATION_CODE;
   }
 
   /** Searches users with the caller's own bearer token (never the API key). */
