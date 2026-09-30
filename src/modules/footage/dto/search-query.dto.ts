@@ -8,7 +8,10 @@ export class FootageSearchQueryDto {
   @IsString()
   q?: string;
 
-  @ApiPropertyOptional({ type: [String], description: 'Comma-separated folder IDs.' })
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Comma-separated folder IDs (subfolders the user can reach are included).',
+  })
   @IsOptional()
   @IsArray()
   @IsUUID('all', { each: true })

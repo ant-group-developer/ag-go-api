@@ -167,4 +167,24 @@ export class FootageScopeService {
       throw new NotFoundException(`Folder not found or not accessible: ${missing}`);
     }
   }
+
+  /**
+   * Expands the folders a caller picked to their whole subtree (like the project list's folder
+   * filter), keeping only the folders the user can reach: picking "Test" also covers
+   * "Test / Test 1 / Test 1.1".
+   */
+  async expandToAccessibleSubtree(
+    requestedFolderIds: string[],
+    accessibleFolderIds: string[],
+  ): Promise<string[]> {
+    if (requestedFolderIds.length === 0) return [];
+    const rows = (await this.dataSource.query(
+      `SELECT DISTINCT descendant_id AS id FROM folder_closure WHERE ancestor_id = ANY($1::uuid[])`,
+      [requestedFolderIds],
+    )) as Array<{ id: string }>;
+    const accessible = new Set(accessibleFolderIds);
+    return [...new Set([...requestedFolderIds, ...rows.map((r) => r.id)])].filter((id) =>
+      accessible.has(id),
+    );
+  }
 }
