@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, Raw, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
@@ -45,6 +45,16 @@ import { THUMBNAIL_VARIANT_CODE } from './watermark-policy';
 const AUTO_JOBS_DEFAULT_PAGE_SIZE = 20;
 const AUTO_JOBS_MAX_PAGE_SIZE = 100;
 const ACTIVE_JOB_STATUSES = ['queued', 'processing'];
+/** Rows per INSERT of render jobs, well under Postgres's 65535 bind parameters per statement. */
+const INSERT_CHUNK_SIZE = 1000;
+
+/**
+ * `column = ANY($1)`: the whole list is one bind parameter, where `In()` binds one per id and
+ * breaks past 65535 ids (a re-render across every project).
+ */
+function anyOf(ids: string[]) {
+  return Raw((column) => `${column} = ANY(:ids)`, { ids });
+}
 
 /** Status tabs of the auto render job list; 'active' groups queued and processing jobs. */
 export const AUTO_JOB_STATUS_FILTERS = [
@@ -235,7 +245,7 @@ export class RenderService {
     }
 
     const projectIds = [...new Set(media.map((item) => item.projectId))];
-    const projects = await this.projectRepository.findBy({ id: In(projectIds) });
+    const projects = await this.projectRepository.findBy({ id: anyOf(projectIds) });
     const projectById = new Map(projects.map((project) => [project.id, project]));
     for (const projectId of projectIds) {
       const project = projectById.get(projectId);
@@ -254,7 +264,7 @@ export class RenderService {
     const existingJobs = reuseExisting
       ? await this.jobRepository.find({
           where: {
-            assetId: In([...new Set(media.map((item) => item.assetId))]),
+            assetId: anyOf([...new Set(media.map((item) => item.assetId))]),
             renderProfileId: profile.id,
             renderVersion: profile.profileVersion,
             status: In(['queued', 'processing', 'completed']),
@@ -309,7 +319,11 @@ export class RenderService {
         finishedAt: null,
         createdBy: userId,
       }));
-      await manager.insert(MediaRenderJobEntity, newJobs);
+      // In chunks: Postgres takes at most 65535 bind parameters per statement, and each row
+      // binds 17 of them, so one INSERT for a few thousand files fails.
+      for (let start = 0; start < newJobs.length; start += INSERT_CHUNK_SIZE) {
+        await manager.insert(MediaRenderJobEntity, newJobs.slice(start, start + INSERT_CHUNK_SIZE));
+      }
       // Only this profile's render may still run for these files: an older profile's job
       // finishing later would overwrite the new previews.
       await cancelSupersededRenderJobs(
@@ -920,7 +934,7 @@ export class RenderService {
 
   private async resolveMedia(dto: CreateRenderBatchDto): Promise<ProjectMediaEntity[]> {
     if (dto.projectMediaIds?.length) {
-      return this.mediaRepository.findBy({ id: In([...new Set(dto.projectMediaIds)]) });
+      return this.mediaRepository.findBy({ id: anyOf([...new Set(dto.projectMediaIds)]) });
     }
     if (dto.projectId) {
       return this.mediaRepository.findBy({ projectId: dto.projectId });
@@ -929,7 +943,7 @@ export class RenderService {
     if (projects.length === 0) {
       return [];
     }
-    return this.mediaRepository.findBy({ projectId: In(projects.map((project) => project.id)) });
+    return this.mediaRepository.findBy({ projectId: anyOf(projects.map((project) => project.id)) });
   }
 
   /** Jobs queued outside a batch: the user must be able to edit a project holding the asset. */

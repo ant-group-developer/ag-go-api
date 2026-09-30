@@ -25,6 +25,7 @@ import { ProjectEntity } from '../../database/entities/project.entity';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
 import { AnalysisEnqueueService } from './analysis-enqueue.service';
+import { AnalysisLogService } from './analysis-log.service';
 
 export type AnalysisSummary = {
   id: string;
@@ -74,6 +75,7 @@ export class AnalysisService {
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     private readonly outboxService: OutboxService,
     private readonly enqueueService: AnalysisEnqueueService,
+    private readonly analysisLog: AnalysisLogService,
     private readonly config: ConfigService,
   ) {}
 
@@ -154,7 +156,9 @@ export class AnalysisService {
     const assetIds = await this.findScopedAssetIds({ folderIds, projectIds });
 
     if (assetIds.length === 0) {
-      return { matched: 0, enqueued: 0, skipped: 0, dryRun };
+      const result = { matched: 0, enqueued: 0, skipped: 0, dryRun };
+      if (!dryRun) await this.logBackfill(options, result);
+      return result;
     }
 
     // Determine which assets to enqueue based on mode
@@ -215,7 +219,36 @@ export class AnalysisService {
       if (id) enqueued++;
     }
 
-    return { matched: assetIds.length, enqueued, skipped: toSkip.length, dryRun };
+    const result = { matched: assetIds.length, enqueued, skipped: toSkip.length, dryRun };
+    await this.logBackfill(options, result);
+    return result;
+  }
+
+  private async logBackfill(
+    options: {
+      folderIds?: string[];
+      projectIds?: string[];
+      mode: string;
+      priority?: number;
+      requestedBy?: string;
+    },
+    result: BackfillResult,
+  ): Promise<void> {
+    await this.analysisLog.write({
+      level: 'info',
+      action: 'analysis.backfill',
+      message: `Backfill (${options.mode}): ${result.matched} matched, ${result.enqueued} queued, ${result.skipped} skipped`,
+      userId: options.requestedBy ?? null,
+      metadata: {
+        mode: options.mode,
+        folderIds: options.folderIds ?? [],
+        projectIds: options.projectIds ?? [],
+        priority: options.priority ?? 0,
+        matched: result.matched,
+        enqueued: result.enqueued,
+        skipped: result.skipped,
+      },
+    });
   }
 
   /**
@@ -265,7 +298,7 @@ export class AnalysisService {
     options: { priority?: number } = {},
   ): Promise<{ analysisId: string; status: AnalysisStatus }> {
     // Check access
-    await this.requireAssetAccess(assetId, userId, userType);
+    const asset = await this.requireAssetAccess(assetId, userId, userType);
 
     // Check for in-flight
     const inFlight = await this.analysisRepo.findOne({
@@ -293,6 +326,13 @@ export class AnalysisService {
     if (!analysisId) {
       throw new ConflictException(`Could not enqueue analysis for asset ${assetId}`);
     }
+    await this.analysisLog.write({
+      level: 'info',
+      action: 'analysis.enqueue',
+      message: `Queued analysis for ${asset.originalFilename}`,
+      userId,
+      metadata: { analysisId, assetId, priority: options.priority ?? 0 },
+    });
 
     return { analysisId, status: 'queued' };
   }
