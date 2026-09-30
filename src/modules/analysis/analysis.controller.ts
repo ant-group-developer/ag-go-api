@@ -16,8 +16,10 @@ import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { Public } from '../../common/auth/public.decorator';
 import { RawResponse } from '../../common/raw-response.decorator';
+import { AnalysisLogService } from './analysis-log.service';
 import { AnalysisSignService } from './analysis-sign.service';
 import { AnalysisService } from './analysis.service';
+import { AnalysisLogsQueryDto } from './dto/analysis-logs-query.dto';
 import { BackfillAnalysisDto } from './dto/backfill-analysis.dto';
 import { EnqueueAnalysisDto } from './dto/enqueue-analysis.dto';
 import { FarmTicketGuard } from './farm/farm-ticket.guard';
@@ -28,6 +30,7 @@ import { SignRequestSchema } from './farm/sign';
 export class AnalysisController {
   constructor(
     private readonly analysisService: AnalysisService,
+    private readonly analysisLog: AnalysisLogService,
     private readonly signService: AnalysisSignService,
     private readonly authContext: AuthContextService,
   ) {}
@@ -88,6 +91,18 @@ export class AnalysisController {
       dryRun: dto.dryRun,
       requestedBy: context.userId,
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Processing log
+  // ---------------------------------------------------------------------------
+
+  @Get('analysis/logs')
+  @ApiBearerAuth()
+  @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
+  @ApiOperation({ summary: 'Processing log of the analysis pipeline, newest first' })
+  getLogs(@Query() query: AnalysisLogsQueryDto) {
+    return this.analysisLog.list(query);
   }
 
   // ---------------------------------------------------------------------------

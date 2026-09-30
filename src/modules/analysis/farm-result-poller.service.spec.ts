@@ -17,6 +17,7 @@ import type { AssetAnalysisEntity } from '../../database/entities/asset-analysis
 import type { AssetEntity } from '../../database/entities/asset.entity';
 import type { MediaSegmentEntity } from '../../database/entities/media-segment.entity';
 import type { StorageAdapter } from '../assets/storage/storage-adapter';
+import type { AnalysisLogService } from './analysis-log.service';
 import { FarmResultPollerService } from './farm-result-poller.service';
 import type { FarmClient } from './farm/farm-client';
 import type { JobView } from './farm/protocol';
@@ -187,6 +188,8 @@ function makeService(
     get: jest.fn().mockReturnValue(undefined),
   };
 
+  const analysisLog = { write: jest.fn().mockResolvedValue(undefined) };
+
   const service = new FarmResultPollerService(
     dataSource as unknown as DataSource,
     analysisRepo as unknown as Repository<AssetAnalysisEntity>,
@@ -196,6 +199,7 @@ function makeService(
     storage as unknown as StorageAdapter,
     farmClient as unknown as FarmClient,
     outboxService as unknown as OutboxService,
+    analysisLog as unknown as AnalysisLogService,
     config as unknown as ConfigService,
   );
 
@@ -205,6 +209,7 @@ function makeService(
     analysisRepo,
     farmClient,
     storage,
+    analysisLog,
   };
 }
 
@@ -368,6 +373,60 @@ describe('FarmResultPollerService', () => {
       await expect(service.poll()).resolves.toBeUndefined();
       expect(farmClient.ackJob).toHaveBeenCalledWith(job2.id);
       expect(farmClient.ackJob).not.toHaveBeenCalledWith(job1.id);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // poll: processing log
+  // -------------------------------------------------------------------------
+
+  describe('poll: processing log', () => {
+    it('logs a failing result once per error text, not on every poll', async () => {
+      const job = makeJobView();
+      const { service, analysisLog } = makeService({ farmClientListResult: [job] });
+      const processJob = jest.spyOn(service, 'processJob');
+      processJob.mockRejectedValue(new Error('storage down'));
+      await service.poll();
+      await service.poll();
+      expect(analysisLog.write).toHaveBeenCalledTimes(1);
+      expect(analysisLog.write).toHaveBeenCalledWith(
+        expect.objectContaining({ level: 'error', action: 'analysis.ingest_failed' }),
+      );
+
+      processJob.mockRejectedValue(new Error('manifest invalid'));
+      await service.poll();
+      expect(analysisLog.write).toHaveBeenCalledTimes(2);
+    });
+
+    it('logs the same error again after the job has succeeded in between', async () => {
+      const job = makeJobView();
+      const { service, analysisLog } = makeService({ farmClientListResult: [job] });
+      jest
+        .spyOn(service, 'processJob')
+        .mockRejectedValueOnce(new Error('storage down'))
+        .mockResolvedValueOnce(false)
+        .mockRejectedValueOnce(new Error('storage down'));
+      await service.poll();
+      await service.poll();
+      await service.poll();
+      expect(analysisLog.write).toHaveBeenCalledTimes(2);
+    });
+
+    it('logs a failing farm poll once until it recovers', async () => {
+      const { service, farmClient, analysisLog } = makeService();
+      const list = farmClient.listUnackedFinished as jest.Mock;
+      list.mockRejectedValueOnce(new Error('network')).mockRejectedValueOnce(new Error('network'));
+      await service.poll();
+      await service.poll();
+      expect(analysisLog.write).toHaveBeenCalledTimes(1);
+      expect(analysisLog.write).toHaveBeenCalledWith(
+        expect.objectContaining({ level: 'error', action: 'analysis.poll_failed' }),
+      );
+
+      await service.poll(); // recovers
+      list.mockRejectedValueOnce(new Error('network'));
+      await service.poll();
+      expect(analysisLog.write).toHaveBeenCalledTimes(2);
     });
   });
 

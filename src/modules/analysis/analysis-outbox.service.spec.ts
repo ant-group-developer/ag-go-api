@@ -4,6 +4,7 @@ import type { Repository } from 'typeorm';
 import type { AnalysisFarmJobEntity } from '../../database/entities/analysis-farm-job.entity';
 import type { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
 import type { AssetEntity } from '../../database/entities/asset.entity';
+import type { AnalysisLogService } from './analysis-log.service';
 import { AnalysisOutboxService } from './analysis-outbox.service';
 import type { FarmClient } from './farm/farm-client';
 
@@ -107,15 +108,20 @@ function makeService(overrides: {
     }),
   } as unknown as ConfigService;
 
+  const analysisLog = {
+    write: jest.fn().mockResolvedValue(undefined),
+  } as unknown as jest.Mocked<AnalysisLogService>;
+
   const service = new AnalysisOutboxService(
     analysisRepo,
     assetRepo,
     farmJobRepo,
     farmClient,
+    analysisLog,
     config,
   );
 
-  return { service, analysisRepo, assetRepo, farmJobRepo, submitJob };
+  return { service, analysisRepo, assetRepo, farmJobRepo, submitJob, analysisLog };
 }
 
 // ---------------------------------------------------------------------------
@@ -185,7 +191,48 @@ describe('AnalysisOutboxService.handleAnalysisRequested', () => {
     const { service, analysisRepo } = makeService({});
     await service.handleAnalysisRequested(ANALYSIS_ID);
 
-    expect(analysisRepo.update).toHaveBeenCalledWith(ANALYSIS_ID, { status: 'extracting' });
+    expect(analysisRepo.update).toHaveBeenCalledWith(ANALYSIS_ID, {
+      status: 'extracting',
+      reason: null,
+    });
+  });
+
+  it('logs the submission to the processing log', async () => {
+    const { service, analysisLog } = makeService({});
+    await service.handleAnalysisRequested(ANALYSIS_ID);
+
+    expect(analysisLog.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        level: 'info',
+        action: 'analysis.extract.submitted',
+        metadata: expect.objectContaining({ analysisId: ANALYSIS_ID }),
+      }),
+    );
+  });
+
+  it('keeps a submit error on the queued analysis and logs it', async () => {
+    const submitJob = jest.fn().mockRejectedValue(new Error('farm unreachable'));
+    const { service, analysisRepo, analysisLog } = makeService({ submitJob });
+    await expect(service.handleAnalysisRequested(ANALYSIS_ID)).rejects.toThrow(/unreachable/);
+
+    expect(analysisRepo.update).toHaveBeenCalledWith(ANALYSIS_ID, {
+      reason: 'Could not submit to the farm: farm unreachable',
+    });
+    expect(analysisLog.write).toHaveBeenCalledWith(
+      expect.objectContaining({ level: 'warn', action: 'analysis.extract.submit_failed' }),
+    );
+  });
+
+  it('does not log a retry that fails with the same error again', async () => {
+    const submitJob = jest.fn().mockRejectedValue(new Error('farm unreachable'));
+    const { service, analysisRepo, analysisLog } = makeService({
+      submitJob,
+      analysis: { ...STUB_ANALYSIS, reason: 'Could not submit to the farm: farm unreachable' },
+    });
+    await expect(service.handleAnalysisRequested(ANALYSIS_ID)).rejects.toThrow(/unreachable/);
+
+    expect(analysisRepo.update).not.toHaveBeenCalled();
+    expect(analysisLog.write).not.toHaveBeenCalled();
   });
 
   it('throws when FARM_URL is not configured', async () => {
