@@ -23,7 +23,12 @@ import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-
 import { diffAuditSnapshots, type AuditChange } from '../audit/audit-changes';
 import { AuditService } from '../audit/audit.service';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
-import { isPreviewVariantCode, pickPreviewVariant } from '../render/render-sizes';
+import {
+  comparePreviews,
+  describePreview,
+  isPreviewVariantCode,
+  pickPreviewVariant,
+} from '../render/render-sizes';
 import {
   findActiveRenderProfile,
   isVariantServable,
@@ -86,6 +91,7 @@ export class MediaService {
     userType?: 'ADMIN' | 'USER',
     cursor?: string,
     limit = 50,
+    viewerMaySeeUnwatermarked = false,
   ) {
     const project = await this.getProject(projectId);
     await this.requireProjectAccess(project, userId, 'viewer', userType);
@@ -120,7 +126,9 @@ export class MediaService {
       this.dataSource.getRepository(RenderProfileEntity),
     );
     const servable = variants.filter(
-      (variant) => variant.status === 'ready' && isVariantServable(variant, activeProfile),
+      (variant) =>
+        variant.status === 'ready' &&
+        isVariantServable(variant, activeProfile, viewerMaySeeUnwatermarked),
     );
     const ttl = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
     const enrichedItems = await this.actorEnrichment.enrich(
@@ -129,14 +137,18 @@ export class MediaService {
           const assetVariants = servable.filter((variant) => variant.assetId === item.assetId);
           const previews = assetVariants
             .filter((variant) => isPreviewVariantCode(variant.variantCode))
-            .sort((a, b) => (a.width ?? 0) - (b.width ?? 0));
+            .sort(comparePreviews);
           const largestPreview = pickPreviewVariant(previews);
           const thumbnail = assetVariants.find(
             (variant) => variant.variantCode === THUMBNAIL_VARIANT_CODE,
           );
           const sourceMetadata = item.asset.sourceMetadata ?? {};
+          const durationSeconds = readNumberMetadata(sourceMetadata, [
+            'durationSeconds',
+            'duration',
+          ]);
           return Object.assign(item, {
-            durationSeconds: readNumberMetadata(sourceMetadata, ['durationSeconds', 'duration']),
+            durationSeconds,
             width: readNumberMetadata(sourceMetadata, ['width']) ?? largestPreview?.width ?? null,
             height:
               readNumberMetadata(sourceMetadata, ['height']) ?? largestPreview?.height ?? null,
@@ -151,11 +163,7 @@ export class MediaService {
                   ttl,
                 )
               : null,
-            previewVariants: previews.map((variant) => ({
-              variantCode: variant.variantCode,
-              width: variant.width,
-              height: variant.height,
-            })),
+            previewVariants: previews.map((variant) => describePreview(variant, durationSeconds)),
             previewVariantCode: largestPreview?.variantCode ?? null,
             watermarkVariant: largestPreview?.hasWatermark ? largestPreview.variantCode : null,
             creatorName:

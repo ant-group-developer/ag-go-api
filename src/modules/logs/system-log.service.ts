@@ -30,4 +30,29 @@ export class SystemLogService {
       metadata: { statusCode: input.statusCode, durationMs: input.durationMs },
     });
   }
+
+  /** Generic audit entry for non-HTTP events (e.g. farm sign, act-as). */
+  async write(input: {
+    level: 'info' | 'warn' | 'error';
+    category: string;
+    action: string;
+    message: string;
+    requestId?: string | null;
+    userId?: string | null;
+    projectId?: string | null;
+    jobId?: string | null;
+    metadata?: Record<string, unknown>;
+  }): Promise<void> {
+    await this.repository.insert({
+      level: input.level,
+      category: input.category.slice(0, 40),
+      action: input.action.slice(0, 100),
+      message: input.message,
+      requestId: input.requestId ?? null,
+      userId: input.userId ?? null,
+      projectId: input.projectId ?? null,
+      jobId: input.jobId ?? null,
+      metadata: (input.metadata ?? {}) as Record<string, NonNullable<unknown>>,
+    });
+  }
 }

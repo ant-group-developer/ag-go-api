@@ -12,6 +12,7 @@
     "format:check": "prettier --check \"src/**/*.ts\" \"*.{json,yml,yaml,mjs}\"",
     "lint": "eslint \"src/**/*.ts\"",
     "test": "jest --runInBand",
+    "test:db": "jest --config jest.db.config.ts --runInBand",
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
     "openapi:generate": "ts-node --files src/scripts/generate-openapi.ts",
@@ -50,7 +51,8 @@
     "sharp": "^0.35.4",
     "typeorm": "^1.1.1",
     "uuid": "^14.0.2",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.1",
+    "zod": "^4"
   },
   "devDependencies": {
     "@apidevtools/swagger-parser": "^13.0.0",

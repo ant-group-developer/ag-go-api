@@ -10,6 +10,8 @@ import { PermissionsGuard } from './common/auth/permissions.guard';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from './config/env.validation';
+import { AnalysisFarmJobEntity } from './database/entities/analysis-farm-job.entity';
+import { AssetAnalysisEntity } from './database/entities/asset-analysis.entity';
 import { AssetImportEntity } from './database/entities/asset-import.entity';
 import { AssetUploadSessionEntity } from './database/entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './database/entities/asset-variant.entity';
@@ -25,6 +27,7 @@ import { FolderEntity } from './database/entities/folder.entity';
 import { GoogleDriveConnectionEntity } from './database/entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from './database/entities/media-render-job.entity';
+import { MediaSegmentEntity } from './database/entities/media-segment.entity';
 import { OutboxEventEntity } from './database/entities/outbox-event.entity';
 import { ProjectAuditLogEntity } from './database/entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
@@ -40,12 +43,14 @@ import { TagEntity } from './database/entities/tag.entity';
 import { HealthController } from './health/health.controller';
 import { QueueModule } from './infra/queue/queue.module';
 import { AccountModule } from './modules/account/account.module';
+import { AnalysisModule } from './modules/analysis/analysis.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { CountriesModule } from './modules/countries/countries.module';
 import { DownloadsModule } from './modules/downloads/downloads.module';
 import { FoldersModule } from './modules/folders/folders.module';
+import { FootageModule } from './modules/footage/footage.module';
 import { GoogleDriveModule } from './modules/google-drive/google-drive.module';
 import { LogsModule } from './modules/logs/logs.module';
 import { MediaModule } from './modules/media/media.module';
@@ -103,6 +108,9 @@ import { TagsModule } from './modules/tags/tags.module';
           SystemSettingEntity,
           SystemLogEntity,
           OutboxEventEntity,
+          AssetAnalysisEntity,
+          MediaSegmentEntity,
+          AnalysisFarmJobEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -125,6 +133,8 @@ import { TagsModule } from './modules/tags/tags.module';
     GoogleDriveModule,
     SettingsModule,
     LogsModule,
+    AnalysisModule,
+    FootageModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

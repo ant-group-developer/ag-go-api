@@ -39,7 +39,10 @@ VALUES
   ('9a00000f-dbef-11f0-ab89-18c04dc47bd5', '[GO] Category Edit', 'go.category.edit', 'Edit catalog categories', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000010-dbef-11f0-ab89-18c04dc47bd5', '[GO] Category Delete', 'go.category.delete', 'Delete unused catalog categories', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000011-dbef-11f0-ab89-18c04dc47bd5', '[GO] Tag Edit', 'go.tag.edit', 'Edit catalog tags', @app_id, 1, NOW(), NOW(), NULL, NULL),
-  ('9a000012-dbef-11f0-ab89-18c04dc47bd5', '[GO] Tag Delete', 'go.tag.delete', 'Delete unused catalog tags', @app_id, 1, NOW(), NOW(), NULL, NULL)
+  ('9a000012-dbef-11f0-ab89-18c04dc47bd5', '[GO] Tag Delete', 'go.tag.delete', 'Delete unused catalog tags', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a000015-dbef-11f0-ab89-18c04dc47bd5', '[GO] Analysis Manage', 'go.analysis.manage', 'Manage media content analysis (backfill, enqueue)', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a000016-dbef-11f0-ab89-18c04dc47bd5', '[GO] Footage Search', 'go.footage.search', 'Search and browse footage segments', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a000017-dbef-11f0-ab89-18c04dc47bd5', '[GO] Footage Produce', 'go.footage.produce', 'Resolve footage segments for production rendering', @app_id, 1, NOW(), NOW(), NULL, NULL)
 ON DUPLICATE KEY UPDATE
   name = VALUES(name),
   description = VALUES(description),
@@ -91,6 +94,9 @@ FROM (
   UNION ALL SELECT '[GO] Admin', 'go.audit.read'
   UNION ALL SELECT '[GO] Admin', 'go.settings.manage'
   UNION ALL SELECT '[GO] Admin', 'go.logs.read'
+  UNION ALL SELECT '[GO] Admin', 'go.analysis.manage'
+  UNION ALL SELECT '[GO] Admin', 'go.footage.search'
+  UNION ALL SELECT '[GO] Admin', 'go.footage.produce'
 
   -- AG Go Manager: tất cả trừ settings
   UNION ALL SELECT '[GO] Manager', 'go.project.read'
@@ -112,6 +118,9 @@ FROM (
   UNION ALL SELECT '[GO] Manager', 'go.statistics.read'
   UNION ALL SELECT '[GO] Manager', 'go.audit.read'
   UNION ALL SELECT '[GO] Manager', 'go.logs.read'
+  UNION ALL SELECT '[GO] Manager', 'go.analysis.manage'
+  UNION ALL SELECT '[GO] Manager', 'go.footage.search'
+  UNION ALL SELECT '[GO] Manager', 'go.footage.produce'
 
   -- AG Go Editor: làm việc với project, Drive, render
   UNION ALL SELECT '[GO] Editor', 'go.project.read'

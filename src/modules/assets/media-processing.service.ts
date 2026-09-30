@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectRepository } from '@nestjs/typeorm';
 import ffmpegPath from 'ffmpeg-static';
@@ -14,13 +14,16 @@ import { In, Not, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
-import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
+import {
+  MediaRenderJobEntity,
+  type RenderSummary,
+} from '../../database/entities/media-render-job.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
+import { AnalysisEnqueueService } from '../analysis/analysis-enqueue.service';
 import { refreshRenderBatch } from '../render/render-job-lifecycle';
 import {
   normalizeRenderSizes,
-  previewVariantCode,
-  selectPreviewWidths,
+  planPreviewVariants,
   type RenderSizes,
 } from '../render/render-sizes';
 import { normalizeWatermarkConfig, type WatermarkConfig } from '../render/watermark-config';
@@ -29,7 +32,6 @@ import {
   getOverlayPosition,
   getRotatedSize,
   getSingleWatermarkTileScale,
-  getVideoRenderSize,
   getWatermarkMargin,
   getWatermarkTileGeometry,
   getWatermarkUnitScale,
@@ -38,6 +40,7 @@ import {
   findActiveRenderProfile,
   isWatermarkActive,
   THUMBNAIL_VARIANT_CODE,
+  watermarkFingerprint,
 } from '../render/watermark-policy';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage/storage-adapter';
 
@@ -51,6 +54,27 @@ type MediaMetadata = {
   codec?: string;
   frameRate?: number;
 };
+
+/** One variant a render of a file should end with, and the spec it is rendered with. */
+type PlannedOutput = {
+  kind: 'preview' | 'thumbnail';
+  variantCode: string;
+  /** Short edge of a preview; 0 for the thumbnail. */
+  resolution: number;
+  /** Frame of a preview; the thumbnail's maximum width (its height follows the ratio, 0 here). */
+  width: number;
+  height: number;
+  watermark: boolean;
+  /** Target bitrate of a video preview; null for constant quality and for images. */
+  bitrate: number | null;
+  renderSpec: string;
+};
+
+type RenderResult = { metadata: MediaMetadata; summary: RenderSummary };
+
+function readPositiveNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
 
 /** How much of a failed FFmpeg run's stderr is kept as the job's error message. */
 const STDERR_TAIL_CHARS = 2000;
@@ -133,6 +157,9 @@ export class MediaProcessingService {
     private readonly renderProfileRepository: Repository<RenderProfileEntity>,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     private readonly config: ConfigService,
+    @Optional()
+    @Inject(forwardRef(() => AnalysisEnqueueService))
+    private readonly analysisEnqueue?: AnalysisEnqueueService,
   ) {}
 
   async processJobById(jobId: string, assetId: string, queueJobId?: string): Promise<void> {
@@ -338,63 +365,43 @@ export class MediaProcessingService {
         ? await this.renderProfileRepository.findOne({ where: { id: job.renderProfileId } })
         : await findActiveRenderProfile(this.renderProfileRepository);
 
-      const tempPath = join(tmpdir(), `${TEMP_FILE_PREFIX}${asset.id}-${Date.now()}`);
-      try {
-        // The lookups above can be slow; a render that lost the job meanwhile must not flip an
-        // asset another render already made `ready` back to `processing`.
-        await this.assertRenderActive();
-        await this.assetRepository.update(asset.id, {
-          processingStatus: 'processing',
+      // When every variant the profile asks for already exists, the original is not needed.
+      const reusedAll = job.reuseExisting ? await this.reuseMatchingVariants(asset, profile) : null;
+      const result =
+        reusedAll ?? (await this.renderFromOriginal(asset, profile, render, job.reuseExisting));
+
+      await this.jobRepository.manager.transaction(async (manager) => {
+        // Job first: its row lock holds off a cancel or stale sweep until the asset is ready
+        // too, and a job no longer held leaves the asset to the render that holds it.
+        const completed = await manager.update(MediaRenderJobEntity, this.ownedJob(render), {
+          status: 'completed',
+          progressPercent: 100,
+          progressMessage: reusedAll
+            ? 'Existing media variants reused'
+            : 'Media variants are ready',
+          renderSummary: result.summary,
+          finishedAt: new Date(),
+          errorCode: null,
+          errorMessage: null,
+        });
+        if (!completed.affected) {
+          throw new RenderJobCancelledError();
+        }
+        await manager.update(AssetEntity, asset.id, {
+          processingStatus: 'ready',
           processingError: null,
+          sourceMetadata: {
+            ...(asset.sourceMetadata ?? {}),
+            ...result.metadata,
+          },
         });
-        await pipeline(
-          this.storage.readObject(asset.originalStorageKey),
-          createWriteStream(tempPath),
-        );
-        await this.jobRepository.update(this.ownedJob(render), {
-          progressPercent: 30,
-          progressMessage: 'Extracting media metadata',
-        });
-
-        const report: ProgressReporter = async (progressPercent, progressMessage) => {
-          // Never overwrite the message of a job cancelled or re-claimed meanwhile.
-          await this.jobRepository.update(this.ownedJob(render), {
-            progressPercent,
-            progressMessage,
-          });
-        };
-        const metadata =
-          asset.assetType === 'image'
-            ? await this.processImage(asset, tempPath, profile, report)
-            : await this.processVideo(asset, tempPath, profile, report);
-
-        await this.jobRepository.manager.transaction(async (manager) => {
-          // Job first: its row lock holds off a cancel or stale sweep until the asset is ready
-          // too, and a job no longer held leaves the asset to the render that holds it.
-          const completed = await manager.update(MediaRenderJobEntity, this.ownedJob(render), {
-            status: 'completed',
-            progressPercent: 100,
-            progressMessage: 'Media variants are ready',
-            finishedAt: new Date(),
-            errorCode: null,
-            errorMessage: null,
-          });
-          if (!completed.affected) {
-            throw new RenderJobCancelledError();
-          }
-          await manager.update(AssetEntity, asset.id, {
-            processingStatus: 'ready',
-            processingError: null,
-            sourceMetadata: {
-              ...(asset.sourceMetadata ?? {}),
-              ...metadata,
-            },
-          });
-        });
-        await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
-      } finally {
-        await this.removeTempFile(tempPath);
-      }
+        // Every render ends here, re-renders too (watermark changes, reused variants): the enqueue
+        // skips an asset that already has a current or in-flight analysis of the same version.
+        if (this.analysisEnqueue?.isAutoEnqueueEnabled()) {
+          await this.analysisEnqueue.enqueueInsideTransaction(manager, asset);
+        }
+      });
+      await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);
     } catch (error) {
       if (
         error instanceof RenderJobCancelledError ||
@@ -434,6 +441,46 @@ export class MediaProcessingService {
         return;
       }
       throw error;
+    }
+  }
+
+  /** Downloads the original and renders the variants it is missing (all of them without `reuse`). */
+  private async renderFromOriginal(
+    asset: AssetEntity,
+    profile: RenderProfileEntity | null,
+    render: ActiveRender,
+    reuse: boolean,
+  ): Promise<RenderResult> {
+    const tempPath = join(tmpdir(), `${TEMP_FILE_PREFIX}${asset.id}-${Date.now()}`);
+    try {
+      // The lookups before can be slow; a render that lost the job meanwhile must not flip an
+      // asset another render already made `ready` back to `processing`.
+      await this.assertRenderActive();
+      await this.assetRepository.update(asset.id, {
+        processingStatus: 'processing',
+        processingError: null,
+      });
+      await pipeline(
+        this.storage.readObject(asset.originalStorageKey),
+        createWriteStream(tempPath),
+      );
+      await this.jobRepository.update(this.ownedJob(render), {
+        progressPercent: 30,
+        progressMessage: 'Extracting media metadata',
+      });
+
+      const report: ProgressReporter = async (progressPercent, progressMessage) => {
+        // Never overwrite the message of a job cancelled or re-claimed meanwhile.
+        await this.jobRepository.update(this.ownedJob(render), {
+          progressPercent,
+          progressMessage,
+        });
+      };
+      return asset.assetType === 'image'
+        ? await this.processImage(asset, tempPath, profile, report, reuse)
+        : await this.processVideo(asset, tempPath, profile, report, reuse);
+    } finally {
+      await this.removeTempFile(tempPath);
     }
   }
 
@@ -482,95 +529,207 @@ export class MediaProcessingService {
     }
   }
 
+  /**
+   * Every output a render of this file should end with: the profile's preview variants and the
+   * thumbnail, each with the spec it is rendered with. Only size, watermark look and quality go
+   * into a spec, none of which depends on orientation, so a plan made from stored metadata
+   * matches one made from the probed file.
+   */
+  private planOutputs(
+    assetType: AssetEntity['assetType'],
+    sourceWidth: number,
+    sourceHeight: number,
+    profile: RenderProfileEntity | null,
+  ): PlannedOutput[] {
+    const isVideo = assetType === 'video';
+    const sizes = this.getRenderSizes(profile);
+    const quality = this.getImageQuality(profile);
+    const watermarkActive = isWatermarkActive(profile);
+    const watermarkSpec = watermarkActive ? watermarkFingerprint(profile) : 'none';
+    const previews = planPreviewVariants(
+      sourceWidth,
+      sourceHeight,
+      sizes.variants,
+      watermarkActive,
+      isVideo,
+    );
+    // Bitrates are shared out against the largest planned preview, rendered now or not, so a
+    // preview gets the same bitrate whichever other previews it is rendered with.
+    const largestArea = Math.max(...previews.map((preview) => preview.width * preview.height));
+    const outputs: PlannedOutput[] = previews.map((preview) => {
+      const bitrate = isVideo
+        ? this.getVideoBitrate(profile, (preview.width * preview.height) / largestArea)
+        : null;
+      const encoding = isVideo ? `br=${bitrate ?? 'crf23'}` : `q=${quality.preview}`;
+      return {
+        kind: 'preview',
+        variantCode: preview.variantCode,
+        resolution: preview.resolution,
+        width: preview.width,
+        height: preview.height,
+        watermark: preview.watermark,
+        bitrate,
+        renderSpec: `${assetType}|${preview.resolution}p|wm=${preview.watermark ? watermarkSpec : 'none'}|${encoding}`,
+      };
+    });
+    outputs.push({
+      kind: 'thumbnail',
+      variantCode: THUMBNAIL_VARIANT_CODE,
+      resolution: 0,
+      width: sizes.thumbnailWidth,
+      height: 0,
+      watermark: false,
+      bitrate: null,
+      renderSpec: `${assetType}|thumbnail|w=${sizes.thumbnailWidth}|q=${quality.thumbnail}`,
+    });
+    return outputs;
+  }
+
+  /**
+   * Splits planned outputs into those to render and those kept as they are: with `reuse`, a
+   * ready variant rendered with the same spec is kept. Variants from before specs existed are
+   * always rendered again.
+   */
+  private async splitReusable(
+    assetId: string,
+    outputs: PlannedOutput[],
+    reuse: boolean,
+  ): Promise<{ toRender: PlannedOutput[]; reused: string[] }> {
+    if (!reuse) {
+      return { toRender: outputs, reused: [] };
+    }
+    const existing = await this.variantRepository.find({ where: { assetId, status: 'ready' } });
+    const specByCode = new Map(
+      existing.map((variant) => [variant.variantCode, variant.renderSpec]),
+    );
+    const matches = (output: PlannedOutput) =>
+      specByCode.get(output.variantCode) === output.renderSpec;
+    return {
+      toRender: outputs.filter((output) => !matches(output)),
+      reused: outputs.filter(matches).map((output) => output.variantCode),
+    };
+  }
+
+  /**
+   * Finishes a reuse job without downloading the original when the stored size of the file shows
+   * that every variant the profile asks for already exists with the same spec. Returns null when
+   * something has to be rendered (or the size is unknown).
+   */
+  private async reuseMatchingVariants(
+    asset: AssetEntity,
+    profile: RenderProfileEntity | null,
+  ): Promise<RenderResult | null> {
+    const width = readPositiveNumber(asset.sourceMetadata?.width);
+    const height = readPositiveNumber(asset.sourceMetadata?.height);
+    if (!width || !height) {
+      return null;
+    }
+    const outputs = this.planOutputs(asset.assetType, width, height, profile);
+    const { toRender, reused } = await this.splitReusable(asset.id, outputs, true);
+    if (toRender.length > 0) {
+      return null;
+    }
+    await this.assertRenderActive();
+    const removed = await this.removeStaleVariants(
+      asset,
+      outputs.map((output) => output.variantCode),
+    );
+    return { metadata: {}, summary: { rendered: [], reused, removed } };
+  }
+
   private async processImage(
     asset: AssetEntity,
     inputPath: string,
     profile: RenderProfileEntity | null,
     report: ProgressReporter,
-  ): Promise<MediaMetadata> {
+    reuse = false,
+  ): Promise<RenderResult> {
     const metadata = await sharp(inputPath, { failOn: 'error' }).metadata();
-    const sizes = this.getRenderSizes(profile);
-    const quality = this.getImageQuality(profile);
     // EXIF orientations 5-8 swap the displayed width and height.
-    const sourceWidth =
-      (metadata.orientation ?? 1) >= 5 ? (metadata.height ?? 0) : (metadata.width ?? 0);
-    const widths = selectPreviewWidths(sourceWidth, sizes.previewWidths);
-
-    const codes: string[] = [];
-    for (const [index, width] of widths.entries()) {
-      await report(
-        this.progressFor(index, widths.length + 1),
-        `Rendering ${width}px image preview`,
-      );
-      codes.push(
-        await this.createImageVariant(asset, inputPath, 'preview', width, quality.preview, profile),
-      );
+    const swapped = (metadata.orientation ?? 1) >= 5;
+    const sourceWidth = swapped ? metadata.height : metadata.width;
+    const sourceHeight = swapped ? metadata.width : metadata.height;
+    if (!sourceWidth || !sourceHeight) {
+      throw new Error('Image dimensions could not be read');
     }
-    await report(this.progressFor(widths.length, widths.length + 1), 'Rendering thumbnail');
-    codes.push(
+    const quality = this.getImageQuality(profile);
+    const outputs = this.planOutputs('image', sourceWidth, sourceHeight, profile);
+    const { toRender, reused } = await this.splitReusable(asset.id, outputs, reuse);
+
+    for (const [index, output] of toRender.entries()) {
+      await report(
+        this.progressFor(index, toRender.length),
+        output.kind === 'thumbnail'
+          ? 'Rendering thumbnail'
+          : `Rendering ${output.resolution}p image preview`,
+      );
       await this.createImageVariant(
         asset,
         inputPath,
-        THUMBNAIL_VARIANT_CODE,
-        sizes.thumbnailWidth,
-        quality.thumbnail,
+        output,
+        output.kind === 'thumbnail' ? quality.thumbnail : quality.preview,
         profile,
-      ),
-    );
+      );
+    }
     await this.assertRenderActive();
-    await this.removeStaleVariants(asset, codes);
+    const removed = await this.removeStaleVariants(
+      asset,
+      outputs.map((output) => output.variantCode),
+    );
 
     return {
-      width: metadata.width,
-      height: metadata.height,
-      format: metadata.format,
+      metadata: {
+        width: metadata.width,
+        height: metadata.height,
+        format: metadata.format,
+      },
+      summary: { rendered: toRender.map((output) => output.variantCode), reused, removed },
     };
   }
 
-  /** Resizes to `width` (height follows the ratio, never upscaled); previews get the watermark. */
+  /**
+   * Resizes to the planned width (height follows the ratio, never upscaled); previews planned
+   * with a watermark get it.
+   */
   private async createImageVariant(
     asset: AssetEntity,
     inputPath: string,
-    kind: 'preview' | typeof THUMBNAIL_VARIANT_CODE,
-    width: number,
+    output: PlannedOutput,
     quality: number,
     profile: RenderProfileEntity | null,
   ): Promise<string> {
     const resized = await sharp(inputPath)
       .rotate()
-      .resize({ width, withoutEnlargement: true })
+      .resize({ width: output.width, withoutEnlargement: true })
       .png()
       .toBuffer({ resolveWithObject: true });
-    const watermark =
-      kind === 'preview'
-        ? await this.createWatermark(resized.info.width, resized.info.height, profile)
-        : null;
+    const watermark = output.watermark
+      ? await this.createWatermark(resized.info.width, resized.info.height, profile)
+      : null;
     const image = sharp(resized.data);
     if (watermark) {
       image.composite([{ input: watermark.buffer, top: watermark.top, left: watermark.left }]);
     }
     // Smart chroma subsampling keeps the colour edges of watermark text and logos crisp; plain
     // 4:2:0 smears them over two pixels, which shows on small previews.
-    const output = await image
+    const rendered = await image
       .webp({ quality, smartSubsample: true })
       .toBuffer({ resolveWithObject: true });
-    const variantCode =
-      kind === 'preview' ? previewVariantCode(output.info.width) : THUMBNAIL_VARIANT_CODE;
-    const storageKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${variantCode}.webp`;
+    const storageKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${output.variantCode}.webp`;
     await this.assertRenderActive();
-    const head = await this.storage.putObject(storageKey, output.data, 'image/webp');
-    await this.saveVariant(
-      asset,
-      variantCode,
+    const head = await this.storage.putObject(storageKey, rendered.data, 'image/webp');
+    await this.saveVariant(asset, {
+      variantCode: output.variantCode,
       storageKey,
-      'image/webp',
-      head.sizeBytes,
-      output.info.width,
-      output.info.height,
-      Boolean(watermark),
+      mimeType: 'image/webp',
+      sizeBytes: head.sizeBytes,
+      width: rendered.info.width,
+      height: rendered.info.height,
+      hasWatermark: Boolean(watermark),
+      renderSpec: output.renderSpec,
       profile,
-    );
-    return variantCode;
+    });
+    return output.variantCode;
   }
 
   private async processVideo(
@@ -578,7 +737,8 @@ export class MediaProcessingService {
     inputPath: string,
     profile: RenderProfileEntity | null,
     report: ProgressReporter,
-  ): Promise<MediaMetadata> {
+    reuse = false,
+  ): Promise<RenderResult> {
     const probe = await this.runProcess(ffprobePath, [
       '-v',
       'quiet',
@@ -596,6 +756,8 @@ export class MediaProcessingService {
         width?: number;
         height?: number;
         r_frame_rate?: string;
+        tags?: { rotate?: string };
+        side_data_list?: Array<{ rotation?: number }>;
       }>;
     };
     const videoStream = parsed.streams?.find((stream) => stream.codec_type === 'video');
@@ -611,50 +773,66 @@ export class MediaProcessingService {
       throw new Error('Video dimensions could not be read');
     }
 
-    const sizes = this.getRenderSizes(profile);
+    // FFmpeg applies the rotation of phone videos before the filters, so previews are planned on
+    // the displayed frame.
+    const rotation = Number(
+      videoStream?.side_data_list?.find((data) => data.rotation !== undefined)?.rotation ??
+        videoStream?.tags?.rotate ??
+        0,
+    );
+    const quarterTurn = Math.abs(Math.round(rotation / 90)) % 2 === 1;
+    const outputs = this.planOutputs(
+      'video',
+      quarterTurn ? height : width,
+      quarterTurn ? width : height,
+      profile,
+    );
+    const { toRender, reused } = await this.splitReusable(asset.id, outputs, reuse);
+    const thumbnail = toRender.find((output) => output.kind === 'thumbnail');
+    const previews = toRender.filter((output) => output.kind === 'preview');
     const quality = this.getImageQuality(profile);
-    const renderSizes = this.uniqueSizes(
-      selectPreviewWidths(width, sizes.previewWidths).map((previewWidth) =>
-        getVideoRenderSize(width, height, { maxWidth: previewWidth })!,
-      ),
-    );
-    const codes: string[] = [];
 
-    await report(this.progressFor(0, 1), 'Rendering video thumbnail');
-    codes.push(
-      await this.createVideoThumbnail(asset, inputPath, sizes.thumbnailWidth, quality, profile),
-    );
+    if (thumbnail) {
+      await report(this.progressFor(0, 1), 'Rendering video thumbnail');
+      await this.createVideoThumbnail(asset, inputPath, thumbnail, quality, profile);
+    }
 
-    // The thumbnail is quick; the previews take the rest of the 30-95% range.
-    const message = `Rendering ${renderSizes.map((size) => size.width).join(', ')}px video previews`;
-    await report(this.progressFor(VIDEO_THUMBNAIL_SHARE, 1), message);
-    const renderProgress = this.throttledProgress(report, message, (fraction) =>
-      this.progressFor(VIDEO_THUMBNAIL_SHARE + (1 - VIDEO_THUMBNAIL_SHARE) * fraction, 1),
-    );
-    try {
-      codes.push(
-        ...(await this.createVideoPreviews(
+    if (previews.length > 0) {
+      // The thumbnail is quick; the previews take the rest of the 30-95% range.
+      const message = `Rendering ${previews.map((output) => `${output.resolution}p`).join(', ')} video previews`;
+      await report(this.progressFor(VIDEO_THUMBNAIL_SHARE, 1), message);
+      const renderProgress = this.throttledProgress(report, message, (fraction) =>
+        this.progressFor(VIDEO_THUMBNAIL_SHARE + (1 - VIDEO_THUMBNAIL_SHARE) * fraction, 1),
+      );
+      try {
+        await this.createVideoPreviews(
           asset,
           inputPath,
-          renderSizes,
+          previews,
           profile,
           durationSeconds,
           renderProgress.update,
-        )),
-      );
-    } finally {
-      await renderProgress.settled();
+        );
+      } finally {
+        await renderProgress.settled();
+      }
     }
     await this.assertRenderActive();
-    await this.removeStaleVariants(asset, codes);
+    const removed = await this.removeStaleVariants(
+      asset,
+      outputs.map((output) => output.variantCode),
+    );
 
     return {
-      width,
-      height,
-      durationSeconds,
-      format: parsed.format?.format_name,
-      codec: videoStream?.codec_name,
-      frameRate,
+      metadata: {
+        width,
+        height,
+        durationSeconds,
+        format: parsed.format?.format_name,
+        codec: videoStream?.codec_name,
+        frameRate,
+      },
+      summary: { rendered: toRender.map((output) => output.variantCode), reused, removed },
     };
   }
 
@@ -662,7 +840,7 @@ export class MediaProcessingService {
   private async createVideoThumbnail(
     asset: AssetEntity,
     inputPath: string,
-    thumbnailWidth: number,
+    output: PlannedOutput,
     quality: { thumbnail: number },
     profile: RenderProfileEntity | null,
   ): Promise<string> {
@@ -676,7 +854,7 @@ export class MediaProcessingService {
         '-frames:v',
         '1',
         '-vf',
-        `scale='min(${thumbnailWidth},iw)':-2`,
+        `scale='min(${output.width},iw)':-2`,
         posterPath,
       ]);
       const poster = await sharp(await fs.readFile(posterPath))
@@ -685,17 +863,17 @@ export class MediaProcessingService {
       const posterKey = `${this.projectPrefix(asset.originalStorageKey, asset.id)}/variants/${asset.id}/${THUMBNAIL_VARIANT_CODE}.jpg`;
       await this.assertRenderActive();
       const posterHead = await this.storage.putObject(posterKey, poster.data, 'image/jpeg');
-      await this.saveVariant(
-        asset,
-        THUMBNAIL_VARIANT_CODE,
-        posterKey,
-        'image/jpeg',
-        posterHead.sizeBytes,
-        poster.info.width,
-        poster.info.height,
-        false,
+      await this.saveVariant(asset, {
+        variantCode: THUMBNAIL_VARIANT_CODE,
+        storageKey: posterKey,
+        mimeType: 'image/jpeg',
+        sizeBytes: posterHead.sizeBytes,
+        width: poster.info.width,
+        height: poster.info.height,
+        hasWatermark: false,
+        renderSpec: output.renderSpec,
         profile,
-      );
+      });
       return THUMBNAIL_VARIANT_CODE;
     } finally {
       await this.removeTempFile(posterPath);
@@ -703,14 +881,14 @@ export class MediaProcessingService {
   }
 
   /**
-   * H.264 previews at every `sizes` entry (even dimensions), watermarked when the profile has
-   * one. A single FFmpeg run decodes the source once and encodes every size from it: decoding
-   * 4K HEVC is most of the work, and one run per size took about twice as long.
+   * H.264 previews for every planned output (even dimensions), watermarked when planned so. A
+   * single FFmpeg run decodes the source once and encodes every size from it: decoding 4K HEVC
+   * is most of the work, and one run per size took about twice as long.
    */
   private async createVideoPreviews(
     asset: AssetEntity,
     inputPath: string,
-    sizes: Array<{ width: number; height: number }>,
+    planned: PlannedOutput[],
     profile: RenderProfileEntity | null,
     durationSeconds: number | undefined,
     onFraction: (fraction: number) => void,
@@ -718,22 +896,21 @@ export class MediaProcessingService {
     const prefix = this.projectPrefix(asset.originalStorageKey, asset.id);
     const stamp = `${asset.id}-${Date.now()}`;
     const area = (size: { width: number; height: number }) => size.width * size.height;
-    const largestArea = Math.max(...sizes.map(area));
-    const outputs = sizes.map((size) => ({
-      size,
-      variantCode: previewVariantCode(size.width),
-      previewPath: join(tmpdir(), `${TEMP_FILE_PREFIX}preview-${stamp}-${size.width}.mp4`),
-      watermarkPath: join(tmpdir(), `${TEMP_FILE_PREFIX}watermark-${stamp}-${size.width}.png`),
-      bitrate: this.getVideoBitrate(profile, area(size) / largestArea),
+    const largestArea = Math.max(...planned.map(area));
+    const outputs = planned.map((output) => ({
+      ...output,
+      previewPath: join(tmpdir(), `${TEMP_FILE_PREFIX}preview-${stamp}-${output.variantCode}.mp4`),
+      watermarkPath: join(
+        tmpdir(),
+        `${TEMP_FILE_PREFIX}watermark-${stamp}-${output.variantCode}.png`,
+      ),
     }));
     try {
       const watermarks: Array<Awaited<ReturnType<typeof this.createWatermark>>> = [];
       for (const output of outputs) {
-        const watermark = await this.createWatermark(
-          output.size.width,
-          output.size.height,
-          profile,
-        );
+        const watermark = output.watermark
+          ? await this.createWatermark(output.width, output.height, profile)
+          : null;
         if (watermark) {
           await fs.writeFile(output.watermarkPath, watermark.buffer);
         }
@@ -741,17 +918,17 @@ export class MediaProcessingService {
       }
 
       // Scale the 4K source once to the largest size; smaller sizes are scaled from that.
-      const largest = outputs.find((output) => area(output.size) === largestArea)!;
+      const largest = outputs.find((output) => area(output) === largestArea)!;
       const filters = [
-        `[0:v]scale=${largest.size.width}:${largest.size.height},split=${outputs.length}${outputs
+        `[0:v]scale=${largest.width}:${largest.height},split=${outputs.length}${outputs
           .map((_, index) => `[s${index}]`)
           .join('')}`,
       ];
       const watermarkArgs: string[] = [];
       for (const [index, output] of outputs.entries()) {
         let label = `[s${index}]`;
-        if (output !== largest) {
-          filters.push(`${label}scale=${output.size.width}:${output.size.height}[r${index}]`);
+        if (area(output) !== largestArea) {
+          filters.push(`${label}scale=${output.width}:${output.height}[r${index}]`);
           label = `[r${index}]`;
         }
         const watermark = watermarks[index];
@@ -835,17 +1012,17 @@ export class MediaProcessingService {
           'video/mp4',
           previewSize,
         );
-        await this.saveVariant(
-          asset,
-          output.variantCode,
-          previewKey,
-          'video/mp4',
-          previewHead.sizeBytes,
-          output.size.width,
-          output.size.height,
-          Boolean(watermarks[index]),
+        await this.saveVariant(asset, {
+          variantCode: output.variantCode,
+          storageKey: previewKey,
+          mimeType: 'video/mp4',
+          sizeBytes: previewHead.sizeBytes,
+          width: output.width,
+          height: output.height,
+          hasWatermark: Boolean(watermarks[index]),
+          renderSpec: output.renderSpec,
           profile,
-        );
+        });
         codes.push(output.variantCode);
       }
       return codes;
@@ -873,10 +1050,10 @@ export class MediaProcessingService {
   }
 
   /**
-   * Deletes variants that the latest render did not produce (a preview width removed from the
-   * profile, or the legacy single `preview`), including their stored objects.
+   * Deletes variants the profile no longer asks for (a variant removed from the profile, or a
+   * legacy width-based preview), including their stored objects. Returns their codes.
    */
-  private async removeStaleVariants(asset: AssetEntity, keepCodes: string[]): Promise<void> {
+  private async removeStaleVariants(asset: AssetEntity, keepCodes: string[]): Promise<string[]> {
     const stale = await this.variantRepository.find({
       where: { assetId: asset.id, variantCode: Not(In(keepCodes)) },
     });
@@ -890,39 +1067,44 @@ export class MediaProcessingService {
       }
       await this.variantRepository.delete(variant.id);
     }
+    return stale.map((variant) => variant.variantCode);
   }
 
   private async saveVariant(
     asset: AssetEntity,
-    variantCode: string,
-    storageKey: string,
-    mimeType: string,
-    sizeBytes: number,
-    width?: number,
-    height?: number,
-    hasWatermark = true,
-    profile?: RenderProfileEntity | null,
+    variant: {
+      variantCode: string;
+      storageKey: string;
+      mimeType: string;
+      sizeBytes: number;
+      width?: number;
+      height?: number;
+      hasWatermark: boolean;
+      renderSpec: string;
+      profile?: RenderProfileEntity | null;
+    },
   ): Promise<void> {
     // An upload is not stopped by an abort; re-check after it before pointing the row at it.
     await this.assertRenderActive();
     const existing = await this.variantRepository.findOne({
-      where: { assetId: asset.id, variantCode },
+      where: { assetId: asset.id, variantCode: variant.variantCode },
     });
     await this.variantRepository.save(
       this.variantRepository.create({
         id: existing?.id ?? uuidv7(),
         assetId: asset.id,
-        variantCode,
+        variantCode: variant.variantCode,
         storageProvider: asset.storageProvider,
         bucketName: asset.originalBucket,
-        storageKey,
-        mimeType,
-        fileSizeBytes: String(sizeBytes),
-        renderProfileId: profile?.id ?? null,
-        renderVersion: profile?.profileVersion ?? 1,
-        width: width ?? null,
-        height: height ?? null,
-        hasWatermark,
+        storageKey: variant.storageKey,
+        mimeType: variant.mimeType,
+        fileSizeBytes: String(variant.sizeBytes),
+        renderProfileId: variant.profile?.id ?? null,
+        renderVersion: variant.profile?.profileVersion ?? 1,
+        width: variant.width ?? null,
+        height: variant.height ?? null,
+        hasWatermark: variant.hasWatermark,
+        renderSpec: variant.renderSpec,
         status: 'ready',
         processingError: null,
       }),
@@ -964,11 +1146,6 @@ export class MediaProcessingService {
       return null;
     }
     return Math.max(300_000, Math.round(bitrate * areaRatio));
-  }
-
-  private uniqueSizes(sizes: Array<{ width: number; height: number }>) {
-    const seen = new Set<number>();
-    return sizes.filter((size) => !seen.has(size.width) && seen.add(size.width));
   }
 
   /** Job progress between 30% (original downloaded) and 95% while variants are rendered. */
