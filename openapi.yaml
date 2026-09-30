@@ -1931,6 +1931,97 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a26
       tags: *a27
+  /statistics/project-trend:
+    get:
+      operationId: StatisticsController_projectTrend
+      parameters:
+        - name: from
+          required: true
+          in: query
+          description: Start of the period (inclusive)
+          schema:
+            example: 2026-09-01T00:00:00+07:00
+            type: string
+        - name: to
+          required: true
+          in: query
+          description: End of the period (exclusive)
+          schema:
+            example: 2026-10-01T00:00:00+07:00
+            type: string
+        - name: tz
+          required: false
+          in: query
+          description: IANA time zone used to group the trend by day or week
+          schema:
+            default: Asia/Ho_Chi_Minh
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a26
+      tags: *a27
+  /statistics/breakdown:
+    get:
+      operationId: StatisticsController_breakdown
+      parameters:
+        - name: from
+          required: true
+          in: query
+          description: Start of the period (inclusive)
+          schema:
+            example: 2026-09-01T00:00:00+07:00
+            type: string
+        - name: to
+          required: true
+          in: query
+          description: End of the period (exclusive)
+          schema:
+            example: 2026-10-01T00:00:00+07:00
+            type: string
+        - name: tz
+          required: false
+          in: query
+          description: IANA time zone used to group the trend by day or week
+          schema:
+            default: Asia/Ho_Chi_Minh
+            type: string
+        - name: dimension
+          required: true
+          in: query
+          schema:
+            type: string
+            enum:
+              - category
+              - country
+              - tag
+              - resolution
+              - extension
+        - name: range
+          required: false
+          in: query
+          description:
+            "`all`: current state; `period`: projects created and media added
+            in the period"
+          schema:
+            default: all
+            type: string
+            enum:
+              - all
+              - period
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a26
+      tags: *a27
   /statistics/progress:
     get:
       operationId: StatisticsController_progress
