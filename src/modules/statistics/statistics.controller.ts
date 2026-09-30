@@ -9,6 +9,7 @@ import { StatisticsLimitQueryDto } from './dto/statistics-limit-query.dto';
 import { StatisticsPeriodQueryDto } from './dto/statistics-period-query.dto';
 import { StatisticsActivityService } from './statistics-activity.service';
 import { StatisticsBreakdownService } from './statistics-breakdown.service';
+import { StatisticsCacheService } from './statistics-cache.service';
 import { StatisticsOperationsService } from './statistics-operations.service';
 import { StatisticsProgressService } from './statistics-progress.service';
 import { StatisticsProjectTrendService } from './statistics-project-trend.service';
@@ -16,7 +17,10 @@ import { StatisticsSummaryService } from './statistics-summary.service';
 import { StatisticsTeamService } from './statistics-team.service';
 import { StatisticsTrendService } from './statistics-trend.service';
 
-/** One endpoint per widget of the statistics page, all scoped to the caller's folders. */
+/**
+ * One endpoint per widget of the statistics page, all scoped to the caller's folders. The heavy
+ * widgets go through a short per-caller cache; operations and activity stay live.
+ */
 @ApiTags('statistics')
 @ApiBearerAuth()
 @Controller('statistics')
@@ -32,37 +36,52 @@ export class StatisticsController {
     private readonly activityService: StatisticsActivityService,
     private readonly projectTrendService: StatisticsProjectTrendService,
     private readonly breakdownService: StatisticsBreakdownService,
+    private readonly cache: StatisticsCacheService,
   ) {}
 
   @Get('summary')
   summary(@Req() request: Request, @Query() query: StatisticsPeriodQueryDto) {
-    return this.summaryService.summary(this.authContext.getContext(request), query);
+    const context = this.authContext.getContext(request);
+    return this.cache.wrap('summary', context, query, () =>
+      this.summaryService.summary(context, query),
+    );
   }
 
   @Get('trend')
   trend(@Req() request: Request, @Query() query: StatisticsPeriodQueryDto) {
-    return this.trendService.trend(this.authContext.getContext(request), query);
+    const context = this.authContext.getContext(request);
+    return this.cache.wrap('trend', context, query, () => this.trendService.trend(context, query));
   }
 
   @Get('project-trend')
   projectTrend(@Req() request: Request, @Query() query: StatisticsPeriodQueryDto) {
-    return this.projectTrendService.projectTrend(this.authContext.getContext(request), query);
+    const context = this.authContext.getContext(request);
+    return this.cache.wrap('project-trend', context, query, () =>
+      this.projectTrendService.projectTrend(context, query),
+    );
   }
 
   /** Projects and media grouped by category, country, tag, resolution or file extension. */
   @Get('breakdown')
   breakdown(@Req() request: Request, @Query() query: StatisticsBreakdownQueryDto) {
-    return this.breakdownService.breakdown(this.authContext.getContext(request), query);
+    const context = this.authContext.getContext(request);
+    return this.cache.wrap('breakdown', context, query, () =>
+      this.breakdownService.breakdown(context, query),
+    );
   }
 
   @Get('progress')
   progress(@Req() request: Request, @Query() query: StatisticsLimitQueryDto) {
-    return this.progressService.progress(this.authContext.getContext(request), query);
+    const context = this.authContext.getContext(request);
+    return this.cache.wrap('progress', context, query, () =>
+      this.progressService.progress(context, query),
+    );
   }
 
   @Get('team')
   team(@Req() request: Request, @Query() query: StatisticsPeriodQueryDto) {
-    return this.teamService.team(this.authContext.getContext(request), query);
+    const context = this.authContext.getContext(request);
+    return this.cache.wrap('team', context, query, () => this.teamService.team(context, query));
   }
 
   @Get('operations')

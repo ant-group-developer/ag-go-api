@@ -11,8 +11,8 @@ import type { StatisticsPeriodInfo, StatisticsSummary } from './statistics.types
 
 /**
  * $4 from, $5 effectiveTo (current window [$4, $5)), $6 previousFrom, $7 previousTo (previous
- * window [$6, $7)). Snapshot columns ignore the window; storage counts every asset once even when
- * several projects share it.
+ * window [$6, $7)). Snapshot columns ignore the window. Images and videos come from the project
+ * counters (recomputed whenever a project's media change), which saves joining every asset.
  */
 const SUMMARY_SQL = `
 WITH ${SCOPED_PROJECTS_CTE},
@@ -20,20 +20,21 @@ ${evaluationTransitionsCte('$6', '$5')},
 project_stats AS (
   SELECT
     COUNT(*)::int AS total,
-    COUNT(*) FILTER (WHERE evaluation_status = 'draft')::int AS draft,
-    COUNT(*) FILTER (WHERE evaluation_status = 'pending')::int AS pending,
-    COUNT(*) FILTER (WHERE evaluation_status = 'completed')::int AS completed,
-    COUNT(*) FILTER (WHERE evaluation_status = 'partially_completed')::int AS partially_completed,
-    COUNT(*) FILTER (WHERE evaluation_status = 'failed')::int AS failed,
-    COUNT(*) FILTER (WHERE created_at >= $4::timestamptz AND created_at < $5::timestamptz)::int AS new_current,
-    COUNT(*) FILTER (WHERE created_at >= $6::timestamptz AND created_at < $7::timestamptz)::int AS new_previous
-  FROM scoped_projects
+    COALESCE(SUM(p.image_count), 0)::int AS images,
+    COALESCE(SUM(p.video_count), 0)::int AS videos,
+    COUNT(*) FILTER (WHERE sp.evaluation_status = 'draft')::int AS draft,
+    COUNT(*) FILTER (WHERE sp.evaluation_status = 'pending')::int AS pending,
+    COUNT(*) FILTER (WHERE sp.evaluation_status = 'completed')::int AS completed,
+    COUNT(*) FILTER (WHERE sp.evaluation_status = 'partially_completed')::int AS partially_completed,
+    COUNT(*) FILTER (WHERE sp.evaluation_status = 'failed')::int AS failed,
+    COUNT(*) FILTER (WHERE sp.created_at >= $4::timestamptz AND sp.created_at < $5::timestamptz)::int AS new_current,
+    COUNT(*) FILTER (WHERE sp.created_at >= $6::timestamptz AND sp.created_at < $7::timestamptz)::int AS new_previous
+  FROM scoped_projects sp
+  INNER JOIN projects p ON p.id = sp.id
 ),
 media_stats AS (
   SELECT
     COUNT(*)::int AS total,
-    COUNT(*) FILTER (WHERE a.asset_type = 'image')::int AS images,
-    COUNT(*) FILTER (WHERE a.asset_type = 'video')::int AS videos,
     COUNT(*) FILTER (WHERE pm.evaluation_status = 'pending')::int AS pending,
     COUNT(*) FILTER (WHERE pm.evaluation_status = 'approved')::int AS approved,
     COUNT(*) FILTER (WHERE pm.evaluation_status = 'rejected')::int AS rejected,
@@ -42,7 +43,6 @@ media_stats AS (
     COUNT(*) FILTER (WHERE pm.created_at >= $6::timestamptz AND pm.created_at < $7::timestamptz)::int AS new_previous
   FROM project_media pm
   INNER JOIN scoped_projects sp ON sp.id = pm.project_id
-  INNER JOIN assets a ON a.id = pm.asset_id
 ),
 decision_stats AS (
   SELECT
@@ -51,7 +51,19 @@ decision_stats AS (
     COUNT(*) FILTER (WHERE new_status = 'approved' AND created_at < $7::timestamptz)::int AS approved_previous,
     COUNT(*) FILTER (WHERE new_status = 'rejected' AND created_at < $7::timestamptz)::int AS rejected_previous
   FROM transitions
-),
+)
+SELECT
+  row_to_json(ps) AS projects,
+  row_to_json(ms) AS media,
+  row_to_json(ds) AS decisions
+FROM project_stats ps, media_stats ms, decision_stats ds`;
+
+/**
+ * Storage counts every asset once even when several projects share it, so it cannot use the
+ * project counters. It is the heaviest part and runs as its own query, next to SUMMARY_SQL.
+ */
+const STORAGE_SQL = `
+WITH ${SCOPED_PROJECTS_CTE},
 scoped_assets AS (
   SELECT DISTINCT pm.asset_id
   FROM project_media pm
@@ -69,19 +81,15 @@ storage_stats AS (
       WHERE v.status = 'ready'
     ), 0)::text AS rendered_bytes
 )
-SELECT
-  row_to_json(ps) AS projects,
-  row_to_json(ms) AS media,
-  row_to_json(ds) AS decisions,
-  row_to_json(ss) AS storage
-FROM project_stats ps, media_stats ms, decision_stats ds, storage_stats ss`;
+SELECT original_bytes, rendered_bytes FROM storage_stats`;
 
 type SummaryRow = {
   projects: Record<string, number>;
   media: Record<string, number> & { oldest_pending_at: string | null };
   decisions: Record<string, number>;
-  storage: { original_bytes: string; rendered_bytes: string };
 };
+
+type StorageRow = { original_bytes: string; rendered_bytes: string };
 
 @Injectable()
 export class StatisticsSummaryService {
@@ -101,18 +109,22 @@ export class StatisticsSummaryService {
       return emptySummary(periodInfo);
     }
 
-    const rows: SummaryRow[] = await this.dataSource.query(SUMMARY_SQL, [
-      ...scopeValues(scope),
-      period.from,
-      period.effectiveTo,
-      period.previousFrom,
-      period.previousTo,
-    ]);
+    const [rows, storageRows] = (await Promise.all([
+      this.dataSource.query(SUMMARY_SQL, [
+        ...scopeValues(scope),
+        period.from,
+        period.effectiveTo,
+        period.previousFrom,
+        period.previousTo,
+      ]),
+      this.dataSource.query(STORAGE_SQL, scopeValues(scope)),
+    ])) as [SummaryRow[], StorageRow[]];
     const row = rows[0];
     if (!row) {
       return emptySummary(periodInfo);
     }
-    const { projects, media, decisions, storage } = row;
+    const { projects, media, decisions } = row;
+    const storage = storageRows[0] ?? { original_bytes: '0', rendered_bytes: '0' };
     return {
       period: periodInfo,
       snapshot: {
@@ -126,8 +138,8 @@ export class StatisticsSummaryService {
         },
         media: {
           total: Number(media.total ?? 0),
-          images: Number(media.images ?? 0),
-          videos: Number(media.videos ?? 0),
+          images: Number(projects.images ?? 0),
+          videos: Number(projects.videos ?? 0),
         },
         evaluation: {
           pending: Number(media.pending ?? 0),

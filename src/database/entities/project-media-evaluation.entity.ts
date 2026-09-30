@@ -12,6 +12,17 @@ export class ProjectMediaEvaluationEntity {
   @Column({ name: 'evaluation_status', type: 'varchar', length: 20 })
   evaluationStatus!: 'pending' | 'approved' | 'rejected';
 
+  /** Status the media had before this row; filled by a database trigger on insert. */
+  @Column({
+    name: 'previous_status',
+    type: 'varchar',
+    length: 20,
+    insert: false,
+    update: false,
+    select: false,
+  })
+  previousStatus!: 'pending' | 'approved' | 'rejected';
+
   @Column({ type: 'text', nullable: true })
   comment!: string | null;
 
