@@ -41,14 +41,20 @@ export class FoldersController {
   @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
   create(@Body() dto: CreateFolderDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.foldersService.create(dto, context.userId, context.userType);
+    return this.foldersService.create(dto, context.userId, context.userType, context.permissions);
   }
 
   @Patch(':id')
   @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
   update(@Param('id') id: string, @Body() dto: UpdateFolderDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.foldersService.update(id, dto, context.userId, context.userType);
+    return this.foldersService.update(
+      id,
+      dto,
+      context.userId,
+      context.userType,
+      context.permissions,
+    );
   }
 
   @Delete(':id')

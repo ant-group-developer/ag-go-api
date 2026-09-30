@@ -28,6 +28,21 @@ import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateImportDto } from './dto/create-import.dto';
 import type { SummarizeSourceDto } from './dto/summarize-sources.dto';
 import { IMPORT_AUDIT_ACTIONS, recordImportAudit } from './import-batch-audit';
+import {
+  containsPattern,
+  IMPORT_HISTORY_SORT_EXPRESSIONS,
+  IMPORT_HISTORY_STATUS_CONDITIONS,
+  IMPORT_ITEM_SORT_EXPRESSIONS,
+  IMPORT_ITEM_STATUS_CONDITIONS,
+  resolvePaging,
+  type ImportHistoryCounts,
+  type ImportHistorySortField,
+  type ImportHistoryStatusFilter,
+  type ImportItemCounts,
+  type ImportItemSortField,
+  type ImportItemStatusFilter,
+  type ImportSortOrder,
+} from './import-history-query';
 
 type OAuthState = {
   verifier: string;
@@ -561,15 +576,88 @@ export class GoogleDriveService implements OnModuleDestroy {
   }
 
   /**
-   * Import jobs across all projects, newest first. Admins see every batch; other users see the
-   * batches they started (the same rule `getImport` applies, so the detail drawer can open them).
+   * Import jobs across all projects, one page at a time, newest first unless `sortBy` /
+   * `sortOrder` say otherwise. Admins see every batch; other users see the batches they started
+   * (the same rule `getImport` applies, so the detail drawer can open them). The search matches
+   * the project name or a source folder name; `counts` ignores the status filter (but not the
+   * search) so every tab shows its size.
    */
-  async listAllImports(userId: string, userType?: 'ADMIN' | 'USER') {
-    const batches = await this.batchRepository.find({
-      where: isAdminUserType(userType) ? {} : { createdBy: userId },
-      order: { createdAt: 'DESC' },
-      take: 500,
-    });
+  async listAllImports(
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    options: {
+      page?: number;
+      pageSize?: number;
+      status?: ImportHistoryStatusFilter;
+      search?: string;
+      sortBy?: ImportHistorySortField;
+      sortOrder?: ImportSortOrder;
+    } = {},
+  ) {
+    const { page, pageSize } = resolvePaging(options);
+    const status = options.status ?? 'all';
+    const query = this.batchRepository.createQueryBuilder('batch');
+    if (!isAdminUserType(userType)) {
+      query.where('batch.created_by = :userId', { userId });
+    }
+    const search = options.search?.trim();
+    if (search) {
+      query.andWhere(
+        `(EXISTS (SELECT 1 FROM projects search_project
+                  WHERE search_project.id = batch.project_id
+                    AND search_project.name ILIKE :search ESCAPE '!')
+          OR EXISTS (SELECT 1 FROM asset_imports search_item
+                     WHERE search_item.batch_id = batch.id
+                       AND search_item.source_mime_type LIKE '%folder%'
+                       AND search_item.source_name ILIKE :search ESCAPE '!'))`,
+        { search: containsPattern(search) },
+      );
+    }
+
+    const countRow = await query
+      .clone()
+      .select('COUNT(*)::int', 'all')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE ${IMPORT_HISTORY_STATUS_CONDITIONS.active})::int`,
+        'active',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE ${IMPORT_HISTORY_STATUS_CONDITIONS.completed})::int`,
+        'completed',
+      )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE ${IMPORT_HISTORY_STATUS_CONDITIONS.failed})::int`,
+        'failed',
+      )
+      .getRawOne<ImportHistoryCounts>();
+    const counts = countRow ?? { all: 0, active: 0, completed: 0, failed: 0 };
+
+    if (status !== 'all') {
+      query.andWhere(IMPORT_HISTORY_STATUS_CONDITIONS[status]);
+    }
+    const sortBy = options.sortBy ?? 'createdAt';
+    const sortOrder = options.sortOrder ?? 'DESC';
+    query.orderBy(IMPORT_HISTORY_SORT_EXPRESSIONS[sortBy], sortOrder, 'NULLS LAST');
+    if (sortBy !== 'createdAt') {
+      // Ties (e.g. every running batch has no finish time) fall back to newest first.
+      query.addOrderBy('batch.created_at', 'DESC');
+    }
+    const batches = await query
+      .addOrderBy('batch.id', 'DESC')
+      .offset((page - 1) * pageSize)
+      .limit(pageSize)
+      .getMany();
+    return {
+      items: await this.withProjectNames(batches),
+      total: counts[status],
+      page,
+      pageSize,
+      counts,
+    };
+  }
+
+  /** {@link enrichImportBatches} plus the project name, for the cross-project history. */
+  private async withProjectNames(batches: ImportBatchEntity[]) {
     const enriched = await this.enrichImportBatches(batches);
     const projectIds = [...new Set(batches.map((batch) => batch.projectId))];
     const projects = projectIds.length
@@ -657,12 +745,65 @@ export class GoogleDriveService implements OnModuleDestroy {
     });
   }
 
-  async listItems(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
+  /**
+   * Files of a batch (source folders left out), one page at a time, in import order unless
+   * `sortBy` / `sortOrder` say otherwise. The search matches the file name; `counts` ignores the
+   * status filter (but not the search) so every tab shows its size.
+   */
+  async listItems(
+    id: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    options: {
+      page?: number;
+      pageSize?: number;
+      status?: ImportItemStatusFilter;
+      search?: string;
+      sortBy?: ImportItemSortField;
+      sortOrder?: ImportSortOrder;
+    } = {},
+  ) {
     await this.assertBatchOwner(id, userId, userType);
-    return this.itemRepository.find({
-      where: { batchId: id },
-      order: { createdAt: 'ASC' },
-    });
+    const { page, pageSize } = resolvePaging(options);
+    const status = options.status ?? 'all';
+    const query = this.itemRepository
+      .createQueryBuilder('item')
+      .where('item.batch_id = :batchId', { batchId: id })
+      .andWhere("COALESCE(item.source_mime_type, '') NOT LIKE '%folder%'");
+    const search = options.search?.trim();
+    if (search) {
+      query.andWhere("item.source_name ILIKE :search ESCAPE '!'", {
+        search: containsPattern(search),
+      });
+    }
+
+    const countRow = await query
+      .clone()
+      .select('COUNT(*)::int', 'all')
+      .addSelect(`COUNT(*) FILTER (WHERE ${IMPORT_ITEM_STATUS_CONDITIONS.active})::int`, 'active')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE ${IMPORT_ITEM_STATUS_CONDITIONS.completed})::int`,
+        'completed',
+      )
+      .addSelect(`COUNT(*) FILTER (WHERE ${IMPORT_ITEM_STATUS_CONDITIONS.failed})::int`, 'failed')
+      .getRawOne<ImportItemCounts>();
+    const counts = countRow ?? { all: 0, active: 0, completed: 0, failed: 0 };
+
+    if (status !== 'all') {
+      query.andWhere(IMPORT_ITEM_STATUS_CONDITIONS[status]);
+    }
+    const sortBy = options.sortBy ?? 'createdAt';
+    query.orderBy(IMPORT_ITEM_SORT_EXPRESSIONS[sortBy], options.sortOrder ?? 'ASC', 'NULLS LAST');
+    if (sortBy !== 'createdAt') {
+      // Ties (e.g. files without a duration) keep the import order.
+      query.addOrderBy('item.created_at', 'ASC');
+    }
+    const items = await query
+      .addOrderBy('item.id', 'ASC')
+      .offset((page - 1) * pageSize)
+      .limit(pageSize)
+      .getMany();
+    return { items, total: counts[status], page, pageSize, counts };
   }
 
   async cancelImport(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
