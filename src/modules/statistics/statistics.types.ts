@@ -218,7 +218,11 @@ export type StatisticsBreakdown = {
   period: StatisticsPeriodInfo;
   dimension: StatisticsBreakdownDimension;
   range: StatisticsBreakdownRange;
-  /** Distinct projects and media counted, whatever the grouping. */
-  totals: { projects: number; media: number; images: number; videos: number };
+  /**
+   * Sums of the rows where each project and media falls in one row: `projects` is null for
+   * resolution and extension (a project's media can span several rows), and tags, which repeat
+   * projects and their media, have no totals.
+   */
+  totals: { projects: number | null; media: number; images: number; videos: number } | null;
   rows: StatisticsBreakdownRow[];
 };

@@ -3,6 +3,7 @@ import { AccountModule } from '../account/account.module';
 import { FoldersModule } from '../folders/folders.module';
 import { StatisticsActivityService } from './statistics-activity.service';
 import { StatisticsBreakdownService } from './statistics-breakdown.service';
+import { StatisticsCacheService } from './statistics-cache.service';
 import { StatisticsOperationsService } from './statistics-operations.service';
 import { StatisticsProgressService } from './statistics-progress.service';
 import { StatisticsProjectTrendService } from './statistics-project-trend.service';
@@ -25,6 +26,7 @@ import { StatisticsController } from './statistics.controller';
     StatisticsActivityService,
     StatisticsProjectTrendService,
     StatisticsBreakdownService,
+    StatisticsCacheService,
   ],
 })
 export class StatisticsModule {}
