@@ -27,10 +27,12 @@ export async function cancelSupersededRenderJobs(
       progressMessage: SUPERSEDED_JOB_MESSAGE,
       finishedAt: () => 'NOW()',
     })
-    .where('asset_id IN (:...assetIds)', { assetIds: [...new Set(assetIds)] })
+    // Each list is one array parameter: a batch can cover more files than the 65535 bind
+    // parameters Postgres takes per statement.
+    .where('asset_id = ANY(:assetIds)', { assetIds: [...new Set(assetIds)] })
     .andWhere('status IN (:...statuses)', { statuses: ['queued', 'processing'] });
   if (keepJobIds.length > 0) {
-    query.andWhere('id NOT IN (:...keepJobIds)', { keepJobIds });
+    query.andWhere('NOT (id = ANY(:keepJobIds))', { keepJobIds });
   }
   const result = await query.returning(['id', 'renderBatchId']).execute();
   const rows = result.raw as Array<{ id: string; render_batch_id: string | null }>;
