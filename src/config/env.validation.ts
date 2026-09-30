@@ -25,6 +25,7 @@ export const envValidationSchema = Joi.object({
     .pattern(/^[a-zA-Z0-9][a-zA-Z0-9/_-]*$/)
     .required(),
   FRONTEND_ORIGIN: httpUrl,
+  CORS_EXTRA_ORIGINS: Joi.string().trim().allow('').optional(),
 
   // PostgreSQL / Redis
   DATABASE_URL: Joi.string()

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { corsOrigins } from './config/cors-origins';
 import { AssetsService } from './modules/assets/assets.service';
 import { createOpenApiDocument } from './openapi';
 
@@ -13,7 +14,10 @@ async function bootstrap(): Promise<void> {
 
   app.setGlobalPrefix(prefix);
   app.enableCors({
-    origin: config.getOrThrow<string>('FRONTEND_ORIGIN'),
+    origin: corsOrigins(
+      config.getOrThrow<string>('FRONTEND_ORIGIN'),
+      config.get<string>('CORS_EXTRA_ORIGINS'),
+    ),
     credentials: true,
     exposedHeaders: ['x-request-id'],
   });
