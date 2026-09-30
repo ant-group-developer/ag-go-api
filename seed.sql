@@ -42,7 +42,8 @@ VALUES
   ('9a000012-dbef-11f0-ab89-18c04dc47bd5', '[GO] Tag Delete', 'go.tag.delete', 'Delete unused catalog tags', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000015-dbef-11f0-ab89-18c04dc47bd5', '[GO] Analysis Manage', 'go.analysis.manage', 'Manage media content analysis (backfill, enqueue)', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000016-dbef-11f0-ab89-18c04dc47bd5', '[GO] Footage Search', 'go.footage.search', 'Search and browse footage segments', @app_id, 1, NOW(), NOW(), NULL, NULL),
-  ('9a000017-dbef-11f0-ab89-18c04dc47bd5', '[GO] Footage Produce', 'go.footage.produce', 'Resolve footage segments for production rendering', @app_id, 1, NOW(), NOW(), NULL, NULL)
+  ('9a000017-dbef-11f0-ab89-18c04dc47bd5', '[GO] Footage Produce', 'go.footage.produce', 'Resolve footage segments for production rendering', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a000018-dbef-11f0-ab89-18c04dc47bd5', '[GO] Folder Create Root', 'go.folder.create_root', 'Create root folders and move folders to the root', @app_id, 1, NOW(), NOW(), NULL, NULL)
 ON DUPLICATE KEY UPDATE
   name = VALUES(name),
   description = VALUES(description),
@@ -80,6 +81,7 @@ FROM (
   UNION ALL SELECT '[GO] Admin', 'go.project.download_original'
   UNION ALL SELECT '[GO] Admin', 'go.project.download_rendered'
   UNION ALL SELECT '[GO] Admin', 'go.folder.manage'
+  UNION ALL SELECT '[GO] Admin', 'go.folder.create_root'
   UNION ALL SELECT '[GO] Admin', 'go.catalog.manage'
   UNION ALL SELECT '[GO] Admin', 'go.category.create'
   UNION ALL SELECT '[GO] Admin', 'go.tag.create'
@@ -105,6 +107,7 @@ FROM (
   UNION ALL SELECT '[GO] Manager', 'go.project.download_original'
   UNION ALL SELECT '[GO] Manager', 'go.project.download_rendered'
   UNION ALL SELECT '[GO] Manager', 'go.folder.manage'
+  UNION ALL SELECT '[GO] Manager', 'go.folder.create_root'
   UNION ALL SELECT '[GO] Manager', 'go.catalog.manage'
   UNION ALL SELECT '[GO] Manager', 'go.category.create'
   UNION ALL SELECT '[GO] Manager', 'go.tag.create'

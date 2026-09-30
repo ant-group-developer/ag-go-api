@@ -4,11 +4,14 @@ import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
+import { StatisticsBreakdownQueryDto } from './dto/statistics-breakdown-query.dto';
 import { StatisticsLimitQueryDto } from './dto/statistics-limit-query.dto';
 import { StatisticsPeriodQueryDto } from './dto/statistics-period-query.dto';
 import { StatisticsActivityService } from './statistics-activity.service';
+import { StatisticsBreakdownService } from './statistics-breakdown.service';
 import { StatisticsOperationsService } from './statistics-operations.service';
 import { StatisticsProgressService } from './statistics-progress.service';
+import { StatisticsProjectTrendService } from './statistics-project-trend.service';
 import { StatisticsSummaryService } from './statistics-summary.service';
 import { StatisticsTeamService } from './statistics-team.service';
 import { StatisticsTrendService } from './statistics-trend.service';
@@ -27,6 +30,8 @@ export class StatisticsController {
     private readonly teamService: StatisticsTeamService,
     private readonly operationsService: StatisticsOperationsService,
     private readonly activityService: StatisticsActivityService,
+    private readonly projectTrendService: StatisticsProjectTrendService,
+    private readonly breakdownService: StatisticsBreakdownService,
   ) {}
 
   @Get('summary')
@@ -37,6 +42,17 @@ export class StatisticsController {
   @Get('trend')
   trend(@Req() request: Request, @Query() query: StatisticsPeriodQueryDto) {
     return this.trendService.trend(this.authContext.getContext(request), query);
+  }
+
+  @Get('project-trend')
+  projectTrend(@Req() request: Request, @Query() query: StatisticsPeriodQueryDto) {
+    return this.projectTrendService.projectTrend(this.authContext.getContext(request), query);
+  }
+
+  /** Projects and media grouped by category, country, tag, resolution or file extension. */
+  @Get('breakdown')
+  breakdown(@Req() request: Request, @Query() query: StatisticsBreakdownQueryDto) {
+    return this.breakdownService.breakdown(this.authContext.getContext(request), query);
   }
 
   @Get('progress')

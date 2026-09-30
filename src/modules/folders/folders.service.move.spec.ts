@@ -124,7 +124,7 @@ describe('FoldersService.update (move)', () => {
   it('moves to the root without linking new ancestors', async () => {
     const { service, manager, moved } = createService({});
 
-    await service.update('a', { parentId: null }, 'alice', 'USER');
+    await service.update('a', { parentId: null }, 'alice', 'USER', ['go.folder.create_root']);
 
     expect(moved).toMatchObject({ parentId: null, pathText: 'A', pathIds: ['a'], depth: 0 });
     const statements = manager.query.mock.calls.map(([sql]: [string]) => sql);
@@ -159,9 +159,18 @@ describe('FoldersService.update (move)', () => {
         !(folderId === 'a' && minimum === 'manager' && ++checks > 1),
     });
 
-    await expect(service.update('a', { parentId: null }, 'alice', 'USER')).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(
+      service.update('a', { parentId: null }, 'alice', 'USER', ['go.folder.create_root']),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('requires the create-root permission to move a folder to the root', async () => {
+    const { service, manager } = createService({});
+
+    await expect(
+      service.update('a', { parentId: null }, 'alice', 'USER', ['go.folder.manage']),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(manager.save).not.toHaveBeenCalled();
   });
 
   it('does not treat an unchanged parent as a move', async () => {
