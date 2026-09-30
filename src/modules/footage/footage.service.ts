@@ -177,9 +177,17 @@ export class FootageService {
 
     const accessibleFolderIds = await this.folderAccess.accessibleFolderIds(userId, userType);
     await this.scopeService.assertFoldersInScope(folderIds, accessibleFolderIds);
+    const scopeFolderIds = await this.scopeService.expandToAccessibleSubtree(
+      folderIds,
+      accessibleFolderIds,
+    );
 
     const isAdmin = isAdminUserType(userType);
-    const { cte, params } = this.scopeService.buildVisibleProjectsCte(isAdmin, folderIds, userId);
+    const { cte, params } = this.scopeService.buildVisibleProjectsCte(
+      isAdmin,
+      scopeFolderIds,
+      userId,
+    );
     const visibleExists = this.scopeService.visibleExistsClause('s');
     const approvedExists = this.scopeService.approvedExistsClause('s');
 
@@ -250,7 +258,7 @@ export class FootageService {
       LIMIT :limit OFFSET :offset
     `;
 
-    queryParams['scope_folder_ids'] = folderIds;
+    queryParams['scope_folder_ids'] = scopeFolderIds;
     queryParams['limit'] = limit + 1;
     queryParams['offset'] = offset;
 
@@ -569,7 +577,7 @@ export class FootageService {
 
     const accessibleFolderIds = await this.folderAccess.accessibleFolderIds(userId, userType);
     const scopeFolderIds = query.folderIds?.length
-      ? query.folderIds.filter((id) => accessibleFolderIds.includes(id))
+      ? await this.scopeService.expandToAccessibleSubtree(query.folderIds, accessibleFolderIds)
       : accessibleFolderIds;
 
     if (scopeFolderIds.length === 0) {
@@ -765,7 +773,7 @@ export class FootageService {
   }> {
     const accessibleFolderIds = await this.folderAccess.accessibleFolderIds(userId, userType);
     const scopeFolderIds = query.folderIds?.length
-      ? query.folderIds.filter((id) => accessibleFolderIds.includes(id))
+      ? await this.scopeService.expandToAccessibleSubtree(query.folderIds, accessibleFolderIds)
       : accessibleFolderIds;
 
     if (scopeFolderIds.length === 0) {

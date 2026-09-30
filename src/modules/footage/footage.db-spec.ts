@@ -14,6 +14,7 @@
  *   - other users' drafts hidden; own draft visible
  *   - ADMIN sees all projects
  *   - out-of-scope segment id → 404
+ *   - picking a parent folder covers its reachable subfolders (catalog, search, facets)
  *   - folders endpoint lists only scoped folders
  *   - search: "pho bo" finds "phở bò", accented query ranks first
  *   - facets counts
@@ -443,6 +444,65 @@ describe('FootageScopeService — permission matrix', () => {
     await expect(
       scopeService.assertSegmentsInScope([randomUUID()], { userId, userType: 'USER' }),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Folder subtree (picking a parent folder covers its subfolders)
+// ---------------------------------------------------------------------------
+
+describe('FootageService — folder subtree', () => {
+  async function seedGrandchild(): Promise<{ rootId: string; childId: string; segmentId: string }> {
+    const rootId = await insertFolder();
+    const childId = await insertFolder(rootId);
+    const grandchildId = await insertFolder(childId);
+    const assetId = await insertAsset();
+    const analysisId = await insertAnalysis(assetId);
+    const segmentId = await insertSegment(assetId, analysisId, {
+      captionVi: 'quảng trường cỏ xanh',
+      tags: ['quảng trường'],
+    });
+    const projectId = await insertProject(grandchildId);
+    await linkAssetToProject(assetId, projectId);
+    return { rootId, childId, segmentId };
+  }
+
+  it('catalog on a parent folder returns footage of projects in its subfolders', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const { rootId, segmentId } = await seedGrandchild();
+    await grantFolder(rootId, userId, true);
+
+    const result = await footageService.getCatalog({ folderIds: [rootId] }, userId, 'USER');
+    expect(result.items.map((i) => i.segmentId)).toEqual([segmentId]);
+  });
+
+  it('catalog skips subfolders the user cannot reach', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const { rootId } = await seedGrandchild();
+    await grantFolder(rootId, userId, false);
+
+    const result = await footageService.getCatalog({ folderIds: [rootId] }, userId, 'USER');
+    expect(result.items).toEqual([]);
+  });
+
+  it('ADMIN catalog on a parent folder covers its subfolders', async () => {
+    const { rootId, segmentId } = await seedGrandchild();
+
+    const result = await footageService.getCatalog({ folderIds: [rootId] }, 'admin-1', 'ADMIN');
+    expect(result.items.map((i) => i.segmentId)).toEqual([segmentId]);
+  });
+
+  it('search and facets filtered by a parent folder cover its subfolders', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const { rootId, childId, segmentId } = await seedGrandchild();
+    await grantFolder(childId, userId, true);
+
+    // The root itself is out of reach, but the subfolders granted below it are searched.
+    const found = await footageService.search({ folderIds: [rootId] }, userId, 'USER');
+    expect(found.items.map((i) => i.segmentId)).toEqual([segmentId]);
+
+    const facets = await footageService.getFacets({ folderIds: [childId] }, userId, 'USER');
+    expect(facets.tags.map((t) => t.value)).toContain('quảng trường');
   });
 });
 

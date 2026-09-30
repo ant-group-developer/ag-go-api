@@ -54,7 +54,8 @@ export class CatalogFiltersDto {
 export class FootageCatalogBodyDto {
   @ApiPropertyOptional({
     type: [String],
-    description: 'Folder IDs to scope. Each must be within the user scope, else 404. 1–50.',
+    description:
+      'Folder IDs to scope (subfolders the user can reach are included). Each must be within the user scope, else 404. 1–50.',
   })
   @IsArray()
   @IsUUID('all', { each: true })
