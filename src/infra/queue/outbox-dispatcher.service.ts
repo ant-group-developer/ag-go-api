@@ -9,6 +9,11 @@ import { ASSET_STORAGE_PURGE_EVENT } from '../../modules/projects/project-asset-
 import { MediaQueueService } from './media-queue.service';
 
 export const ASSET_ANALYSIS_REQUESTED_EVENT = 'asset.analysis.requested';
+/**
+ * Written when an analysis becomes the asset's current one. Nothing consumes it yet (Studio reads
+ * footage on demand); it stays in the outbox as the record a future consumer hooks into.
+ */
+export const ASSET_ANALYSIS_COMPLETED_EVENT = 'asset.analysis.completed';
 
 /** Retries wait 5 s, 10 s, 20 s, ... up to an hour; 30 attempts span about a day. */
 const RETRY_BASE_DELAY_MS = 5_000;
@@ -157,6 +162,8 @@ export class OutboxDispatcherService implements OnModuleDestroy {
           throw new Error('AnalysisOutboxService not available — AnalysisModule not loaded');
         }
         await this.analysisOutbox.handleAnalysisRequested(analysisId);
+      } else if (event.eventType === ASSET_ANALYSIS_COMPLETED_EVENT) {
+        // No consumer yet: published as is.
       } else {
         this.logger.warn(
           `Outbox event ${event.id} has unknown type "${event.eventType}" — marking published`,

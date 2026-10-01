@@ -61,6 +61,17 @@ const ANALYSIS: AssetAnalysisEntity = {
   summary: null,
   isCurrent: false,
   requestedBy: null,
+  batchId: null,
+  description: null,
+  describedAt: null,
+  technical: null,
+  keyframes: null,
+  usable: null,
+  quality: null,
+  durationMs: null,
+  orientation: null,
+  hasAudio: null,
+  hasSpeech: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   completedAt: null,
@@ -81,7 +92,7 @@ const EXTRACT_JOB: AnalysisFarmJobEntity = {
 const AI_JOB: AnalysisFarmJobEntity = {
   ...EXTRACT_JOB,
   type: 'scan.ai',
-  chunk: 2,
+  chunk: null,
 };
 
 /** The analysis prefix as computed by assetVariantsPrefix. */
@@ -282,17 +293,24 @@ describe('AnalysisSignService', () => {
       ).rejects.toThrow(ForbiddenException);
     });
 
-    it('scan.ai jobs may only write ai-NNNN.json matching their chunk', async () => {
+    it('scan.ai jobs may only write ai.json', async () => {
       const { service } = makeService();
-      const correctName = 'ai-0002.json'; // chunk=2
 
       const response = await service.sign(CLAIMS, AI_JOB, [
-        { op: 'put', output: correctName, content_type: 'application/json' },
+        { op: 'put', output: 'ai.json', content_type: 'application/json' },
       ]);
       expect(response.results[0].op).toBe('put');
     });
 
-    it('scan.ai jobs cannot write an output with a mismatched chunk name', async () => {
+    it('scan.ai jobs may write ai-trace.json', async () => {
+      const { service } = makeService();
+      const response = await service.sign(CLAIMS, AI_JOB, [
+        { op: 'put', output: 'ai-trace.json', content_type: 'application/json' },
+      ]);
+      expect(response.results[0].op).toBe('put');
+    });
+
+    it('scan.ai jobs cannot write any other output (not ai.json or ai-trace.json)', async () => {
       const { service } = makeService();
       await expect(
         service.sign(CLAIMS, AI_JOB, [

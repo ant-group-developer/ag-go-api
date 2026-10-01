@@ -8,17 +8,32 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import { AnalysisBatchEntity } from './analysis-batch.entity';
 import { AssetEntity } from './asset.entity';
 
 export type AnalysisStatus =
-  'queued' | 'extracting' | 'extracted' | 'describing' | 'completed' | 'failed' | 'cancelled';
+  | 'queued'
+  | 'extracting'
+  | 'extracted'
+  | 'describing'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
+/** Not finished yet: a new analysis of the same asset is not queued while one of these exists. */
 export const IN_FLIGHT_STATUSES: AnalysisStatus[] = [
   'queued',
   'extracting',
   'extracted',
   'describing',
+  'paused',
 ];
+
+/** Statuses whose farm work is running or about to run (not `queued`, not `paused`). */
+export const RUNNING_STATUSES: AnalysisStatus[] = ['extracting', 'extracted', 'describing'];
+
+export const FINISHED_STATUSES: AnalysisStatus[] = ['completed', 'failed', 'cancelled'];
 
 @Entity('asset_analyses')
 export class AssetAnalysisEntity {
@@ -62,6 +77,49 @@ export class AssetAnalysisEntity {
 
   @Column({ name: 'requested_by', type: 'varchar', length: 128, nullable: true })
   requestedBy!: string | null;
+
+  /** The scan batch (a backfill or the automatic batch) this analysis runs in. */
+  @Column({ name: 'batch_id', type: 'uuid', nullable: true })
+  batchId!: string | null;
+
+  @ManyToOne(() => AnalysisBatchEntity, { onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'batch_id' })
+  batch?: AnalysisBatchEntity;
+
+  /** Whole-video description from scan.ai (`AssetDescription`, snake_case as the worker wrote it). */
+  @Column({ type: 'jsonb', nullable: true })
+  description!: Record<string, unknown> | null;
+
+  @Column({ name: 'described_at', type: 'timestamptz', nullable: true })
+  describedAt!: Date | null;
+
+  /** Whole-video technical metrics from scan.extract (`AssetTechnical`). */
+  @Column({ type: 'jsonb', nullable: true })
+  technical!: Record<string, unknown> | null;
+
+  /** Representative keyframes from scan.extract (`Keyframe[]`), relative to the analysis folder. */
+  @Column({ type: 'jsonb', nullable: true })
+  keyframes!: Record<string, unknown>[] | null;
+
+  /** From the description (or false when the scan found the video technically dead). */
+  @Column({ type: 'boolean', nullable: true })
+  usable!: boolean | null;
+
+  @Column({ type: 'smallint', nullable: true })
+  quality!: number | null;
+
+  @Column({ name: 'duration_ms', type: 'integer', nullable: true })
+  durationMs!: number | null;
+
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  orientation!: string | null;
+
+  @Column({ name: 'has_audio', type: 'boolean', nullable: true })
+  hasAudio!: boolean | null;
+
+  /** Hint from the silence ratio, not a transcript. */
+  @Column({ name: 'has_speech', type: 'boolean', nullable: true })
+  hasSpeech!: boolean | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

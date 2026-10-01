@@ -7,7 +7,6 @@ import { AssetEntity } from '../../database/entities/asset.entity';
 import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
-import { MediaSegmentEntity } from '../../database/entities/media-segment.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
@@ -23,7 +22,6 @@ import { FootageService } from './footage.service';
     StorageModule,
     LogsModule,
     TypeOrmModule.forFeature([
-      MediaSegmentEntity,
       AssetEntity,
       AssetVariantEntity,
       AssetAnalysisEntity,

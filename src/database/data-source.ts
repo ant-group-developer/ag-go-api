@@ -2,6 +2,7 @@ import { config as loadEnv } from 'dotenv';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from '../config/env.validation';
+import { AnalysisBatchEntity } from './entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from './entities/asset-analysis.entity';
 import { AssetImportEntity } from './entities/asset-import.entity';
@@ -19,7 +20,6 @@ import { FolderEntity } from './entities/folder.entity';
 import { GoogleDriveConnectionEntity } from './entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './entities/import-batch.entity';
 import { MediaRenderJobEntity } from './entities/media-render-job.entity';
-import { MediaSegmentEntity } from './entities/media-segment.entity';
 import { OutboxEventEntity } from './entities/outbox-event.entity';
 import { ProjectAuditLogEntity } from './entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './entities/project-evaluation-summary.entity';
@@ -67,6 +67,7 @@ import { MediaAnalysisMigration2020000000000 } from './migrations/2020000000000-
 import { FootageSearch2030000000000 } from './migrations/2030000000000-footage-search';
 import { AssetSourceShortEdge2040000000000 } from './migrations/2040000000000-asset-source-short-edge';
 import { EvaluationPreviousStatus2050000000000 } from './migrations/2050000000000-evaluation-previous-status';
+import { AssetAnalysisV22060000000000 } from './migrations/2060000000000-asset-analysis-v2';
 
 loadEnv();
 
@@ -114,7 +115,7 @@ export const AppDataSource = new DataSource({
     SystemSettingEntity,
     SystemLogEntity,
     AssetAnalysisEntity,
-    MediaSegmentEntity,
+    AnalysisBatchEntity,
     AnalysisFarmJobEntity,
   ],
   migrations: [
@@ -153,6 +154,7 @@ export const AppDataSource = new DataSource({
     FootageSearch2030000000000,
     AssetSourceShortEdge2040000000000,
     EvaluationPreviousStatus2050000000000,
+    AssetAnalysisV22060000000000,
   ],
   synchronize: false,
 });
