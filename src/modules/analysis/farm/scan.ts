@@ -271,6 +271,7 @@ export type ScanAiPayload = z.infer<typeof ScanAiPayloadSchema>;
 
 export const AI_MANIFEST_SCHEMA = 'ag.scan.ai/v2';
 export const AI_MANIFEST_PATH = 'ai.json';
+export const AI_TRACE_PATH = 'ai-trace.json';
 
 export const AiManifestSchema = z.strictObject({
   schema: z.literal(AI_MANIFEST_SCHEMA),

@@ -15,6 +15,7 @@
     "test:db": "jest --config jest.db.config.ts --runInBand",
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
+    "dataset:scan": "node dist/scripts/export-scan-dataset.js",
     "openapi:generate": "ts-node --files src/scripts/generate-openapi.ts",
     "openapi:validate": "ts-node --files src/scripts/validate-openapi.ts",
     "worker": "ts-node --files src/workers/worker.ts",

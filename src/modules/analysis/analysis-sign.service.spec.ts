@@ -302,7 +302,15 @@ describe('AnalysisSignService', () => {
       expect(response.results[0].op).toBe('put');
     });
 
-    it('scan.ai jobs cannot write any other output (not ai.json)', async () => {
+    it('scan.ai jobs may write ai-trace.json', async () => {
+      const { service } = makeService();
+      const response = await service.sign(CLAIMS, AI_JOB, [
+        { op: 'put', output: 'ai-trace.json', content_type: 'application/json' },
+      ]);
+      expect(response.results[0].op).toBe('put');
+    });
+
+    it('scan.ai jobs cannot write any other output (not ai.json or ai-trace.json)', async () => {
       const { service } = makeService();
       await expect(
         service.sign(CLAIMS, AI_JOB, [
