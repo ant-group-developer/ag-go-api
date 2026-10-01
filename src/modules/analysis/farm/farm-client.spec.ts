@@ -81,6 +81,7 @@ function makeJobView(overrides: Partial<JobView> = {}): JobView {
     priority: 0,
     correlation_id: `${analysisId}:extract`,
     affinity_key: analysisId,
+    group_key: null,
     attempt_count: 1,
     max_attempts: 3,
     node_id: null,
@@ -435,5 +436,81 @@ describe('FarmClient: not configured', () => {
     } as unknown as ConfigService;
     const client = new FarmClient(config);
     await expect(client.listUnackedFinished()).rejects.toThrow(/FARM_URL/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FarmClient.controlJobs
+// ---------------------------------------------------------------------------
+
+describe('FarmClient.controlJobs', () => {
+  it('returns affected count when pausing by ids', async () => {
+    fetchMock.mockResolvedValueOnce(rawSuccess({ affected: 3 }));
+    const client = makeFarmClient();
+    const affected = await client.controlJobs('pause', { ids: ['id1', 'id2', 'id3'] });
+    expect(affected).toBe(3);
+  });
+
+  it('calls POST /v1/owner/jobs/pause with ids selector', async () => {
+    fetchMock.mockResolvedValueOnce(rawSuccess({ affected: 1 }));
+    const client = makeFarmClient();
+    await client.controlJobs('pause', { ids: ['abc'] });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://farm.test/v1/owner/jobs/pause',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ ids: ['abc'] }),
+      }),
+    );
+  });
+
+  it('calls POST /v1/owner/jobs/resume with group_key selector', async () => {
+    fetchMock.mockResolvedValueOnce(rawSuccess({ affected: 5 }));
+    const client = makeFarmClient();
+    const affected = await client.controlJobs('resume', { group_key: 'batch:some-batch-id' });
+    expect(affected).toBe(5);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://farm.test/v1/owner/jobs/resume',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ group_key: 'batch:some-batch-id' }),
+      }),
+    );
+  });
+
+  it('calls POST /v1/owner/jobs/cancel with group_key selector', async () => {
+    fetchMock.mockResolvedValueOnce(rawSuccess({ affected: 2 }));
+    const client = makeFarmClient();
+    await client.controlJobs('cancel', { group_key: 'batch:other-id' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://farm.test/v1/owner/jobs/cancel',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('returns 0 immediately without calling fetch when ids is empty', async () => {
+    const client = makeFarmClient();
+    const affected = await client.controlJobs('pause', { ids: [] });
+    expect(affected).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('handles an envelope-wrapped response', async () => {
+    fetchMock.mockResolvedValueOnce(envelopeSuccess({ affected: 7 }));
+    const client = makeFarmClient();
+    const affected = await client.controlJobs('cancel', { ids: ['x'] });
+    expect(affected).toBe(7);
+  });
+
+  it('throws when the response body does not match the schema', async () => {
+    fetchMock.mockResolvedValueOnce(rawSuccess({ unexpected: true }));
+    const client = makeFarmClient();
+    await expect(client.controlJobs('pause', { ids: ['x'] })).rejects.toThrow(/Farm pause/);
+  });
+
+  it('throws on error envelope response', async () => {
+    fetchMock.mockResolvedValueOnce(envelopeError(400, 'bad_request', 'Invalid selector'));
+    const client = makeFarmClient();
+    await expect(client.controlJobs('resume', { ids: ['y'] })).rejects.toThrow(/400/);
   });
 });

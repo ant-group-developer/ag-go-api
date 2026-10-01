@@ -255,6 +255,24 @@ describe('OutboxDispatcherService', () => {
     });
   });
 
+  it('publishes asset.analysis.completed without warning about an unknown type', async () => {
+    const { service, update } = setup(
+      [{ ...renderEvent(), eventType: 'asset.analysis.completed', payload: { analysisId: 'a1' } }],
+      jest.fn(),
+    );
+    const warn = jest
+      .spyOn((service as unknown as { logger: { warn: (m: string) => void } }).logger, 'warn')
+      .mockImplementation(() => undefined);
+
+    await expect(service.dispatchPending()).resolves.toBe(1);
+
+    expect(warn).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ status: 'published' }),
+    );
+  });
+
   describe('asset.analysis.requested branch', () => {
     const ANALYSIS_ID = randomUUID();
 

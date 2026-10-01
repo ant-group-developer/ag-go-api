@@ -1,5 +1,5 @@
 /**
- * DB-level integration tests for the footage module.
+ * DB-level integration tests for the footage module (v2: per-asset analysis).
  *
  * Runs against real Postgres (port 55434, started by docker-compose.test.yml).
  * All migrations run once in globalSetup before this file executes, so
@@ -13,12 +13,14 @@
  *   - rejected in one but pending in another visible project → visible
  *   - other users' drafts hidden; own draft visible
  *   - ADMIN sees all projects
- *   - out-of-scope segment id → 404
+ *   - out-of-scope asset id → 404
  *   - picking a parent folder covers its reachable subfolders (catalog, search, facets)
- *   - folders endpoint lists only scoped folders
+ *   - folders endpoint lists only scoped folders with analyzedVideos/usableVideos counts
  *   - search: "pho bo" finds "phở bò", accented query ranks first
- *   - facets counts
- *   - resolve: user with download_original gets original; without gets preview (watermarked)
+ *   - facets counts (tags, genres, orientations)
+ *   - catalog: one row per video even when it belongs to several visible projects; best quality first
+ *   - resolve: user with download_original gets original (final) or the analysis proxy (preview);
+ *     without gets preview (watermarked)
  */
 import { NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -31,7 +33,6 @@ import { AssetEntity } from '../../database/entities/asset.entity';
 import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
-import { MediaSegmentEntity } from '../../database/entities/media-segment.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { FootageScopeService } from './footage-scope.service';
@@ -49,6 +50,8 @@ let ds: DataSource;
 let footageService: FootageService;
 let scopeService: FootageScopeService;
 let folderAccess: FolderAccessService;
+/** Storage keys that exist in the fake bucket (key → size), for headObject. */
+const storedObjects = new Map<string, number>();
 
 // ---------------------------------------------------------------------------
 // Setup / teardown
@@ -69,7 +72,10 @@ beforeAll(async () => {
 
   const fakeStorage = {
     getPresignedGetUrl: async (key: string) => `https://cdn.test/${key}?signed=1`,
-    headObject: async () => null,
+    headObject: async (key: string) =>
+      storedObjects.has(key)
+        ? { sizeBytes: storedObjects.get(key)!, contentType: 'video/mp4' }
+        : null,
     getPresignedPutUrl: async () => 'https://put.test',
     readObject: () => {
       throw new Error('not impl');
@@ -89,7 +95,6 @@ beforeAll(async () => {
     folderAccess,
     ds,
     ds.getRepository(FolderEntity),
-    ds.getRepository(MediaSegmentEntity),
     ds.getRepository(AssetVariantEntity),
     ds.getRepository(AssetEntity),
     ds.getRepository(AssetAnalysisEntity),
@@ -110,7 +115,8 @@ const createdFolderIds: string[] = [];
 const createdProjectIds: string[] = [];
 
 afterEach(async () => {
-  // Projects cascade to project_media; assets cascade to segments, analyses, variants
+  storedObjects.clear();
+  // Projects cascade to project_media; assets cascade to analyses, variants
   if (createdProjectIds.length) {
     await ds.query(`DELETE FROM projects WHERE id = ANY($1)`, [createdProjectIds]);
     createdProjectIds.length = 0;
@@ -145,7 +151,7 @@ async function insertFolder(parentId: string | null = null): Promise<string> {
       parentId,
       `Folder ${id.slice(0, 8)}`,
       pathKey,
-      [], // uuid[] — empty array
+      [],
       pathKey,
       parentId ? 1 : 0,
       0,
@@ -153,13 +159,11 @@ async function insertFolder(parentId: string | null = null): Promise<string> {
       'test',
     ],
   );
-  // Self-closure entry
   await ds.query(
     `INSERT INTO folder_closure (ancestor_id, descendant_id, depth) VALUES ($1,$2,0)`,
     [id, id],
   );
   if (parentId) {
-    // Copy all ancestor closures and add this folder as descendant
     await ds.query(
       `INSERT INTO folder_closure (ancestor_id, descendant_id, depth)
        SELECT ancestor_id, $1, depth + 1 FROM folder_closure WHERE descendant_id = $2`,
@@ -195,59 +199,70 @@ async function insertAsset(storageKey?: string): Promise<string> {
   return id;
 }
 
-async function insertAnalysis(assetId: string, isCurrent = true): Promise<string> {
-  const id = randomUUID();
-  await ds.query(
-    `INSERT INTO asset_analyses (id, asset_id, status, is_current, priority)
-     VALUES ($1,$2,'completed',$3,0)`,
-    [id, assetId, isCurrent],
-  );
-  return id;
-}
-
-async function insertSegment(
-  assetId: string,
-  analysisId: string,
+/**
+ * Default description for insertAnalysis. Fields match AssetDescriptionSchema.
+ */
+function makeDescription(
   overrides: {
-    isCurrent?: boolean;
+    titleVi?: string;
+    tags?: string[];
+    genre?: string;
     usable?: boolean;
     quality?: number;
-    captionVi?: string | null;
-    captionEn?: string | null;
-    tags?: string[] | null;
-    keywordsVi?: string[] | null;
+  } = {},
+): Record<string, unknown> {
+  return {
+    title_vi: overrides.titleVi ?? 'Cảnh quay mặc định',
+    summary_vi: 'Mô tả mặc định',
+    summary_en: 'Default description',
+    genre: overrides.genre ?? 'test',
+    topics: [],
+    subjects: [],
+    places: [],
+    actions: [],
+    keywords_vi: [],
+    tags: overrides.tags ?? [],
+    mood: 'calm',
+    setting: 'outdoor',
+    time_of_day: 'day',
+    people_count: 'none',
+    shot_variety: ['wide'],
+    camera_motions: ['static'],
+    visible_text: '',
+    has_watermark: false,
+    usable: overrides.usable ?? true,
+    usable_reason: '',
+    quality: overrides.quality ?? 4,
+  };
+}
+
+async function insertAnalysis(
+  assetId: string,
+  isCurrent = true,
+  overrides: {
+    usable?: boolean;
+    description?: Record<string, unknown> | null;
     orientation?: string;
+    quality?: number;
   } = {},
 ): Promise<string> {
   const id = randomUUID();
-  const {
-    isCurrent = true,
-    usable = true,
-    quality = 4,
-    captionVi = null,
-    captionEn = null,
-    tags = null,
-    keywordsVi = null,
-    orientation = 'landscape',
-  } = overrides;
+  const usable = overrides.usable ?? true;
+  // null means "do not set description" (no description for in-progress analyses)
+  const description =
+    overrides.description !== undefined ? overrides.description : makeDescription({ usable });
   await ds.query(
-    `INSERT INTO media_segments
-       (id, analysis_id, asset_id, segment_index, start_ms, end_ms,
-        orientation, keyframes, technical, usable, quality, is_current,
-        caption_vi, caption_en, tags, keywords_vi)
-     VALUES ($1,$2,$3,0,0,5000,$4,'[]','{}', $5,$6,$7,$8,$9,$10,$11)`,
+    `INSERT INTO asset_analyses
+       (id, asset_id, status, is_current, priority, description, usable, quality, orientation)
+     VALUES ($1,$2,'completed',$3,0,$4,$5,$6,$7)`,
     [
       id,
-      analysisId,
       assetId,
-      orientation,
-      usable,
-      quality,
       isCurrent,
-      captionVi,
-      captionEn,
-      tags,
-      keywordsVi,
+      description ? JSON.stringify(description) : null,
+      usable,
+      overrides.quality ?? 4,
+      overrides.orientation ?? 'landscape',
     ],
   );
   return id;
@@ -255,10 +270,7 @@ async function insertSegment(
 
 async function insertProject(
   folderId: string,
-  overrides: {
-    evaluationStatus?: string;
-    ownerUserId?: string;
-  } = {},
+  overrides: { evaluationStatus?: string; ownerUserId?: string } = {},
 ): Promise<string> {
   const id = randomUUID();
   await ds.query(
@@ -293,32 +305,28 @@ async function linkAssetToProject(
 // ---------------------------------------------------------------------------
 
 describe('FootageScopeService — permission matrix', () => {
-  it('folder granted → segment visible', async () => {
+  it('folder granted → asset visible', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const folderId = await insertFolder();
     await grantFolder(folderId, userId);
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
     const projectId = await insertProject(folderId);
     await linkAssetToProject(assetId, projectId);
 
     await expect(
-      scopeService.assertSegmentsInScope([segId], { userId, userType: 'USER' }),
+      scopeService.assertAssetsInScope([assetId], { userId, userType: 'USER' }),
     ).resolves.not.toThrow();
   });
 
-  it('folder not granted → segment hidden (404)', async () => {
+  it('folder not granted → asset hidden (404)', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const folderId = await insertFolder();
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
     const projectId = await insertProject(folderId);
     await linkAssetToProject(assetId, projectId);
 
     await expect(
-      scopeService.assertSegmentsInScope([segId], { userId, userType: 'USER' }),
+      scopeService.assertAssetsInScope([assetId], { userId, userType: 'USER' }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -328,13 +336,11 @@ describe('FootageScopeService — permission matrix', () => {
     const childId = await insertFolder(parentId);
     await grantFolder(parentId, userId, true);
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
     const projectId = await insertProject(childId);
     await linkAssetToProject(assetId, projectId);
 
     await expect(
-      scopeService.assertSegmentsInScope([segId], { userId, userType: 'USER' }),
+      scopeService.assertAssetsInScope([assetId], { userId, userType: 'USER' }),
     ).resolves.not.toThrow();
   });
 
@@ -344,15 +350,13 @@ describe('FootageScopeService — permission matrix', () => {
     const otherFolder = await insertFolder();
     await grantFolder(grantedFolder, userId);
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
     const p1 = await insertProject(grantedFolder);
     const p2 = await insertProject(otherFolder);
     await linkAssetToProject(assetId, p1);
     await linkAssetToProject(assetId, p2);
 
     await expect(
-      scopeService.assertSegmentsInScope([segId], { userId, userType: 'USER' }),
+      scopeService.assertAssetsInScope([assetId], { userId, userType: 'USER' }),
     ).resolves.not.toThrow();
   });
 
@@ -361,13 +365,11 @@ describe('FootageScopeService — permission matrix', () => {
     const folderId = await insertFolder();
     await grantFolder(folderId, userId);
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
     const projectId = await insertProject(folderId);
     await linkAssetToProject(assetId, projectId, 'rejected');
 
     await expect(
-      scopeService.assertSegmentsInScope([segId], { userId, userType: 'USER' }),
+      scopeService.assertAssetsInScope([assetId], { userId, userType: 'USER' }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -376,15 +378,13 @@ describe('FootageScopeService — permission matrix', () => {
     const folderId = await insertFolder();
     await grantFolder(folderId, userId);
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
     const p1 = await insertProject(folderId);
     const p2 = await insertProject(folderId);
     await linkAssetToProject(assetId, p1, 'rejected');
     await linkAssetToProject(assetId, p2, 'pending');
 
     await expect(
-      scopeService.assertSegmentsInScope([segId], { userId, userType: 'USER' }),
+      scopeService.assertAssetsInScope([assetId], { userId, userType: 'USER' }),
     ).resolves.not.toThrow();
   });
 
@@ -394,8 +394,6 @@ describe('FootageScopeService — permission matrix', () => {
     const folderId = await insertFolder();
     await grantFolder(folderId, userId);
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
     const projectId = await insertProject(folderId, {
       evaluationStatus: 'draft',
       ownerUserId: ownerId,
@@ -403,7 +401,7 @@ describe('FootageScopeService — permission matrix', () => {
     await linkAssetToProject(assetId, projectId, 'pending');
 
     await expect(
-      scopeService.assertSegmentsInScope([segId], { userId, userType: 'USER' }),
+      scopeService.assertAssetsInScope([assetId], { userId, userType: 'USER' }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
@@ -412,8 +410,6 @@ describe('FootageScopeService — permission matrix', () => {
     const folderId = await insertFolder();
     await grantFolder(folderId, userId);
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
     const projectId = await insertProject(folderId, {
       evaluationStatus: 'draft',
       ownerUserId: userId,
@@ -421,7 +417,7 @@ describe('FootageScopeService — permission matrix', () => {
     await linkAssetToProject(assetId, projectId, 'pending');
 
     await expect(
-      scopeService.assertSegmentsInScope([segId], { userId, userType: 'USER' }),
+      scopeService.assertAssetsInScope([assetId], { userId, userType: 'USER' }),
     ).resolves.not.toThrow();
   });
 
@@ -429,20 +425,18 @@ describe('FootageScopeService — permission matrix', () => {
     const adminId = `admin-${randomUUID().slice(0, 8)}`;
     const folderId = await insertFolder();
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
     const projectId = await insertProject(folderId);
     await linkAssetToProject(assetId, projectId);
 
     await expect(
-      scopeService.assertSegmentsInScope([segId], { userId: adminId, userType: 'ADMIN' }),
+      scopeService.assertAssetsInScope([assetId], { userId: adminId, userType: 'ADMIN' }),
     ).resolves.not.toThrow();
   });
 
-  it('out-of-scope segment id → 404', async () => {
+  it('out-of-scope asset id → 404', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     await expect(
-      scopeService.assertSegmentsInScope([randomUUID()], { userId, userType: 'USER' }),
+      scopeService.assertAssetsInScope([randomUUID()], { userId, userType: 'USER' }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 });
@@ -452,28 +446,26 @@ describe('FootageScopeService — permission matrix', () => {
 // ---------------------------------------------------------------------------
 
 describe('FootageService — folder subtree', () => {
-  async function seedGrandchild(): Promise<{ rootId: string; childId: string; segmentId: string }> {
+  async function seedGrandchild(): Promise<{ rootId: string; childId: string; assetId: string }> {
     const rootId = await insertFolder();
     const childId = await insertFolder(rootId);
     const grandchildId = await insertFolder(childId);
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segmentId = await insertSegment(assetId, analysisId, {
-      captionVi: 'quảng trường cỏ xanh',
-      tags: ['quảng trường'],
+    await insertAnalysis(assetId, true, {
+      description: makeDescription({ titleVi: 'quảng trường cỏ xanh', tags: ['quảng trường'] }),
     });
     const projectId = await insertProject(grandchildId);
     await linkAssetToProject(assetId, projectId);
-    return { rootId, childId, segmentId };
+    return { rootId, childId, assetId };
   }
 
   it('catalog on a parent folder returns footage of projects in its subfolders', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
-    const { rootId, segmentId } = await seedGrandchild();
+    const { rootId, assetId } = await seedGrandchild();
     await grantFolder(rootId, userId, true);
 
     const result = await footageService.getCatalog({ folderIds: [rootId] }, userId, 'USER');
-    expect(result.items.map((i) => i.segmentId)).toEqual([segmentId]);
+    expect(result.items.map((i) => i.assetId)).toContain(assetId);
   });
 
   it('catalog skips subfolders the user cannot reach', async () => {
@@ -486,20 +478,20 @@ describe('FootageService — folder subtree', () => {
   });
 
   it('ADMIN catalog on a parent folder covers its subfolders', async () => {
-    const { rootId, segmentId } = await seedGrandchild();
+    const { rootId, assetId } = await seedGrandchild();
 
     const result = await footageService.getCatalog({ folderIds: [rootId] }, 'admin-1', 'ADMIN');
-    expect(result.items.map((i) => i.segmentId)).toEqual([segmentId]);
+    expect(result.items.map((i) => i.assetId)).toContain(assetId);
   });
 
   it('search and facets filtered by a parent folder cover its subfolders', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
-    const { rootId, childId, segmentId } = await seedGrandchild();
+    const { rootId, childId, assetId } = await seedGrandchild();
     await grantFolder(childId, userId, true);
 
     // The root itself is out of reach, but the subfolders granted below it are searched.
     const found = await footageService.search({ folderIds: [rootId] }, userId, 'USER');
-    expect(found.items.map((i) => i.segmentId)).toEqual([segmentId]);
+    expect(found.items.map((i) => i.assetId)).toContain(assetId);
 
     const facets = await footageService.getFacets({ folderIds: [childId] }, userId, 'USER');
     expect(facets.tags.map((t) => t.value)).toContain('quảng trường');
@@ -510,16 +502,41 @@ describe('FootageService — folder subtree', () => {
 // Folders endpoint
 // ---------------------------------------------------------------------------
 
+describe('FootageService.getCatalog — one row per video', () => {
+  it('lists a video in two visible projects once, best quality first', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    await grantFolder(folderId, userId);
+    const projectA = await insertProject(folderId);
+    const projectB = await insertProject(folderId);
+
+    const shared = await insertAsset();
+    await insertAnalysis(shared, true, { quality: 3 });
+    await linkAssetToProject(shared, projectA);
+    await linkAssetToProject(shared, projectB);
+    const best = await insertAsset();
+    await insertAnalysis(best, true, { quality: 5 });
+    await linkAssetToProject(best, projectA);
+    const worst = await insertAsset();
+    await insertAnalysis(worst, true, { quality: 2 });
+    await linkAssetToProject(worst, projectB);
+
+    const result = await footageService.getCatalog({ folderIds: [folderId] }, userId, 'USER');
+    expect(result.items.map((i) => i.assetId)).toEqual([best, shared, worst]);
+    const sharedRow = result.items.find((i) => i.assetId === shared)!;
+    expect([...sharedRow.projectIds].sort()).toEqual([projectA, projectB].sort());
+  });
+});
+
 describe('FootageService.getFolders', () => {
-  it('lists only scoped folders with correct counts', async () => {
+  it('lists only scoped folders with correct analyzedVideos and usableVideos counts', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const grantedFolder = await insertFolder();
     const otherFolder = await insertFolder();
     await grantFolder(grantedFolder, userId);
 
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    await insertSegment(assetId, analysisId, { usable: true });
+    await insertAnalysis(assetId, true, { usable: true });
     const p = await insertProject(grantedFolder);
     await linkAssetToProject(assetId, p);
 
@@ -530,8 +547,8 @@ describe('FootageService.getFolders', () => {
     expect(ids).not.toContain(otherFolder);
 
     const gf = result.folders.find((f) => f.id === grantedFolder);
-    expect(gf?.analyzedSegments).toBeGreaterThanOrEqual(1);
-    expect(gf?.usableSegments).toBeGreaterThanOrEqual(1);
+    expect(gf?.analyzedVideos).toBeGreaterThanOrEqual(1);
+    expect(gf?.usableVideos).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -540,28 +557,32 @@ describe('FootageService.getFolders', () => {
 // ---------------------------------------------------------------------------
 
 describe('FootageService.search — accent-insensitive FTS', () => {
-  it('"pho bo" finds "phở bò" segment', async () => {
+  it('"pho bo" finds "phở bò" asset', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const folderId = await insertFolder();
     await grantFolder(folderId, userId);
 
     const a1 = await insertAsset();
-    const an1 = await insertAnalysis(a1);
-    await insertSegment(a1, an1, { captionVi: 'phở bò tái chín', usable: true });
+    await insertAnalysis(a1, true, {
+      description: makeDescription({ titleVi: 'phở bò tái chín' }),
+    });
     const p1 = await insertProject(folderId);
     await linkAssetToProject(a1, p1);
 
-    // Trigger sets search_vector on insert; also force-update in case trigger is absent
+    // Force-populate the search_vector on asset_analyses
     await ds.query(
-      `UPDATE media_segments
-       SET search_vector = setweight(to_tsvector('simple', immutable_unaccent(coalesce(caption_vi,''))), 'A')
+      `UPDATE asset_analyses
+       SET search_vector = setweight(to_tsvector('simple', immutable_unaccent(
+         coalesce(description ->> 'title_vi', '') || ' ' ||
+         coalesce(description ->> 'summary_vi', '')
+       )), 'A')
        WHERE asset_id = $1`,
       [a1],
     );
 
     const result = await footageService.search({ q: 'pho bo', usableOnly: false }, userId, 'USER');
     expect(result.items.length).toBeGreaterThanOrEqual(1);
-    expect(result.items.some((i) => i.captionVi?.includes('phở bò'))).toBe(true);
+    expect(result.items.some((i) => i.titleVi?.includes('phở bò'))).toBe(true);
   });
 
   it('accented query "phở bò" ranks above plain "pho bo thuong"', async () => {
@@ -570,20 +591,25 @@ describe('FootageService.search — accent-insensitive FTS', () => {
     await grantFolder(folderId, userId);
 
     const a1 = await insertAsset();
-    const an1 = await insertAnalysis(a1);
-    await insertSegment(a1, an1, { captionVi: 'phở bò tái chín', usable: true });
+    await insertAnalysis(a1, true, {
+      description: makeDescription({ titleVi: 'phở bò tái chín' }),
+    });
     const p1 = await insertProject(folderId);
     await linkAssetToProject(a1, p1);
 
     const a2 = await insertAsset();
-    const an2 = await insertAnalysis(a2);
-    await insertSegment(a2, an2, { captionVi: 'pho bo thuong', usable: true });
+    await insertAnalysis(a2, true, {
+      description: makeDescription({ titleVi: 'pho bo thuong' }),
+    });
     const p2 = await insertProject(folderId);
     await linkAssetToProject(a2, p2);
 
     await ds.query(
-      `UPDATE media_segments
-       SET search_vector = setweight(to_tsvector('simple', immutable_unaccent(coalesce(caption_vi,''))), 'A')
+      `UPDATE asset_analyses
+       SET search_vector = setweight(to_tsvector('simple', immutable_unaccent(
+         coalesce(description ->> 'title_vi', '') || ' ' ||
+         coalesce(description ->> 'summary_vi', '')
+       )), 'A')
        WHERE asset_id = ANY($1)`,
       [[a1, a2]],
     );
@@ -591,7 +617,7 @@ describe('FootageService.search — accent-insensitive FTS', () => {
     const result = await footageService.search({ q: 'phở bò', usableOnly: false }, userId, 'USER');
     expect(result.items.length).toBeGreaterThanOrEqual(2);
     // Accented segment should score higher (exact-accent bonus) and appear first
-    expect(result.items[0].captionVi).toContain('phở bò');
+    expect(result.items[0].titleVi).toContain('phở bò');
   });
 });
 
@@ -600,14 +626,15 @@ describe('FootageService.search — accent-insensitive FTS', () => {
 // ---------------------------------------------------------------------------
 
 describe('FootageService.getFacets', () => {
-  it('returns tag facets when segments have tags', async () => {
+  it('returns tag facets from description.tags', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const folderId = await insertFolder();
     await grantFolder(folderId, userId);
 
     const a1 = await insertAsset();
-    const an1 = await insertAnalysis(a1);
-    await insertSegment(a1, an1, { tags: ['ẩm thực', 'đường phố'], usable: true });
+    await insertAnalysis(a1, true, {
+      description: makeDescription({ tags: ['ẩm thực', 'đường phố'], usable: true }),
+    });
     const p = await insertProject(folderId);
     await linkAssetToProject(a1, p);
 
@@ -621,28 +648,27 @@ describe('FootageService.getFacets', () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const facets = await footageService.getFacets({}, userId, 'USER');
     expect(facets.tags).toEqual([]);
-    expect(facets.shotSizes).toEqual([]);
     expect(facets.orientations).toEqual([]);
+    expect(facets.genres).toEqual([]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Resolve (decision 8)
+// Resolve (decision 8: resolveAssets)
 // ---------------------------------------------------------------------------
 
-describe('FootageService.resolveSegments — decision 8', () => {
+describe('FootageService.resolveAssets — decision 8', () => {
   it('user with go.project.download_original gets original (purpose=final)', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const folderId = await insertFolder();
     await grantFolder(folderId, userId);
 
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
+    await insertAnalysis(assetId);
     const projectId = await insertProject(folderId);
     await linkAssetToProject(assetId, projectId);
 
-    const result = await footageService.resolveSegments([segId], 'final', userId, 'USER', [
+    const result = await footageService.resolveAssets([assetId], 'final', userId, 'USER', [
       'go.project.download_original',
     ]);
 
@@ -657,17 +683,62 @@ describe('FootageService.resolveSegments — decision 8', () => {
     await grantFolder(folderId, userId);
 
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
+    await insertAnalysis(assetId);
     const projectId = await insertProject(folderId);
     await linkAssetToProject(assetId, projectId);
 
-    const result = await footageService.resolveSegments([segId], 'final', userId, 'USER', [
+    const result = await footageService.resolveAssets([assetId], 'final', userId, 'USER', [
       'go.project.evaluate',
     ]);
 
     expect(result.items[0].sourceKind).toBe('original');
     expect(result.items[0].watermarked).toBe(false);
+  });
+
+  it('user with download rights gets the analysis proxy for a preview render', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    await grantFolder(folderId, userId);
+
+    const assetId = await insertAsset();
+    const analysisId = await insertAnalysis(assetId);
+    const projectId = await insertProject(folderId);
+    await linkAssetToProject(assetId, projectId);
+    const proxyKey = `projects/p1/variants/${assetId}/analysis/${analysisId}/proxy.mp4`;
+    storedObjects.set(proxyKey, 4242);
+
+    const result = await footageService.resolveAssets([assetId], 'preview', userId, 'USER', [
+      'go.project.download_original',
+    ]);
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      sourceKind: 'proxy',
+      watermarked: false,
+      sizeBytes: 4242,
+      cacheKey: `proxy:${analysisId}`,
+    });
+    expect(result.items[0].url).toContain(proxyKey);
+  });
+
+  it('user with download rights falls back to the original when the proxy is gone', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    await grantFolder(folderId, userId);
+
+    const assetId = await insertAsset();
+    await insertAnalysis(assetId);
+    const projectId = await insertProject(folderId);
+    await linkAssetToProject(assetId, projectId);
+
+    const result = await footageService.resolveAssets([assetId], 'preview', userId, 'USER', [
+      'go.project.download_original',
+    ]);
+
+    expect(result.items[0]).toMatchObject({
+      sourceKind: 'original',
+      cacheKey: `original:${assetId}`,
+    });
   });
 
   it('user without download rights gets preview variant (watermarked)', async () => {
@@ -676,8 +747,7 @@ describe('FootageService.resolveSegments — decision 8', () => {
     await grantFolder(folderId, userId);
 
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
+    await insertAnalysis(assetId);
     const projectId = await insertProject(folderId);
     await linkAssetToProject(assetId, projectId);
 
@@ -692,8 +762,8 @@ describe('FootageService.resolveSegments — decision 8', () => {
       [randomUUID(), assetId],
     );
 
-    const result = await footageService.resolveSegments(
-      [segId],
+    const result = await footageService.resolveAssets(
+      [assetId],
       'preview',
       userId,
       'USER',
@@ -705,19 +775,18 @@ describe('FootageService.resolveSegments — decision 8', () => {
     expect(result.items[0].watermarked).toBe(true);
   });
 
-  it('user without download rights and no preview variant → segment omitted', async () => {
+  it('user without download rights and no preview variant → asset omitted (missing)', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const folderId = await insertFolder();
     await grantFolder(folderId, userId);
 
     const assetId = await insertAsset();
-    const analysisId = await insertAnalysis(assetId);
-    const segId = await insertSegment(assetId, analysisId);
+    await insertAnalysis(assetId);
     const projectId = await insertProject(folderId);
     await linkAssetToProject(assetId, projectId);
 
     // No variants inserted for this asset
-    const result = await footageService.resolveSegments([segId], 'preview', userId, 'USER', [
+    const result = await footageService.resolveAssets([assetId], 'preview', userId, 'USER', [
       'go.footage.search',
     ]);
 

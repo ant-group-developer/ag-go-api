@@ -1,4 +1,4 @@
-// Copied from ag-farm packages/protocol v0.1.0 — keep in sync
+// Copied from ag-farm packages/protocol (common.ts, owner-api.ts) — keep in sync
 import { z } from 'zod';
 
 export const JOB_TYPES = [
@@ -15,7 +15,14 @@ export const LANES = ['interactive', 'batch'] as const;
 export const LaneSchema = z.enum(LANES);
 export type Lane = z.infer<typeof LaneSchema>;
 
-export const JOB_STATUSES = ['queued', 'leased', 'completed', 'failed', 'cancelled'] as const;
+export const JOB_STATUSES = [
+  'queued',
+  'leased',
+  'paused',
+  'completed',
+  'failed',
+  'cancelled',
+] as const;
 export const JobStatusSchema = z.enum(JOB_STATUSES);
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 
@@ -87,6 +94,7 @@ export const JobViewSchema = z.strictObject({
   priority: z.int(),
   correlation_id: z.string(),
   affinity_key: z.string().nullable(),
+  group_key: z.string().nullable(),
   attempt_count: z.int().nonnegative(),
   max_attempts: z.int().positive(),
   node_id: z.uuid().nullable(),
@@ -111,6 +119,8 @@ export const SubmitJobRequestSchema = z.strictObject({
   max_attempts: z.int().min(1).max(20).default(3),
   correlation_id: z.string().min(1).max(200),
   not_before: IsoDateTimeSchema.nullable().default(null),
+  /** Nhóm để tạm dừng / chạy tiếp / huỷ cả loạt: `batch:<id>` của một đợt quét. */
+  group_key: z.string().min(1).max(200).nullable().default(null),
 });
 export type SubmitJobRequest = z.input<typeof SubmitJobRequestSchema>;
 
@@ -130,6 +140,11 @@ export const ListJobsResponseSchema = z.strictObject({
   next_cursor: z.string().nullable(),
 });
 export type ListJobsResponse = z.infer<typeof ListJobsResponseSchema>;
+
+/** `POST /v1/owner/jobs/{pause|resume|cancel}`: theo danh sách id hoặc cả nhóm. */
+export const JobControlResponseSchema = z.strictObject({ affected: z.int().nonnegative() });
+export type JobControlResponse = z.infer<typeof JobControlResponseSchema>;
+export type JobControlAction = 'pause' | 'resume' | 'cancel';
 
 export const OWNER_API = {
   jobs: '/v1/owner/jobs',

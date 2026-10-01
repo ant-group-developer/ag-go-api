@@ -931,6 +931,124 @@ paths:
         - bearer: []
       summary: Enqueue analysis for a batch of assets
       tags: *a17
+  /analysis/batches:
+    get:
+      operationId: AnalysisController_listBatches
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            default: 1
+            allOf:
+              - $ref: "#/components/schemas/Object"
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            default: 20
+            allOf:
+              - $ref: "#/components/schemas/Object"
+        - name: sortBy
+          required: false
+          in: query
+          schema:
+            default: createdAt
+            type: string
+            enum:
+              - createdAt
+              - name
+              - status
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            default: desc
+            type: string
+            enum:
+              - asc
+              - desc
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - running
+              - paused
+              - cancelled
+              - completed
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      summary: Scan batches with their progress, newest first by default
+      tags: *a17
+  /analysis/batches/{batchId}/pause:
+    post:
+      operationId: AnalysisController_pauseBatch
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      summary: Pause a scan batch (its farm jobs and unfinished analyses)
+      tags: *a17
+  /analysis/batches/{batchId}/resume:
+    post:
+      operationId: AnalysisController_resumeBatch
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      summary: Resume a paused scan batch
+      tags: *a17
+  /analysis/batches/{batchId}/cancel:
+    post:
+      operationId: AnalysisController_cancelBatch
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      summary: Cancel everything unfinished in a scan batch
+      tags: *a17
   /analysis/logs:
     get:
       operationId: AnalysisController_getLogs
@@ -1018,11 +1136,11 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security:
         - bearer: []
-      summary: Get current and latest analysis for an asset
+      summary: Latest analysis run of an asset with the whole-video description
       tags: *a17
-  /assets/{assetId}/segments:
-    get:
-      operationId: AnalysisController_getSegments
+  /assets/{assetId}/analysis/pause:
+    post:
+      operationId: AnalysisController_pauseAssetAnalysis
       parameters:
         - name: assetId
           required: true
@@ -1030,7 +1148,7 @@ paths:
           schema:
             type: string
       responses:
-        "200":
+        "201":
           description: ""
           content:
             application/json:
@@ -1038,7 +1156,47 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security:
         - bearer: []
-      summary: Get current segments for an asset
+      summary: Pause the in-flight analysis of an asset
+      tags: *a17
+  /assets/{assetId}/analysis/resume:
+    post:
+      operationId: AnalysisController_resumeAssetAnalysis
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      summary: Resume the paused analysis of an asset
+      tags: *a17
+  /assets/{assetId}/analysis/cancel:
+    post:
+      operationId: AnalysisController_cancelAssetAnalysis
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      summary: Cancel the in-flight analysis of an asset
       tags: *a17
   /projects/{projectId}/analysis-status:
     get:
@@ -2546,7 +2704,7 @@ paths:
         - &a31
           bearer: []
         - service-key: []
-      summary: List accessible folders with segment counts
+      summary: List accessible folders with analysed video counts
       tags: &a32
         - footage
   /footage/catalog:
@@ -2569,13 +2727,13 @@ paths:
       security:
         - *a31
         - service-key: []
-      summary: Compact text catalog of segments for given folders (AI input)
+      summary: Analysed videos of the given folders with their descriptions (AI input)
       tags: *a32
-  /footage/segments/{segmentId}/media:
+  /footage/assets/{assetId}/media:
     get:
-      operationId: FootageController_getSegmentMedia
+      operationId: FootageController_getAssetMedia
       parameters:
-        - name: segmentId
+        - name: assetId
           required: true
           in: path
           schema:
@@ -2590,18 +2748,18 @@ paths:
       security:
         - *a31
         - service-key: []
-      summary: Keyframe URLs and preview URL for a segment
+      summary: Preview URL of the whole video, keyframes and contact sheet
       tags: *a32
-  /footage/segments/resolve:
+  /footage/assets/resolve:
     post:
-      operationId: FootageController_resolveSegments
+      operationId: FootageController_resolveAssets
       parameters: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ResolveSegmentsDto"
+              $ref: "#/components/schemas/ResolveAssetsDto"
       responses:
         "201":
           description: ""
@@ -2612,7 +2770,7 @@ paths:
       security:
         - *a31
         - service-key: []
-      summary: Resolve source URLs for rendering (respects decision 8)
+      summary: Signed URLs of whole video files for rendering (respects decision 8)
       tags: *a32
   /footage/search:
     get:
@@ -2627,7 +2785,9 @@ paths:
         - name: folderIds
           required: false
           in: query
-          description: Comma-separated folder IDs.
+          description:
+            Comma-separated folder IDs (subfolders the user can reach are
+            included).
           schema:
             type: array
             items:
@@ -2656,10 +2816,10 @@ paths:
             type: array
             items:
               type: string
-        - name: shotSizes
+        - name: genres
           required: false
           in: query
-          description: Comma-separated shot sizes.
+          description: Comma-separated genres.
           schema:
             type: array
             items:
@@ -2683,19 +2843,19 @@ paths:
         - name: minDurationMs
           required: false
           in: query
-          description: Minimum duration in milliseconds.
+          description: Minimum video duration in milliseconds.
           schema:
             type: number
         - name: maxDurationMs
           required: false
           in: query
-          description: Maximum duration in milliseconds.
+          description: Maximum video duration in milliseconds.
           schema:
             type: number
         - name: usableOnly
           required: false
           in: query
-          description: Include only usable segments (default true).
+          description: Include only usable videos (default true).
           schema:
             default: true
             type: boolean
@@ -2722,7 +2882,7 @@ paths:
       security:
         - *a31
         - service-key: []
-      summary: Full-text + trigram search across segments
+      summary: Full-text + trigram search across analysed videos
       tags: *a32
   /footage/facets:
     get:
@@ -2737,7 +2897,9 @@ paths:
         - name: folderIds
           required: false
           in: query
-          description: Comma-separated folder IDs.
+          description:
+            Comma-separated folder IDs (subfolders the user can reach are
+            included).
           schema:
             type: array
             items:
@@ -2766,10 +2928,10 @@ paths:
             type: array
             items:
               type: string
-        - name: shotSizes
+        - name: genres
           required: false
           in: query
-          description: Comma-separated shot sizes.
+          description: Comma-separated genres.
           schema:
             type: array
             items:
@@ -2793,19 +2955,19 @@ paths:
         - name: minDurationMs
           required: false
           in: query
-          description: Minimum duration in milliseconds.
+          description: Minimum video duration in milliseconds.
           schema:
             type: number
         - name: maxDurationMs
           required: false
           in: query
-          description: Maximum duration in milliseconds.
+          description: Maximum video duration in milliseconds.
           schema:
             type: number
         - name: usableOnly
           required: false
           in: query
-          description: Include only usable segments (default true).
+          description: Include only usable videos (default true).
           schema:
             default: true
             type: boolean
@@ -2971,6 +3133,9 @@ components:
     BackfillAnalysisDto:
       type: object
       properties:
+        name:
+          type: string
+          description: Batch name shown in the batches list
         folderIds:
           description: Folder ids to backfill (includes subfolders)
           type: array
@@ -3297,7 +3462,7 @@ components:
       properties:
         usableOnly:
           type: boolean
-          description: Include only usable segments (default true).
+          description: Include only usable videos (default true).
         minQuality:
           type: number
           description: Minimum quality score (0–5).
@@ -3306,21 +3471,30 @@ components:
           type: array
           items:
             type: string
-        shotSizes:
-          description: Comma-separated shot sizes.
+        q:
+          type: string
+          description: Free-text search within titles, summaries, tags.
+    FootageCatalogBodyDto:
+      type: object
+      properties:
+        usableOnly:
+          type: boolean
+          description: Include only usable videos (default true).
+        minQuality:
+          type: number
+          description: Minimum quality score (0–5).
+        orientations:
+          description: Comma-separated orientations.
           type: array
           items:
             type: string
         q:
           type: string
-          description: Free-text search within captions/tags.
-    FootageCatalogBodyDto:
-      type: object
-      properties:
+          description: Free-text search within titles, summaries, tags.
         folderIds:
           description:
-            Folder IDs to scope. Each must be within the user scope, else 404.
-            1–50.
+            Folder IDs to scope (subfolders the user can reach are included).
+            Each must be within the user scope, else 404. 1–50.
           type: array
           items:
             type: string
@@ -3328,16 +3502,16 @@ components:
           $ref: "#/components/schemas/CatalogFiltersDto"
         limit:
           type: number
-          description: Max items to return (default 500, max 1000).
-          default: 500
+          description: Max videos to return (default 200, max 500).
+          default: 200
         cursor:
           type: string
           description: Opaque pagination cursor from the previous response.
-    ResolveSegmentsDto:
+    ResolveAssetsDto:
       type: object
       properties:
-        segmentIds:
-          description: Segment IDs to resolve (1–500).
+        assetIds:
+          description: Asset (video) IDs to resolve (1–500).
           type: array
           items:
             type: string
@@ -3347,7 +3521,7 @@ components:
             - preview
             - final
       required:
-        - segmentIds
+        - assetIds
         - purpose
     ApiError:
       type: object

@@ -39,12 +39,12 @@ export class FootageSearchQueryDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
   provinceIds?: string[];
 
-  @ApiPropertyOptional({ type: [String], description: 'Comma-separated shot sizes.' })
+  @ApiPropertyOptional({ type: [String], description: 'Comma-separated genres.' })
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
   @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
-  shotSizes?: string[];
+  genres?: string[];
 
   @ApiPropertyOptional({ type: [String], description: 'Comma-separated times of day.' })
   @IsOptional()
@@ -60,14 +60,14 @@ export class FootageSearchQueryDto {
   @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
   orientations?: string[];
 
-  @ApiPropertyOptional({ description: 'Minimum duration in milliseconds.' })
+  @ApiPropertyOptional({ description: 'Minimum video duration in milliseconds.' })
   @IsOptional()
   @IsInt()
   @Min(0)
   @Transform(({ value }) => (value !== undefined ? Number(value) : value))
   minDurationMs?: number;
 
-  @ApiPropertyOptional({ description: 'Maximum duration in milliseconds.' })
+  @ApiPropertyOptional({ description: 'Maximum video duration in milliseconds.' })
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -75,7 +75,7 @@ export class FootageSearchQueryDto {
   maxDurationMs?: number;
 
   @ApiPropertyOptional({
-    description: 'Include only usable segments (default true).',
+    description: 'Include only usable videos (default true).',
     default: true,
   })
   @IsOptional()

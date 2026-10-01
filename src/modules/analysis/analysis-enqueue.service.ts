@@ -8,6 +8,7 @@ import {
   IN_FLIGHT_STATUSES,
 } from '../../database/entities/asset-analysis.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
+import { autoBatchId } from './analysis-batches';
 
 /**
  * Enqueues a media-analysis run for an asset inside an existing transaction.
@@ -37,6 +38,8 @@ export class AnalysisEnqueueService {
       priority?: number;
       skipIfCurrent?: boolean;
       skipIfInFlight?: boolean;
+      /** Scan batch; defaults to the automatic batch. */
+      batchId?: string;
     } = {},
   ): Promise<string | null> {
     const {
@@ -46,8 +49,8 @@ export class AnalysisEnqueueService {
       skipIfInFlight = true,
     } = options;
 
-    const extractVersion = this.config.get<string>('ANALYSIS_EXTRACT_VERSION') ?? 'x1';
-    const promptVersion = this.config.get<string>('ANALYSIS_PROMPT_VERSION') ?? 'p1';
+    const extractVersion = this.config.get<string>('ANALYSIS_EXTRACT_VERSION') ?? 'x2';
+    const promptVersion = this.config.get<string>('ANALYSIS_PROMPT_VERSION') ?? 'p2';
 
     if (skipIfInFlight) {
       const inFlight = await manager.findOne(AssetAnalysisEntity, {
@@ -90,6 +93,7 @@ export class AnalysisEnqueueService {
       promptVersion,
       isCurrent: false,
       requestedBy,
+      batchId: options.batchId ?? (await autoBatchId(manager)),
     });
     await manager.save(AssetAnalysisEntity, analysis);
 
