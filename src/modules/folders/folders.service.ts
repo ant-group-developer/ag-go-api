@@ -9,6 +9,8 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
+import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
+import { isAdminUserType } from '../../common/auth/user-type';
 import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
@@ -54,7 +56,11 @@ export class FoldersService {
     dto: CreateFolderDto,
     userId: string,
     userType?: 'ADMIN' | 'USER',
+    permissions: string[] = [],
   ): Promise<FolderEntity> {
+    if (!dto.parentId) {
+      this.requireRootPermission(userType, permissions);
+    }
     return this.dataSource.transaction(async (manager) => {
       const parent = dto.parentId
         ? await manager.findOne(FolderEntity, { where: { id: dto.parentId, isActive: true } })
@@ -183,6 +189,7 @@ export class FoldersService {
     dto: UpdateFolderDto,
     userId: string,
     userType?: 'ADMIN' | 'USER',
+    permissions: string[] = [],
   ): Promise<FolderEntity> {
     await this.requireAccess(folderId, userId, 'editor', userType);
     return this.dataSource.transaction(async (manager) => {
@@ -203,6 +210,10 @@ export class FoldersService {
       const renamed = name !== folder.name;
 
       if (moving) {
+        // Moving to the root makes a new root folder, so it needs the same right as creating one.
+        if (!targetParentId) {
+          this.requireRootPermission(userType, permissions);
+        }
         // Moving changes which grants the subtree inherits, so it needs manager access.
         await this.requireAccessOn(manager, folderId, userId, 'manager', userType);
       }
@@ -295,6 +306,13 @@ export class FoldersService {
       }
       return saved;
     });
+  }
+
+  private requireRootPermission(userType: 'ADMIN' | 'USER' | undefined, permissions: string[]) {
+    if (isAdminUserType(userType) || permissions.includes(GO_PERMISSIONS.FOLDER_CREATE_ROOT)) {
+      return;
+    }
+    throw new ForbiddenException('You are not allowed to create root folders');
   }
 
   /** Detaches a subtree from its old ancestors in the closure table and links it under `parentId`. */

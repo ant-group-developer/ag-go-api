@@ -171,16 +171,35 @@ describe('StatisticsTrendService', () => {
     expect(dataSource.query).toHaveBeenCalledTimes(1);
   });
 
-  it('does not query events when no buckets returned', async () => {
+  it('queries the buckets and the events in parallel', async () => {
     const { service, dataSource } = createService({
       folderIds: ['folder-1'],
       isAdmin: false,
       empty: false,
     });
-    dataSource.query.mockResolvedValueOnce([{ currentPending: 5, bucketStarts: [] }]);
+    let pending = 0;
+    let maxPending = 0;
+    dataSource.query.mockImplementation(async () => {
+      pending += 1;
+      maxPending = Math.max(maxPending, pending);
+      await Promise.resolve();
+      pending -= 1;
+      return [{ currentPending: 5, bucketStarts: [] }];
+    });
 
     await service.trend(context, query);
 
+    expect(dataSource.query).toHaveBeenCalledTimes(2);
+    expect(maxPending).toBe(2);
+  });
+
+  it('does not query events when the user has no folder', async () => {
+    const { service, dataSource } = createService({ folderIds: [], isAdmin: false, empty: true });
+    dataSource.query.mockResolvedValueOnce([{ currentPending: 0, bucketStarts: ['2026-09-01'] }]);
+
+    const result = await service.trend(context, query);
+
     expect(dataSource.query).toHaveBeenCalledTimes(1);
+    expect(result.points).toHaveLength(1);
   });
 });

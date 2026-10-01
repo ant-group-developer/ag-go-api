@@ -11,38 +11,43 @@ describe('StatisticsSummaryService', () => {
 
   function createService(scope: { folderIds: string[] | null; isAdmin: boolean; empty: boolean }) {
     const dataSource = {
-      query: jest.fn().mockResolvedValue([
-        {
-          projects: {
-            total: 4,
-            draft: 1,
-            pending: 1,
-            completed: 1,
-            partially_completed: 0,
-            failed: 1,
-            new_current: 2,
-            new_previous: 1,
-          },
-          media: {
-            total: 10,
-            images: 7,
-            videos: 3,
-            pending: 4,
-            approved: 5,
-            rejected: 1,
-            oldest_pending_at: '2026-09-02T08:00:00+07:00',
-            new_current: 6,
-            new_previous: 0,
-          },
-          decisions: {
-            approved_current: 3,
-            rejected_current: 1,
-            approved_previous: 2,
-            rejected_previous: 0,
-          },
-          storage: { original_bytes: '9007199254740993', rendered_bytes: '12' },
-        },
-      ]),
+      query: jest.fn((sql: string) =>
+        Promise.resolve(
+          sql.includes('storage_stats')
+            ? [{ original_bytes: '9007199254740993', rendered_bytes: '12' }]
+            : [
+                {
+                  projects: {
+                    total: 4,
+                    images: 7,
+                    videos: 3,
+                    draft: 1,
+                    pending: 1,
+                    completed: 1,
+                    partially_completed: 0,
+                    failed: 1,
+                    new_current: 2,
+                    new_previous: 1,
+                  },
+                  media: {
+                    total: 10,
+                    pending: 4,
+                    approved: 5,
+                    rejected: 1,
+                    oldest_pending_at: '2026-09-02T08:00:00+07:00',
+                    new_current: 6,
+                    new_previous: 0,
+                  },
+                  decisions: {
+                    approved_current: 3,
+                    rejected_current: 1,
+                    approved_previous: 2,
+                    rejected_previous: 0,
+                  },
+                },
+              ],
+        ),
+      ),
     };
     const scopeService = {
       resolve: jest.fn().mockResolvedValue({ ...scope, userId: context.userId }),
@@ -60,8 +65,11 @@ describe('StatisticsSummaryService', () => {
 
     const result = await service.summary(context, period);
 
-    expect(dataSource.query).toHaveBeenCalledTimes(1);
-    expect(dataSource.query.mock.calls[0][1].slice(0, 3)).toEqual([['folder-1'], false, 'user-1']);
+    // The summary and the storage run as two queries in parallel, both scoped the same way.
+    expect(dataSource.query).toHaveBeenCalledTimes(2);
+    for (const [, values] of dataSource.query.mock.calls as unknown as Array<[string, unknown[]]>) {
+      expect(values.slice(0, 3)).toEqual([['folder-1'], false, 'user-1']);
+    }
     expect(result.snapshot).toEqual({
       projects: 4,
       projectsByStatus: { draft: 1, pending: 1, completed: 1, partially_completed: 0, failed: 1 },
@@ -87,7 +95,8 @@ describe('StatisticsSummaryService', () => {
 
     await service.summary({ userId: 'admin-1', userType: 'ADMIN' }, period);
 
-    expect(dataSource.query.mock.calls[0][1].slice(0, 2)).toEqual([null, true]);
+    const [, values] = dataSource.query.mock.calls[0] as unknown as [string, unknown[]];
+    expect(values.slice(0, 2)).toEqual([null, true]);
   });
 
   it('returns zeros without querying when the user has no folder', async () => {

@@ -92,12 +92,13 @@ export class StatisticsProgressService {
       return { folders: { total: 0, items: [] }, attentionProjects: { total: 0, items: [] } };
     }
     const values = [...scopeValues(scope), query.limit ?? DEFAULT_LIMIT];
-    const folderRows = (await this.dataSource.query(FOLDERS_SQL, values)) as Array<
-      WithTotal<StatisticsFolderProgress>
-    >;
-    const attentionRows = (await this.dataSource.query(ATTENTION_SQL, values)) as Array<
-      WithTotal<StatisticsAttentionProject & { oldestPendingAt: Date | string | null }>
-    >;
+    const [folderRows, attentionRows] = (await Promise.all([
+      this.dataSource.query(FOLDERS_SQL, values),
+      this.dataSource.query(ATTENTION_SQL, values),
+    ])) as [
+      Array<WithTotal<StatisticsFolderProgress>>,
+      Array<WithTotal<StatisticsAttentionProject & { oldestPendingAt: Date | string | null }>>,
+    ];
 
     return {
       folders: {

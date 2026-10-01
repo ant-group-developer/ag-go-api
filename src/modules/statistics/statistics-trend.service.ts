@@ -83,10 +83,11 @@ export class StatisticsTrendService {
       period.granularity,
     ];
 
-    const [bucketRow] = (await this.dataSource.query(BUCKETS_SQL, values)) as Array<{
-      currentPending: number;
-      bucketStarts: string[];
-    }>;
+    // Both queries run in parallel; the events are only skipped when the scope has no project.
+    const [[bucketRow], rows] = (await Promise.all([
+      this.dataSource.query(BUCKETS_SQL, values),
+      scope.empty ? [] : this.dataSource.query(EVENTS_SQL, values),
+    ])) as [Array<{ currentPending: number; bucketStarts: string[] }>, TrendEventRow[]];
     const bucketStarts = bucketRow?.bucketStarts ?? [];
     if (scope.empty || bucketStarts.length === 0) {
       return {
@@ -95,7 +96,6 @@ export class StatisticsTrendService {
       };
     }
 
-    const rows = (await this.dataSource.query(EVENTS_SQL, values)) as TrendEventRow[];
     return {
       period: toPeriodInfo(period),
       points: buildTrendSeries(bucketStarts, rows, Number(bucketRow?.currentPending ?? 0)),
