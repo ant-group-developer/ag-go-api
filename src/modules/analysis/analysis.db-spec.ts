@@ -6,13 +6,30 @@
  *
  * Tests clean up their own rows after each case to keep the DB usable across test files.
  */
+import type { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { AppDataSource } from '../../database/data-source';
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
+import { AssetEntity } from '../../database/entities/asset.entity';
+import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
+import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
+import { ProjectEntity } from '../../database/entities/project.entity';
 import { AssetAnalysisV22060000000000 } from '../../database/migrations/2060000000000-asset-analysis-v2';
+import type { StorageAdapter } from '../assets/storage/storage-adapter';
+import type { AnalysisBatchService } from './analysis-batch.service';
+import type { AnalysisEnqueueService } from './analysis-enqueue.service';
+import type { AnalysisLogService } from './analysis-log.service';
+import type { AnalysisPipelineService } from './analysis-pipeline.service';
+import { AnalysisService } from './analysis.service';
+
+jest.mock('uuid', () => ({ v7: () => jest.requireActual('node:crypto').randomUUID() }));
+jest.mock('@nestjs/typeorm', () => ({
+  InjectDataSource: () => () => undefined,
+  InjectRepository: () => () => undefined,
+}));
 
 const TEST_DB_URL =
   process.env['TEST_DATABASE_URL'] ?? 'postgres://postgres:postgres@localhost:55434/ag_go_test';
@@ -40,6 +57,7 @@ async function insertAsset(
     asset_type: string;
     mime_type: string;
     original_storage_key: string;
+    processing_status: string;
   }> = {},
 ): Promise<string> {
   const id = overrides.id ?? randomUUID();
@@ -58,7 +76,7 @@ async function insertAsset(
       'r2',
       'ag-go',
       overrides.original_storage_key ?? `projects/p1/originals/${id}/clip.mp4`,
-      'ready',
+      overrides.processing_status ?? 'ready',
       'local',
       JSON.stringify({}),
       'test',
@@ -444,5 +462,83 @@ describe('backfill dryRun vs real', () => {
       [assetId],
     );
     expect(Number(countRow.count)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Backfill scope: which assets are picked up
+// ---------------------------------------------------------------------------
+
+describe('backfill scope', () => {
+  let service: AnalysisService;
+  let folderId: string;
+  let projectId: string;
+  const assetIds: string[] = [];
+
+  async function insertLinkedAsset(processingStatus: string): Promise<string> {
+    const id = await insertAsset({ processing_status: processingStatus });
+    assetIds.push(id);
+    await ds.query(
+      `INSERT INTO project_media (id, project_id, asset_id, created_by) VALUES ($1,$2,$3,'test')`,
+      [randomUUID(), projectId, id],
+    );
+    return id;
+  }
+
+  beforeAll(() => {
+    const config = { get: () => undefined } as unknown as ConfigService;
+    service = new AnalysisService(
+      ds,
+      ds.getRepository(AssetAnalysisEntity),
+      ds.getRepository(AssetEntity),
+      ds.getRepository(ProjectEntity),
+      ds.getRepository(ProjectMediaEntity),
+      ds.getRepository(FolderClosureEntity),
+      {} as StorageAdapter,
+      {} as AnalysisEnqueueService,
+      {} as AnalysisBatchService,
+      {} as AnalysisPipelineService,
+      {} as AnalysisLogService,
+      config,
+    );
+  });
+
+  beforeEach(async () => {
+    folderId = randomUUID();
+    const folderName = `backfill-scope-${folderId.slice(0, 8)}`;
+    await ds.query(
+      `INSERT INTO folders (id, parent_id, name, path_key, path_ids, path_text, depth, created_by)
+       VALUES ($1, NULL, $2, $3, '{}', $4, 0, 'test')`,
+      [folderId, folderName, folderName, folderName],
+    );
+    projectId = randomUUID();
+    await ds.query(
+      `INSERT INTO projects (id, owner_user_id, folder_id, name) VALUES ($1,'test-user',$2,$3)`,
+      [projectId, folderId, `Project ${projectId.slice(0, 8)}`],
+    );
+  });
+
+  afterEach(async () => {
+    await ds.query(`DELETE FROM project_media WHERE project_id=$1`, [projectId]);
+    for (const id of assetIds.splice(0)) await cleanupAsset(id);
+    await ds.query(`DELETE FROM projects WHERE id=$1`, [projectId]);
+    await ds.query(`DELETE FROM folders WHERE id=$1`, [folderId]);
+  });
+
+  it('includes every asset whose original is stored, rendered or not', async () => {
+    for (const status of ['uploaded', 'processing', 'ready', 'failed']) {
+      await insertLinkedAsset(status);
+    }
+    const result = await service.backfill({ projectIds: [projectId], mode: 'all', dryRun: true });
+    expect(result.matched).toBe(4);
+    expect(result.enqueued).toBe(4);
+  });
+
+  it('leaves out uploads and imports that are incomplete or cancelled', async () => {
+    for (const status of ['uploading', 'importing', 'cancelled']) {
+      await insertLinkedAsset(status);
+    }
+    const result = await service.backfill({ projectIds: [projectId], mode: 'all', dryRun: true });
+    expect(result.matched).toBe(0);
   });
 });

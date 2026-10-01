@@ -26,6 +26,12 @@ import { AnalysisLogService } from './analysis-log.service';
 import { AnalysisPipelineService } from './analysis-pipeline.service';
 import { descriptionView, type DescriptionView } from './description-view';
 
+/**
+ * Asset processing statuses whose original object is fully stored. `uploading`, `importing`
+ * and `cancelled` assets may have no original (or a partial one) and cannot be analysed.
+ */
+const ORIGINAL_STORED_STATUSES = ['uploaded', 'processing', 'ready', 'failed'];
+
 export type AnalysisStatsResult = {
   counts: Record<AnalysisStatus | 'none', number>;
   videos: { analyzed: number; usable: number };
@@ -265,9 +271,11 @@ export class AnalysisService {
   }
 
   /**
-   * Assets that stats and backfill operate on: finished uploads (`ready`) linked to at
-   * least one project, optionally narrowed to projects and/or folders (subfolders included).
-   * Orphans, incomplete/cancelled uploads and watermark logos are left out.
+   * Assets that stats and backfill operate on: assets whose original is fully stored, linked
+   * to at least one project, optionally narrowed to projects and/or folders (subfolders
+   * included). Analysis reads the original, not the rendered variants, so an asset not yet
+   * rendered, re-rendering or with a failed render is included. Orphans, incomplete/cancelled
+   * uploads and imports, and watermark logos are left out.
    */
   private async findScopedAssetIds(scope: {
     folderIds?: string[];
@@ -280,7 +288,7 @@ export class AnalysisService {
       .select('asset.id', 'id')
       .innerJoin(ProjectMediaEntity, 'pm', 'pm.asset_id = asset.id')
       .innerJoin(ProjectEntity, 'p', 'p.id = pm.project_id')
-      .where('asset.processing_status = :ready', { ready: 'ready' });
+      .where('asset.processing_status IN (:...stored)', { stored: ORIGINAL_STORED_STATUSES });
 
     if (projectIds && projectIds.length > 0) {
       assetQuery.andWhere('p.id IN (:...projectIds)', { projectIds });
