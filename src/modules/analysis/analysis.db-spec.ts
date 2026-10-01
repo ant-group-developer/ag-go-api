@@ -12,7 +12,7 @@ import { DataSource } from 'typeorm';
 import { AppDataSource } from '../../database/data-source';
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
-import { AssetAnalysisV22040000000000 } from '../../database/migrations/2040000000000-asset-analysis-v2';
+import { AssetAnalysisV22060000000000 } from '../../database/migrations/2060000000000-asset-analysis-v2';
 
 const TEST_DB_URL =
   process.env['TEST_DATABASE_URL'] ?? 'postgres://postgres:postgres@localhost:55434/ag_go_test';
@@ -110,14 +110,14 @@ async function cleanupAsset(assetId: string): Promise<void> {
 // Migration: run → revert → run (2040)
 // ---------------------------------------------------------------------------
 
-describe('AssetAnalysisV22040000000000', () => {
+describe('AssetAnalysisV22060000000000', () => {
   it('can be reverted and re-applied without errors', async () => {
     // Ensure no v2 data remains
     await ds.query(`DELETE FROM analysis_farm_jobs`);
     await ds.query(`DELETE FROM asset_analyses`);
     await ds.query(`DELETE FROM analysis_batches`);
 
-    const migration = new AssetAnalysisV22040000000000();
+    const migration = new AssetAnalysisV22060000000000();
     const runner = ds.createQueryRunner();
 
     try {
