@@ -12,7 +12,7 @@ import {
 } from '../assets/storage/storage-adapter';
 import { SystemLogService } from '../logs/system-log.service';
 import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
-import { AI_MANIFEST_PATH } from './farm/scan';
+import { AI_MANIFEST_PATH, AI_TRACE_PATH } from './farm/scan';
 import type { SignOp, SignResponse, SignResult } from './farm/sign';
 import type { TicketClaims } from './farm/ticket';
 
@@ -215,7 +215,8 @@ export class AnalysisSignService {
    * Throws unless the op is allowed for this farm job:
    * - `get source` (the clean original) only for scan.extract; scan.ai works from keyframes;
    * - `get artifact:<path>` for a safe path under the analysis prefix;
-   * - writes only under the analysis prefix, and scan.ai only its manifest (ai.json).
+   * - writes only under the analysis prefix, and scan.ai only its manifest (ai.json) or
+   *   its training-data trace (ai-trace.json).
    */
   authorizeOp(op: SignOp, job: AnalysisFarmJobEntity): void {
     if (op.op === 'get') {
@@ -238,9 +239,9 @@ export class AnalysisSignService {
     if (!this.isPathSafe(op.output)) {
       throw new ForbiddenException(`Output path is not safe: ${op.output}`);
     }
-    if (job.type === 'scan.ai' && op.output !== AI_MANIFEST_PATH) {
+    if (job.type === 'scan.ai' && op.output !== AI_MANIFEST_PATH && op.output !== AI_TRACE_PATH) {
       throw new ForbiddenException(
-        `scan.ai job may only write ${AI_MANIFEST_PATH}, not ${op.output}`,
+        `scan.ai job may only write ${AI_MANIFEST_PATH} or ${AI_TRACE_PATH}, not ${op.output}`,
       );
     }
   }
