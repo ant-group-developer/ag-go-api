@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
@@ -23,6 +23,14 @@ export class ProjectsController {
   list(@Query() query: ListProjectsQueryDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.projectsService.list(query, context.userId, context.userType);
+  }
+
+  @Get('owners')
+  @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
+  @ApiOperation({ summary: 'Owners (authors) of the projects the user can list' })
+  owners(@Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.projectsService.owners(context.userId, context.userType);
   }
 
   @Post()

@@ -102,6 +102,7 @@ beforeAll(async () => {
     fakeStorage as never,
     { get: (_k: string, def?: unknown) => def ?? 900 } as never,
     fakeLog as never,
+    { enrich: async <T>(rows: T[]) => rows } as never,
   );
 });
 
@@ -791,5 +792,186 @@ describe('FootageService.resolveAssets — decision 8', () => {
     ]);
 
     expect(result.items).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Footage page: folder tree, filters, sorting, paging, detail
+// ---------------------------------------------------------------------------
+
+/** Frame size and duration the analysis measured. */
+async function setAnalysedMedia(
+  analysisId: string,
+  media: { width: number; height: number; durationMs: number },
+): Promise<void> {
+  await ds.query(`UPDATE asset_analyses SET artifacts = $2, duration_ms = $3 WHERE id = $1`, [
+    analysisId,
+    JSON.stringify({ media: { width: media.width, height: media.height, fps: 25 } }),
+    media.durationMs,
+  ]);
+}
+
+async function renameFolder(folderId: string, name: string, sortOrder = 0): Promise<void> {
+  await ds.query(`UPDATE folders SET name = $2, sort_order = $3 WHERE id = $1`, [
+    folderId,
+    name,
+    sortOrder,
+  ]);
+}
+
+/** One analysed video of `projectId`. */
+async function insertVideo(
+  projectId: string,
+  media: { width: number; height: number; durationMs: number },
+): Promise<string> {
+  const assetId = await insertAsset();
+  const analysisId = await insertAnalysis(assetId);
+  await setAnalysedMedia(analysisId, media);
+  await linkAssetToProject(assetId, projectId);
+  return assetId;
+}
+
+describe('FootageService.getFolders — folder tree', () => {
+  it('hides deleted folders and lists parents first, then sort order and natural name', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const root = await insertFolder();
+    await grantFolder(root, userId);
+    const child10 = await insertFolder(root);
+    const child9 = await insertFolder(root);
+    const deleted = await insertFolder(root);
+    await renameFolder(root, 'Root');
+    await renameFolder(child10, 'Cảnh 10');
+    await renameFolder(child9, 'Cảnh 9');
+    await renameFolder(deleted, 'Cảnh 1');
+    await ds.query(`UPDATE folders SET is_active = false WHERE id = $1`, [deleted]);
+
+    const { folders } = await footageService.getFolders(userId, 'USER');
+
+    expect(folders.map((f) => f.id)).toEqual([root, child9, child10]);
+  });
+});
+
+describe('FootageService.search — filters, sorting and paging', () => {
+  it('filters by project, author and resolution class', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    await grantFolder(folderId, userId);
+    const projectA = await insertProject(folderId, { ownerUserId: 'author-a' });
+    const projectB = await insertProject(folderId, { ownerUserId: 'author-b' });
+    const uhd = await insertVideo(projectA, { width: 3840, height: 2160, durationMs: 5_000 });
+    const hd = await insertVideo(projectB, { width: 1920, height: 1080, durationMs: 9_000 });
+    const portraitHd = await insertVideo(projectB, { width: 720, height: 1280, durationMs: 1_000 });
+
+    const ids = async (query: Parameters<FootageService['search']>[0]) =>
+      (await footageService.search(query, userId, 'USER')).items.map((i) => i.assetId).sort();
+
+    expect(await ids({ projectIds: [projectA] })).toEqual([uhd]);
+    expect(await ids({ ownerUserIds: ['author-b'] })).toEqual([hd, portraitHd].sort());
+    expect(await ids({ resolutions: ['4k'] })).toEqual([uhd]);
+    // The short edge decides: 720×1280 is 720p.
+    expect(await ids({ resolutions: ['1080p', '720p'] })).toEqual([hd, portraitHd].sort());
+  });
+
+  it('sorts by the chosen field and pages with a total', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    await grantFolder(folderId, userId);
+    const projectId = await insertProject(folderId);
+    const short = await insertVideo(projectId, { width: 1280, height: 720, durationMs: 1_000 });
+    const medium = await insertVideo(projectId, { width: 1280, height: 720, durationMs: 5_000 });
+    const long = await insertVideo(projectId, { width: 1280, height: 720, durationMs: 9_000 });
+
+    const first = await footageService.search(
+      { sortBy: 'duration', sortOrder: 'asc', limit: 2, page: 1 },
+      userId,
+      'USER',
+    );
+    expect(first.items.map((i) => i.assetId)).toEqual([short, medium]);
+    expect(first.total).toBe(3);
+
+    const second = await footageService.search(
+      { sortBy: 'duration', sortOrder: 'asc', limit: 2, page: 2 },
+      userId,
+      'USER',
+    );
+    expect(second.items.map((i) => i.assetId)).toEqual([long]);
+    expect(second.total).toBe(3);
+    expect(second.nextCursor).toBeNull();
+
+    const desc = await footageService.search({ sortBy: 'duration' }, userId, 'USER');
+    expect(desc.items.map((i) => i.assetId)).toEqual([long, medium, short]);
+  });
+});
+
+describe('FootageService.getFacets — projects, authors, resolutions', () => {
+  it('counts each value, leaving out the facet’s own filter', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    await grantFolder(folderId, userId);
+    const projectA = await insertProject(folderId, { ownerUserId: 'author-a' });
+    const projectB = await insertProject(folderId, { ownerUserId: 'author-b' });
+    await insertVideo(projectA, { width: 3840, height: 2160, durationMs: 5_000 });
+    await insertVideo(projectB, { width: 1920, height: 1080, durationMs: 9_000 });
+    await insertVideo(projectB, { width: 1280, height: 720, durationMs: 1_000 });
+
+    const facets = await footageService.getFacets({ projectIds: [projectA] }, userId, 'USER');
+
+    // Picking project A keeps project B on offer…
+    expect(facets.projects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ value: projectA, count: 1 }),
+        expect.objectContaining({ value: projectB, count: 2 }),
+      ]),
+    );
+    expect(facets.projects.find((f) => f.value === projectA)?.label).toMatch(/^Project /);
+    // …while the other facets count project A only.
+    expect(facets.authors).toEqual([{ value: 'author-a', label: 'author-a', count: 1 }]);
+    expect(facets.resolutions).toEqual([{ value: '4k', count: 1 }]);
+  });
+});
+
+describe('FootageService.getAssetMedia — detail', () => {
+  it('returns the file metadata, visible projects and previews on offer', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    await grantFolder(folderId, userId);
+    const visible = await insertProject(folderId, { ownerUserId: 'author-a' });
+    const otherFolder = await insertFolder();
+    const hidden = await insertProject(otherFolder);
+    const assetId = await insertVideo(visible, { width: 1920, height: 1080, durationMs: 8_000 });
+    await linkAssetToProject(assetId, hidden);
+    await ds.query(
+      `INSERT INTO asset_variants
+         (id, asset_id, render_profile_id, variant_code, render_version,
+          storage_provider, bucket_name, storage_key, mime_type, file_size_bytes,
+          width, height, has_watermark, status)
+       VALUES ($1,$2,null,'preview_720p_wm',1,'r2','ag-go','variants/720.mp4','video/mp4',1000000,1280,720,true,'ready'),
+              ($3,$2,null,'preview_360p_wm',1,'r2','ag-go','variants/360.mp4','video/mp4',250000,640,360,true,'ready')`,
+      [randomUUID(), assetId, randomUUID()],
+    );
+
+    const media = await footageService.getAssetMedia(assetId, userId, 'USER');
+
+    expect(media.projects.map((p) => p.id)).toEqual([visible]);
+    expect(media.projects[0]).toMatchObject({ ownerUserId: 'author-a', folderId });
+    expect(media.file).toMatchObject({
+      filename: 'clip.mp4',
+      mimeType: 'video/mp4',
+      width: 1920,
+      height: 1080,
+      durationMs: 8_000,
+      frameRate: 25,
+    });
+    expect(media.variants.map((v) => v.variantCode)).toEqual([
+      'preview_360p_wm',
+      'preview_720p_wm',
+    ]);
+    expect(media.variants[1].bitrateBps).toBe(1_000_000);
+
+    const url = await footageService.getPreviewUrl(assetId, 'preview_360p_wm', userId, 'USER');
+    expect(url.url).toContain('variants/360.mp4');
+    await expect(
+      footageService.getPreviewUrl(assetId, 'original', userId, 'USER'),
+    ).rejects.toBeInstanceOf(NotFoundException);
   });
 });

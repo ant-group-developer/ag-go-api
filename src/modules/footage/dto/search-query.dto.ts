@@ -1,6 +1,33 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsArray, IsBoolean, IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
+
+/** Resolution classes by the short edge of the frame (see `RESOLUTION_CLASS_SQL`). */
+export const FOOTAGE_RESOLUTIONS = ['4k', '2k', '1080p', '720p', 'sd'] as const;
+export type FootageResolution = (typeof FOOTAGE_RESOLUTIONS)[number];
+
+export const FOOTAGE_SORT_FIELDS = [
+  'relevance',
+  'analyzedAt',
+  'quality',
+  'duration',
+  'resolution',
+  'name',
+] as const;
+export type FootageSortField = (typeof FOOTAGE_SORT_FIELDS)[number];
+
+export const FOOTAGE_SORT_ORDERS = ['asc', 'desc'] as const;
+export type FootageSortOrder = (typeof FOOTAGE_SORT_ORDERS)[number];
 
 export class FootageSearchQueryDto {
   @ApiPropertyOptional({ description: 'Free-text search query.' })
@@ -24,6 +51,34 @@ export class FootageSearchQueryDto {
   @IsUUID('all', { each: true })
   @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
   categoryIds?: string[];
+
+  @ApiPropertyOptional({ type: [String], description: 'Comma-separated project IDs.' })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('all', { each: true })
+  @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
+  projectIds?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Comma-separated user IDs of project owners (authors).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
+  ownerUserIds?: string[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    enum: FOOTAGE_RESOLUTIONS,
+    description: 'Comma-separated resolution classes (by the short edge of the frame).',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsIn(FOOTAGE_RESOLUTIONS, { each: true })
+  @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
+  resolutions?: FootageResolution[];
 
   @ApiPropertyOptional({ type: [String], description: 'Comma-separated tag values.' })
   @IsOptional()
@@ -99,4 +154,31 @@ export class FootageSearchQueryDto {
   @IsOptional()
   @IsString()
   cursor?: string;
+
+  @ApiPropertyOptional({ description: 'Page number (1-based); wins over `cursor`.' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Transform(({ value }) => (value !== undefined ? Number(value) : value))
+  page?: number;
+
+  @ApiPropertyOptional({
+    enum: FOOTAGE_SORT_FIELDS,
+    default: 'relevance',
+    description: 'relevance = text match (with `q`), quality and approval.',
+  })
+  @IsOptional()
+  @IsIn(FOOTAGE_SORT_FIELDS)
+  sortBy?: FootageSortField;
+
+  @ApiPropertyOptional({ enum: FOOTAGE_SORT_ORDERS, default: 'desc' })
+  @IsOptional()
+  @IsIn(FOOTAGE_SORT_ORDERS)
+  sortOrder?: FootageSortOrder;
+}
+
+export class FootagePreviewUrlQueryDto {
+  @ApiProperty({ description: 'Preview variant code (from `/footage/assets/:id/media`).' })
+  @IsString()
+  variantCode!: string;
 }

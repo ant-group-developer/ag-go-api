@@ -10,6 +10,7 @@ import { FolderEntity } from '../../database/entities/folder.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
+import { AccountModule } from '../account/account.module';
 import { StorageModule } from '../assets/storage/storage.module';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { LogsModule } from '../logs/logs.module';
@@ -19,6 +20,7 @@ import { FootageService } from './footage.service';
 
 @Module({
   imports: [
+    AccountModule,
     StorageModule,
     LogsModule,
     TypeOrmModule.forFeature([

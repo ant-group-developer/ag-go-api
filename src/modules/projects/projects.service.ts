@@ -2,7 +2,7 @@ import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/commo
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
-import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
+import { ActorEnrichmentService, type ActorUser } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
 import { ListResponseDto } from '../../common/dto/list-response.dto';
 import { OutboxService } from '../../common/outbox.service';
@@ -100,6 +100,11 @@ export class ProjectsService {
     }
     if (query.mine) {
       projectQuery.andWhere('project.ownerUserId = :ownerUserId', { ownerUserId: userId });
+    }
+    if (query.ownerUserIds?.length) {
+      projectQuery.andWhere('project.ownerUserId IN (:...ownerUserIds)', {
+        ownerUserIds: query.ownerUserIds,
+      });
     }
     if (query.evaluationStatuses?.length) {
       projectQuery.andWhere('project.evaluationStatus IN (:...evaluationStatuses)', {
@@ -210,6 +215,36 @@ export class ProjectsService {
       [{ id: 'ownerUserId', target: 'ownerUser' }],
     );
     return new ListResponseDto(enrichedItems, query.page, query.pageSize, total);
+  }
+
+  /** Owners (authors) of the projects the user can list, with how many projects each owns. */
+  async owners(
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<Array<{ id: string; projectCount: number; user: ActorUser | null }>> {
+    const folderIds = await this.folderAccessService.accessibleFolderIds(userId, userType);
+    if (folderIds.length === 0) {
+      return [];
+    }
+    const query = this.projectRepository
+      .createQueryBuilder('project')
+      .select('project.ownerUserId', 'id')
+      .addSelect('COUNT(*)', 'projectCount')
+      .where('project.folderId IN (:...folderIds)', { folderIds })
+      .groupBy('project.ownerUserId');
+    // Same visibility as the list: other users' drafts only for admins.
+    if (!isAdminUserType(userType)) {
+      query.andWhere("(project.evaluationStatus <> 'draft' OR project.ownerUserId = :userId)", {
+        userId,
+      });
+    }
+    const rows = (await query.getRawMany<{ id: string; projectCount: string }>()).map((row) => ({
+      id: row.id,
+      projectCount: Number(row.projectCount),
+    }));
+    return (await this.actorEnrichment.enrich(rows, [{ id: 'id', target: 'user' }])) as Array<
+      (typeof rows)[number] & { user: ActorUser | null }
+    >;
   }
 
   async findOne(id: string, userId: string, userType?: 'ADMIN' | 'USER') {

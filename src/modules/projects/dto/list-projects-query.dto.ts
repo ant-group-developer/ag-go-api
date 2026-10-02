@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsArray, IsBoolean, IsIn, IsOptional, IsUUID } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
 import { BaseKeywordQueryDto } from '../../../common/dto/base-keyword-query.dto';
 import {
   PROJECT_EVALUATION_STATUSES,
@@ -81,6 +81,16 @@ export class ListProjectsQueryDto extends BaseKeywordQueryDto {
   @IsArray()
   @IsIn(PROJECT_EVALUATION_STATUSES, { each: true })
   evaluationStatuses?: ProjectEvaluationStatus[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Comma-separated user IDs of project owners (authors); matches any.',
+  })
+  @Transform(({ value }) => (typeof value === 'string' ? value.split(',').filter(Boolean) : value))
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  ownerUserIds?: string[];
 
   @ApiPropertyOptional({ type: Boolean, description: 'Only projects owned by the current user.' })
   @Transform(({ value }) => value === true || value === 'true')
