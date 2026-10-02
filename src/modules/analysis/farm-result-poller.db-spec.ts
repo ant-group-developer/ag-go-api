@@ -305,7 +305,10 @@ function storageKey(assetId: string): string {
   return `projects/p1/originals/${assetId}/clip.mp4`;
 }
 
-async function insertAsset(id: string = randomUUID()): Promise<string> {
+async function insertAsset(
+  id: string = randomUUID(),
+  sourceMetadata: Record<string, unknown> = {},
+): Promise<string> {
   await ds.query(
     `INSERT INTO assets
        (id, asset_type, original_filename, mime_type, file_size_bytes,
@@ -323,7 +326,7 @@ async function insertAsset(id: string = randomUUID()): Promise<string> {
       storageKey(id),
       'ready',
       'local',
-      '{}',
+      JSON.stringify(sourceMetadata),
       'test',
     ],
   );
@@ -554,6 +557,60 @@ describe('extract completed (v2)', () => {
 
     await cleanupAsset(assetId2);
     await ds.query(`DELETE FROM analysis_batches WHERE id=$1`, [batchId]);
+  });
+});
+
+describe('extract read from a rendered preview', () => {
+  let assetId: string;
+
+  afterEach(async () => {
+    await cleanupAsset(assetId);
+  });
+
+  /** Ingests an extract manifest whose frame is `scanned`, for an original probed as `source`. */
+  async function ingest(
+    source: Record<string, unknown>,
+    scanned: { width: number; height: number },
+  ): Promise<Record<string, unknown>> {
+    assetId = await insertAsset(randomUUID(), source);
+    const analysisId = await insertAnalysis(assetId, { status: 'extracting' });
+    const extractJobId = randomUUID();
+    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract');
+    const manifest = makeExtractManifest(assetId, 1);
+    manifest.media = { ...manifest.media, ...scanned };
+    manifest.orientation = scanned.width < scanned.height ? 'portrait' : 'landscape';
+    manifest.proxy = null;
+    const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
+    fakeStorage.register(`${prefix}extract.json`, JSON.stringify(manifest));
+    await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
+    const [row] = await ds.query<Array<{ artifacts: Record<string, unknown> }>>(
+      `SELECT artifacts FROM asset_analyses WHERE id=$1`,
+      [analysisId],
+    );
+    return row.artifacts;
+  }
+
+  it('keeps the size of the original, not of the 720p preview it scanned', async () => {
+    const artifacts = await ingest({ width: 3840, height: 2160 }, { width: 1280, height: 720 });
+    expect(artifacts['media']).toMatchObject({ width: 3840, height: 2160 });
+    expect(artifacts['scanned_frame']).toEqual({ width: 1280, height: 720 });
+  });
+
+  it('turns the probed size of a rotated phone video to the scanned portrait frame', async () => {
+    // The original's stream is 1920×1080 with a 90° rotation; the preview is upright
+    const artifacts = await ingest({ width: 1920, height: 1080 }, { width: 720, height: 1280 });
+    expect(artifacts['media']).toMatchObject({ width: 1080, height: 1920 });
+  });
+
+  it('records no scanned frame when the original itself was scanned', async () => {
+    const artifacts = await ingest({ width: 1920, height: 1080 }, { width: 1920, height: 1080 });
+    expect(artifacts['media']).toMatchObject({ width: 1920, height: 1080 });
+    expect(artifacts['scanned_frame']).toBeUndefined();
+  });
+
+  it('keeps the scanned size when the original was never probed', async () => {
+    const artifacts = await ingest({}, { width: 1280, height: 720 });
+    expect(artifacts['media']).toMatchObject({ width: 1280, height: 720 });
   });
 });
 

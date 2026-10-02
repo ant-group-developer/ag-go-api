@@ -4,6 +4,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AnalysisFarmJobEntity } from '../../database/entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
+import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import {
   STORAGE_ADAPTER,
@@ -12,9 +13,17 @@ import {
 } from '../assets/storage/storage-adapter';
 import { SystemLogService } from '../logs/system-log.service';
 import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
+import { isPreviewVariantCode } from '../render/render-sizes';
 import { AI_MANIFEST_PATH, AI_TRACE_PATH } from './farm/scan';
 import type { SignOp, SignResponse, SignResult } from './farm/sign';
 import type { TicketClaims } from './farm/ticket';
+
+/**
+ * Short edges a clean preview may have to stand in for the original in scan.extract: from the
+ * worker's proxy height (720p) up to 1080p. Smaller would blur the keyframes, larger saves little.
+ */
+const SCAN_PREVIEW_SHORT_EDGE_MIN = 720;
+const SCAN_PREVIEW_SHORT_EDGE_MAX = 1080;
 
 /**
  * Handles URL signing for farm workers accessing the analysis prefix.
@@ -29,6 +38,8 @@ export class AnalysisSignService {
     private readonly analysisRepo: Repository<AssetAnalysisEntity>,
     @InjectRepository(AssetEntity)
     private readonly assetRepo: Repository<AssetEntity>,
+    @InjectRepository(AssetVariantEntity)
+    private readonly variantRepo: Repository<AssetVariantEntity>,
     @InjectRepository(AnalysisFarmJobEntity)
     private readonly farmJobRepo: Repository<AnalysisFarmJobEntity>,
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
@@ -161,6 +172,10 @@ export class AnalysisSignService {
     analysisPrefix: string,
   ): Promise<SignResult> {
     if (input === 'source') {
+      // A clean rendered preview spares the worker the original (often 4K) and its proxy encode
+      const preview = await this.signScanPreview(input, asset, ttl, expiresAt);
+      if (preview) return preview;
+
       // The original (unwatermarked) asset file
       const head = await this.storage.headObject(asset.originalStorageKey);
       const url = await this.storage.getPresignedGetUrl(
@@ -209,6 +224,67 @@ export class AnalysisSignService {
     }
 
     throw new ForbiddenException(`Unknown or disallowed get input: ${input}`);
+  }
+
+  /**
+   * The `source` read served from a rendered preview: the smallest ready, unwatermarked video
+   * preview with a 720p–1080p short edge that is smaller than the original. Same timeline and
+   * audio as the original, so scenes, keyframe times and silence still hold. Null when the asset
+   * has none (or its file is missing), and the original is served instead.
+   */
+  private async signScanPreview(
+    input: string,
+    asset: AssetEntity,
+    ttl: number,
+    expiresAt: string,
+  ): Promise<SignResult | null> {
+    if (asset.assetType !== 'video') return null;
+    const originalBytes = Number(asset.fileSizeBytes) || Number.POSITIVE_INFINITY;
+    const variants = await this.variantRepo.find({
+      where: { assetId: asset.id, status: 'ready', hasWatermark: false },
+    });
+    const preview = variants
+      .filter((variant) => {
+        if (!isPreviewVariantCode(variant.variantCode)) return false;
+        if (!variant.mimeType.startsWith('video/') || !variant.width || !variant.height) {
+          return false;
+        }
+        const shortEdge = Math.min(variant.width, variant.height);
+        const bytes = Number(variant.fileSizeBytes);
+        return (
+          shortEdge >= SCAN_PREVIEW_SHORT_EDGE_MIN &&
+          shortEdge <= SCAN_PREVIEW_SHORT_EDGE_MAX &&
+          bytes > 0 &&
+          bytes < originalBytes
+        );
+      })
+      .sort((a, b) => Number(a.fileSizeBytes) - Number(b.fileSizeBytes))[0];
+    if (!preview) return null;
+
+    const head = await this.storage.headObject(preview.storageKey);
+    if (!head) {
+      this.logger.warn(
+        `Preview ${preview.variantCode} of asset ${asset.id} is missing in storage, scanning the original`,
+      );
+      return null;
+    }
+    const url = await this.storage.getPresignedGetUrl(preview.storageKey, preview.mimeType, ttl);
+    return {
+      op: 'get',
+      input,
+      url,
+      expires_at: expiresAt,
+      size_bytes: head.sizeBytes,
+      content_type: preview.mimeType,
+      // A re-render keeps the variant row but changes the file
+      cache_key: `${preview.id}:${new Date(preview.updatedAt).getTime()}:${head.sizeBytes}`,
+      source: {
+        source_kind: 'preview',
+        watermarked: false,
+        start_ms: null,
+        end_ms: null,
+      },
+    };
   }
 
   /**

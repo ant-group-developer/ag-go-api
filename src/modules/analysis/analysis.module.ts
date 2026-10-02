@@ -4,6 +4,7 @@ import { AuthContextService } from '../../common/auth-context.service';
 import { AnalysisBatchEntity } from '../../database/entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from '../../database/entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
+import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
@@ -34,6 +35,7 @@ import { FarmTicketGuard } from './farm/farm-ticket.guard';
       AnalysisBatchEntity,
       AnalysisFarmJobEntity,
       AssetEntity,
+      AssetVariantEntity,
       ProjectEntity,
       ProjectMediaEntity,
       FolderClosureEntity,
