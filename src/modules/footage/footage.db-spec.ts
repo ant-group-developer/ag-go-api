@@ -904,7 +904,7 @@ describe('FootageService.search — filters, sorting and paging', () => {
 });
 
 describe('FootageService.search — sort by folder and project', () => {
-  it('sorts by the first visible project: folder path then name, or project name', async () => {
+  it('sorts by one visible project: first by folder path then name, or by name', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const root = await insertFolder();
     await grantFolder(root, userId);
@@ -923,24 +923,35 @@ describe('FootageService.search — sort by folder and project', () => {
     const alpha = await project(folder10, 'Alpha');
     const beta = await project(folder9, 'Beta');
     const gamma = await project(folder10, 'Gamma');
+    const kappa = await project(folder9, 'Kappa');
     const zeta = await project(folder9, 'Zeta');
     const media = { width: 1280, height: 720, durationMs: 1_000 };
     const inAlpha = await insertVideo(alpha, media);
     const inBeta = await insertVideo(beta, media);
-    const inZeta = await insertVideo(zeta, media);
-    // In two projects: sorts by its first one (Gamma by name, "Folder 9" by folder).
+    const inKappa = await insertVideo(kappa, media);
+    // In two projects: Gamma by name; by folder Zeta ("Folder 9"), not Gamma's name with
+    // Zeta's folder.
     const inGammaAndZeta = await insertVideo(gamma, media);
     await linkAssetToProject(inGammaAndZeta, zeta);
 
+    const search = (sortBy: 'folder' | 'project', sortOrder: 'asc' | 'desc') =>
+      footageService.search({ sortBy, sortOrder }, userId, 'USER');
     const order = async (sortBy: 'folder' | 'project', sortOrder: 'asc' | 'desc') =>
-      (await footageService.search({ sortBy, sortOrder }, userId, 'USER')).items.map(
-        (i) => i.assetId,
-      );
+      (await search(sortBy, sortOrder)).items.map((i) => i.assetId);
 
-    expect(await order('project', 'asc')).toEqual([inAlpha, inBeta, inGammaAndZeta, inZeta]);
-    expect(await order('project', 'desc')).toEqual([inZeta, inGammaAndZeta, inBeta, inAlpha]);
-    // Natural order: "Folder 9" before "Folder 10".
-    expect(await order('folder', 'asc')).toEqual([inBeta, inGammaAndZeta, inZeta, inAlpha]);
+    expect(await order('project', 'asc')).toEqual([inAlpha, inBeta, inGammaAndZeta, inKappa]);
+    expect(await order('project', 'desc')).toEqual([inKappa, inGammaAndZeta, inBeta, inAlpha]);
+    // Natural order: "Folder 9" before "Folder 10"; projects by name within a folder.
+    expect(await order('folder', 'asc')).toEqual([inBeta, inKappa, inGammaAndZeta, inAlpha]);
+    expect(await order('folder', 'desc')).toEqual([inAlpha, inGammaAndZeta, inKappa, inBeta]);
+
+    // A video lists its projects in the same order, the one it sorts by first.
+    const dual = (await search('folder', 'asc')).items.find((i) => i.assetId === inGammaAndZeta);
+    expect(dual).toMatchObject({
+      projectIds: [zeta, gamma],
+      projectNames: ['Zeta', 'Gamma'],
+      folderIds: [folder9, folder10],
+    });
   });
 });
 
