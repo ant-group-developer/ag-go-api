@@ -980,7 +980,9 @@ type ProjectRow = {
 /** WHERE clauses (and their parameters) of the search filters, over `aa`, `asst`, `p`. */
 function filterClauses(query: FootageFilters, queryParams: Record<string, unknown>): string[] {
   const where: string[] = ['aa.is_current = true', 'aa.description IS NOT NULL'];
-  if (query.usableOnly !== false) where.push('aa.usable = true');
+  const usability = query.usability ?? (query.usableOnly === false ? 'all' : 'usable');
+  if (usability === 'usable') where.push('aa.usable = true');
+  else if (usability === 'unusable') where.push('aa.usable IS NOT TRUE');
   if (query.q?.trim()) {
     where.push(textMatch());
     queryParams['search_q'] = query.q.trim();
