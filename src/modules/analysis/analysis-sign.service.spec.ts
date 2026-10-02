@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { Repository } from 'typeorm';
 import type { AnalysisFarmJobEntity } from '../../database/entities/analysis-farm-job.entity';
 import type { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
+import type { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import type { AssetEntity } from '../../database/entities/asset.entity';
 import type { StorageAdapter } from '../assets/storage/storage-adapter';
 import type { SystemLogService } from '../logs/system-log.service';
@@ -119,6 +120,7 @@ function makeService(
     analysis?: AssetAnalysisEntity | null;
     asset?: AssetEntity | null;
     farmJob?: AnalysisFarmJobEntity | null;
+    variants?: Partial<AssetVariantEntity>[];
     storage?: Partial<StorageAdapter>;
     ttl?: number;
   } = {},
@@ -131,6 +133,7 @@ function makeService(
     analysis = ANALYSIS,
     asset = ASSET,
     farmJob = EXTRACT_JOB,
+    variants = [],
     storage: storageOverrides = {},
     ttl = 3600,
   } = overrides;
@@ -142,6 +145,22 @@ function makeService(
   const assetRepo = {
     findOne: jest.fn().mockResolvedValue(asset),
   } as unknown as Repository<AssetEntity>;
+
+  // Mirrors the where clause of the service: ready, unwatermarked variants of the asset
+  const variantRepo = {
+    find: jest
+      .fn()
+      .mockImplementation(({ where }: { where: Partial<AssetVariantEntity> }) =>
+        Promise.resolve(
+          variants.filter(
+            (v) =>
+              v.assetId === where.assetId &&
+              v.status === where.status &&
+              v.hasWatermark === where.hasWatermark,
+          ),
+        ),
+      ),
+  } as unknown as Repository<AssetVariantEntity>;
 
   const farmJobRepo = {
     findOne: jest.fn().mockResolvedValue(farmJob),
@@ -177,6 +196,7 @@ function makeService(
   const service = new AnalysisSignService(
     analysisRepo,
     assetRepo,
+    variantRepo,
     farmJobRepo,
     defaultStorage,
     config,
@@ -216,6 +236,103 @@ describe('AnalysisSignService', () => {
       if (result.op === 'get') {
         expect(result.cache_key).toBe(`${ASSET_ID}:${ASSET.fileSizeBytes}`);
       }
+    });
+
+    describe('from a clean rendered preview', () => {
+      const BIG_ASSET = { ...ASSET, fileSizeBytes: String(800 * 1024 * 1024) } as AssetEntity;
+      const UPDATED_AT = new Date('2026-09-01T00:00:00Z');
+      function variant(overrides: Partial<AssetVariantEntity>): Partial<AssetVariantEntity> {
+        return {
+          id: randomUUID(),
+          assetId: ASSET_ID,
+          variantCode: 'preview_720p',
+          storageKey: `projects/proj-1/variants/${ASSET_ID}/preview_720p.mp4`,
+          mimeType: 'video/mp4',
+          fileSizeBytes: String(20 * 1024 * 1024),
+          width: 1280,
+          height: 720,
+          hasWatermark: false,
+          status: 'ready',
+          updatedAt: UPDATED_AT,
+          ...overrides,
+        };
+      }
+
+      it('serves the smallest clean 720p–1080p preview instead of the original', async () => {
+        const v720 = variant({});
+        const v1080 = variant({
+          variantCode: 'preview_1080p',
+          storageKey: 'k/preview_1080p.mp4',
+          width: 1920,
+          height: 1080,
+          fileSizeBytes: String(45 * 1024 * 1024),
+        });
+        const { service, storage } = makeService({
+          asset: BIG_ASSET,
+          variants: [v1080, v720],
+          storage: { headObject: jest.fn().mockResolvedValue({ sizeBytes: 20971520 }) },
+        });
+        const [result] = (await service.sign(CLAIMS, EXTRACT_JOB, [{ op: 'get', input: 'source' }]))
+          .results;
+        expect(storage.getPresignedGetUrl).toHaveBeenCalledWith(v720.storageKey, 'video/mp4', 3600);
+        if (result.op !== 'get') throw new Error('expected a get');
+        expect(result.source).toEqual({
+          source_kind: 'preview',
+          watermarked: false,
+          start_ms: null,
+          end_ms: null,
+        });
+        expect(result.size_bytes).toBe(20971520);
+        expect(result.cache_key).toBe(`${v720.id}:${UPDATED_AT.getTime()}:20971520`);
+      });
+
+      it.each([
+        ['watermarked', { hasWatermark: true }],
+        ['not ready', { status: 'processing' as const }],
+        ['below 720p', { variantCode: 'preview_540p', width: 960, height: 540 }],
+        ['above 1080p', { variantCode: 'preview_2160p', width: 3840, height: 2160 }],
+        ['an image', { mimeType: 'image/jpeg' }],
+        ['the thumbnail', { variantCode: 'thumbnail' }],
+        ['bigger than the original', { fileSizeBytes: String(900 * 1024 * 1024) }],
+      ])('keeps the original when the only preview is %s', async (_label, overrides) => {
+        const { service, storage } = makeService({
+          asset: BIG_ASSET,
+          variants: [variant(overrides)],
+        });
+        const [result] = (await service.sign(CLAIMS, EXTRACT_JOB, [{ op: 'get', input: 'source' }]))
+          .results;
+        expect(storage.getPresignedGetUrl).toHaveBeenCalledWith(
+          ASSET.originalStorageKey,
+          'video/mp4',
+          3600,
+        );
+        if (result.op === 'get') expect(result.source?.source_kind).toBe('original');
+      });
+
+      it('takes a portrait 720×1280 preview by its short edge', async () => {
+        const portrait = variant({ width: 720, height: 1280 });
+        const { service } = makeService({ asset: BIG_ASSET, variants: [portrait] });
+        const [result] = (await service.sign(CLAIMS, EXTRACT_JOB, [{ op: 'get', input: 'source' }]))
+          .results;
+        if (result.op === 'get') expect(result.source?.source_kind).toBe('preview');
+      });
+
+      it('falls back to the original when the preview file is missing', async () => {
+        const v720 = variant({});
+        const headObject = jest
+          .fn()
+          .mockImplementation((key: string) =>
+            Promise.resolve(key === v720.storageKey ? null : { sizeBytes: 1 }),
+          );
+        const { service } = makeService({
+          asset: BIG_ASSET,
+          variants: [v720],
+          storage: { headObject },
+        });
+        const [result] = (await service.sign(CLAIMS, EXTRACT_JOB, [{ op: 'get', input: 'source' }]))
+          .results;
+        if (result.op === 'get') expect(result.source?.source_kind).toBe('original');
+      });
     });
 
     it('rejects get source for scan.ai jobs', async () => {
