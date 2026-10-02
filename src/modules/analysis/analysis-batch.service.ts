@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { ActorEnrichmentService, type ActorUser } from '../../common/actor-enrichment.service';
 import {
   AnalysisBatchEntity,
   type AnalysisBatchKind,
@@ -34,6 +35,8 @@ export type AnalysisBatchView = {
   status: 'running' | 'paused' | 'cancelled' | 'completed';
   counts: AnalysisBatchCounts;
   createdBy: string | null;
+  /** Account user behind `createdBy` (name / email), null when unknown or unreachable. */
+  createdByUser?: ActorUser | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -66,6 +69,7 @@ export class AnalysisBatchService {
     private readonly pipeline: AnalysisPipelineService,
     private readonly farmClient: FarmClient,
     private readonly analysisLog: AnalysisLogService,
+    private readonly actorEnrichment: ActorEnrichmentService,
   ) {}
 
   /** A backfill batch, created in the caller's transaction before its analyses. */
@@ -117,7 +121,10 @@ export class AnalysisBatchService {
       .take(query.pageSize)
       .getManyAndCount();
     const counts = await this.countsFor(rows.map((row) => row.id));
-    const items = rows.map((row) => this.toView(row, counts.get(row.id) ?? EMPTY_COUNTS));
+    const items = await this.actorEnrichment.enrich(
+      rows.map((row) => this.toView(row, counts.get(row.id) ?? EMPTY_COUNTS)),
+      [{ id: 'createdBy', target: 'createdByUser' }],
+    );
     return { items, total, page: query.page, pageSize: query.pageSize };
   }
 
