@@ -154,16 +154,23 @@ const RESOLUTION_CLASS_SQL = `CASE
     ELSE 'sd'
   END`;
 
-/** Columns of a FootageVideo row; needs `aa` (current asset_analyses), `asst` (assets), `p`, `pm`, `visible_projects`. */
+/**
+ * Order of a video's projects (one row each, `project_media` is unique per project): folder
+ * path then project name, as the project list sorts by folder. The first one is what the
+ * folder sort reads.
+ */
+const PROJECT_ORDER_SQL = `fo.path_text COLLATE natural_sort NULLS LAST, p.name COLLATE natural_sort, p.id`;
+
+/** Columns of a FootageVideo row; needs `aa` (current asset_analyses), `asst` (assets), `p`, `pm`, `fo`, `visible_projects`. */
 function videoSelect(approvedExists: string): string {
   return `
     aa.asset_id                              AS "assetId",
     aa.id                                    AS "analysisId",
     asst.original_filename                   AS "name",
     asst.original_storage_key                AS "storageKey",
-    array_agg(DISTINCT p.id)                 AS "projectIds",
-    array_agg(DISTINCT p.name)               AS "projectNames",
-    array_agg(DISTINCT p.folder_id)          AS "folderIds",
+    array_agg(p.id ORDER BY ${PROJECT_ORDER_SQL})        AS "projectIds",
+    array_agg(p.name ORDER BY ${PROJECT_ORDER_SQL})      AS "projectNames",
+    array_agg(p.folder_id ORDER BY ${PROJECT_ORDER_SQL}) AS "folderIds",
     aa.duration_ms                           AS "durationMs",
     ${WIDTH_SQL}                             AS "width",
     ${HEIGHT_SQL}                            AS "height",
@@ -922,7 +929,8 @@ export class FootageService {
       name: row.name,
       projectIds: row.projectIds ?? [],
       projectNames: row.projectNames ?? [],
-      folderIds: row.folderIds ?? [],
+      // One per project, so a folder holding two of them shows up twice.
+      folderIds: [...new Set(row.folderIds ?? [])],
       durationMs: row.durationMs ?? 0,
       width: row.width ?? 0,
       height: row.height ?? 0,
@@ -1029,11 +1037,14 @@ const ASCENDING_BY_DEFAULT: FootageSortField[] = ['name', 'folder', 'project'];
 
 /**
  * ORDER BY of a grouped search page (needs the `score` column); ties go by score, then a stable
- * id. A video in several visible projects sorts by the first of them: folder path then project
- * name for `folder` (as the project list sorts by folder), project name for `project`.
+ * id. A video in several visible projects sorts by one of them: for `folder` the first by
+ * folder path then name (both keys from that same project, as the project list sorts by
+ * folder), for `project` the first by name.
  */
 function orderByClause(sortBy: FootageSortField = 'relevance', sortOrder?: FootageSortOrder) {
   const order = sortOrder ?? (ASCENDING_BY_DEFAULT.includes(sortBy) ? 'asc' : 'desc');
+  const firstProject = (column: string) =>
+    `(array_agg(${column} ORDER BY ${PROJECT_ORDER_SQL}))[1] COLLATE natural_sort`;
   const keys: Record<FootageSortField, string[]> = {
     relevance: ['score'],
     analyzedAt: ['aa.completed_at'],
@@ -1041,7 +1052,7 @@ function orderByClause(sortBy: FootageSortField = 'relevance', sortOrder?: Foota
     duration: ['aa.duration_ms'],
     resolution: [SHORT_EDGE_SQL],
     name: ['asst.original_filename COLLATE natural_sort'],
-    folder: ['MIN(fo.path_text COLLATE natural_sort)', 'MIN(p.name COLLATE natural_sort)'],
+    folder: [firstProject('fo.path_text'), firstProject('p.name')],
     project: ['MIN(p.name COLLATE natural_sort)'],
   };
   const direction = order === 'asc' ? 'ASC' : 'DESC';

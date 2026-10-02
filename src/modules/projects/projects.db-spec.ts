@@ -167,3 +167,29 @@ describe('ProjectsService — author filter', () => {
     ]);
   });
 });
+
+describe('ProjectsService — sort by folder', () => {
+  it('orders by folder path then project name, both in natural order', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folder9 = await insertGrantedFolder(userId);
+    const folder10 = await insertGrantedFolder(userId);
+    await ds.query(`UPDATE folders SET path_text = $2 WHERE id = $1`, [folder9, 'Folder 9']);
+    await ds.query(`UPDATE folders SET path_text = $2 WHERE id = $1`, [folder10, 'Folder 10']);
+    const project = async (folderId: string, name: string) => {
+      const id = await insertProject(folderId, 'author-a');
+      await ds.query(`UPDATE projects SET name = $2 WHERE id = $1`, [id, name]);
+      return id;
+    };
+    const alpha = await project(folder10, 'Alpha');
+    const tenth = await project(folder9, 'Project 10');
+    const ninth = await project(folder9, 'Project 9');
+
+    const order = async (sortOrder: 'asc' | 'desc') =>
+      (await service.list(listQuery({ sortBy: 'folder', sortOrder }), userId, 'USER')).items.map(
+        (p) => (p as unknown as { id: string }).id,
+      );
+
+    expect(await order('asc')).toEqual([ninth, tenth, alpha]);
+    expect(await order('desc')).toEqual([alpha, tenth, ninth]);
+  });
+});

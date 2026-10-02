@@ -125,10 +125,11 @@ export class ProjectsService {
 
     const sortOrder = query.sortOrder === 'asc' ? 'ASC' : 'DESC';
     if (query.sortBy === 'folder') {
-      // Sort by the folder's full path so subfolders stay grouped under their parent.
+      // Sort by the folder's full path so subfolders stay grouped under their parent; natural
+      // order so "Folder 9" comes before "Folder 10", as the folder tree and footage sort it.
       projectQuery
         .addSelect(
-          '(SELECT folder.path_text FROM folders folder WHERE folder.id = project.folder_id)',
+          '(SELECT folder.path_text FROM folders folder WHERE folder.id = project.folder_id) COLLATE natural_sort',
           'folder_path_sort',
         )
         .addSelect('project.name COLLATE natural_sort', 'name_sort')
