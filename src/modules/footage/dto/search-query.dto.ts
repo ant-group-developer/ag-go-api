@@ -23,6 +23,8 @@ export const FOOTAGE_SORT_FIELDS = [
   'duration',
   'resolution',
   'name',
+  'folder',
+  'project',
 ] as const;
 export type FootageSortField = (typeof FOOTAGE_SORT_FIELDS)[number];
 
@@ -165,7 +167,9 @@ export class FootageSearchQueryDto {
   @ApiPropertyOptional({
     enum: FOOTAGE_SORT_FIELDS,
     default: 'relevance',
-    description: 'relevance = text match (with `q`), quality and approval.',
+    description:
+      'relevance = text match (with `q`), quality and approval; folder / project = the first ' +
+      'visible project of the video (by folder path, by name).',
   })
   @IsOptional()
   @IsIn(FOOTAGE_SORT_FIELDS)

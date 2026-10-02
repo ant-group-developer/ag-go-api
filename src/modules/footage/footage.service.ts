@@ -176,13 +176,17 @@ function videoSelect(approvedExists: string): string {
     aa.keyframes                             AS "keyframes"`;
 }
 
-/** Joins every video row is read through: visible, non-rejected project links in the chosen folders. */
+/**
+ * Joins every video row is read through: visible, non-rejected project links in the chosen
+ * folders (`fo` is the project's folder).
+ */
 const VIDEO_FROM = `
   FROM asset_analyses aa
   JOIN assets asst ON asst.id = aa.asset_id
   JOIN project_media pm ON pm.asset_id = aa.asset_id AND pm.evaluation_status <> 'rejected'
   JOIN projects p ON p.id = pm.project_id AND p.folder_id = ANY(:scope_folder_ids)
-  JOIN visible_projects vp ON vp.id = p.id`;
+  JOIN visible_projects vp ON vp.id = p.id
+  LEFT JOIN folders fo ON fo.id = p.folder_id`;
 
 @Injectable()
 export class FootageService {
@@ -1020,18 +1024,32 @@ function filterClauses(query: FootageFilters, queryParams: Record<string, unknow
   return where;
 }
 
-/** ORDER BY of a search page (needs the `score` column); ties go by score, then a stable id. */
+/** Sort fields that read best A → Z when no order is given. */
+const ASCENDING_BY_DEFAULT: FootageSortField[] = ['name', 'folder', 'project'];
+
+/**
+ * ORDER BY of a grouped search page (needs the `score` column); ties go by score, then a stable
+ * id. A video in several visible projects sorts by the first of them: folder path then project
+ * name for `folder` (as the project list sorts by folder), project name for `project`.
+ */
 function orderByClause(sortBy: FootageSortField = 'relevance', sortOrder?: FootageSortOrder) {
-  const order = sortOrder ?? (sortBy === 'name' ? 'asc' : 'desc');
-  const column: Record<FootageSortField, string> = {
-    relevance: 'score',
-    analyzedAt: 'aa.completed_at',
-    quality: 'aa.quality',
-    duration: 'aa.duration_ms',
-    resolution: SHORT_EDGE_SQL,
-    name: 'asst.original_filename COLLATE natural_sort',
+  const order = sortOrder ?? (ASCENDING_BY_DEFAULT.includes(sortBy) ? 'asc' : 'desc');
+  const keys: Record<FootageSortField, string[]> = {
+    relevance: ['score'],
+    analyzedAt: ['aa.completed_at'],
+    quality: ['aa.quality'],
+    duration: ['aa.duration_ms'],
+    resolution: [SHORT_EDGE_SQL],
+    name: ['asst.original_filename COLLATE natural_sort'],
+    folder: ['MIN(fo.path_text COLLATE natural_sort)', 'MIN(p.name COLLATE natural_sort)'],
+    project: ['MIN(p.name COLLATE natural_sort)'],
   };
-  return `${column[sortBy]} ${order === 'asc' ? 'ASC' : 'DESC'} NULLS LAST, score DESC, aa.asset_id`;
+  const direction = order === 'asc' ? 'ASC' : 'DESC';
+  return [
+    ...keys[sortBy].map((key) => `${key} ${direction} NULLS LAST`),
+    'score DESC',
+    'aa.asset_id',
+  ].join(', ');
 }
 
 /** Metadata of the original file: probed when processed, completed by the analysis. */

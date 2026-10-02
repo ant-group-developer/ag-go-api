@@ -903,6 +903,47 @@ describe('FootageService.search — filters, sorting and paging', () => {
   });
 });
 
+describe('FootageService.search — sort by folder and project', () => {
+  it('sorts by the first visible project: folder path then name, or project name', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const root = await insertFolder();
+    await grantFolder(root, userId);
+    const folder9 = await insertFolder(root);
+    const folder10 = await insertFolder(root);
+    await ds.query(`UPDATE folders SET path_text = $2 WHERE id = $1`, [folder9, 'Root / Folder 9']);
+    await ds.query(`UPDATE folders SET path_text = $2 WHERE id = $1`, [
+      folder10,
+      'Root / Folder 10',
+    ]);
+    const project = async (folderId: string, name: string) => {
+      const id = await insertProject(folderId);
+      await ds.query(`UPDATE projects SET name = $2 WHERE id = $1`, [id, name]);
+      return id;
+    };
+    const alpha = await project(folder10, 'Alpha');
+    const beta = await project(folder9, 'Beta');
+    const gamma = await project(folder10, 'Gamma');
+    const zeta = await project(folder9, 'Zeta');
+    const media = { width: 1280, height: 720, durationMs: 1_000 };
+    const inAlpha = await insertVideo(alpha, media);
+    const inBeta = await insertVideo(beta, media);
+    const inZeta = await insertVideo(zeta, media);
+    // In two projects: sorts by its first one (Gamma by name, "Folder 9" by folder).
+    const inGammaAndZeta = await insertVideo(gamma, media);
+    await linkAssetToProject(inGammaAndZeta, zeta);
+
+    const order = async (sortBy: 'folder' | 'project', sortOrder: 'asc' | 'desc') =>
+      (await footageService.search({ sortBy, sortOrder }, userId, 'USER')).items.map(
+        (i) => i.assetId,
+      );
+
+    expect(await order('project', 'asc')).toEqual([inAlpha, inBeta, inGammaAndZeta, inZeta]);
+    expect(await order('project', 'desc')).toEqual([inZeta, inGammaAndZeta, inBeta, inAlpha]);
+    // Natural order: "Folder 9" before "Folder 10".
+    expect(await order('folder', 'asc')).toEqual([inBeta, inGammaAndZeta, inZeta, inAlpha]);
+  });
+});
+
 describe('FootageService.getFacets — projects, authors, resolutions', () => {
   it('counts each value, leaving out the facet’s own filter', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
