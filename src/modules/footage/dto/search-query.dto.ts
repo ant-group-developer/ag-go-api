@@ -28,6 +28,10 @@ export const FOOTAGE_SORT_FIELDS = [
 ] as const;
 export type FootageSortField = (typeof FOOTAGE_SORT_FIELDS)[number];
 
+/** Which videos to list by the AI verdict "usable"; `all` lists both. */
+export const FOOTAGE_USABILITIES = ['usable', 'unusable', 'all'] as const;
+export type FootageUsability = (typeof FOOTAGE_USABILITIES)[number];
+
 export const FOOTAGE_SORT_ORDERS = ['asc', 'desc'] as const;
 export type FootageSortOrder = (typeof FOOTAGE_SORT_ORDERS)[number];
 
@@ -143,6 +147,14 @@ export class FootageSearchQueryDto {
     return true;
   })
   usableOnly?: boolean;
+
+  @ApiPropertyOptional({
+    enum: FOOTAGE_USABILITIES,
+    description: 'Usable videos, unusable ones or all; wins over `usableOnly` (default usable).',
+  })
+  @IsOptional()
+  @IsIn(FOOTAGE_USABILITIES)
+  usability?: FootageUsability;
 
   @ApiPropertyOptional({ description: 'Max items per page (default 40, max 100).', default: 40 })
   @IsOptional()

@@ -872,6 +872,31 @@ describe('FootageService.search — filters, sorting and paging', () => {
     expect(await ids({ resolutions: ['1080p', '720p'] })).toEqual([hd, portraitHd].sort());
   });
 
+  it('filters by usability: usable by default, unusable or all on request', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    await grantFolder(folderId, userId);
+    const projectId = await insertProject(folderId);
+    const usable = await insertAsset();
+    await insertAnalysis(usable, true, { usable: true });
+    await linkAssetToProject(usable, projectId);
+    const unusable = await insertAsset();
+    await insertAnalysis(unusable, true, { usable: false });
+    await linkAssetToProject(unusable, projectId);
+
+    const ids = async (query: Parameters<FootageService['search']>[0]) =>
+      (await footageService.search({ projectIds: [projectId], ...query }, userId, 'USER')).items
+        .map((i) => i.assetId)
+        .sort();
+
+    expect(await ids({})).toEqual([usable]);
+    expect(await ids({ usability: 'unusable' })).toEqual([unusable]);
+    expect(await ids({ usability: 'all' })).toEqual([usable, unusable].sort());
+    expect(await ids({ usableOnly: false })).toEqual([usable, unusable].sort());
+    // `usability` wins over the older `usableOnly`.
+    expect(await ids({ usableOnly: true, usability: 'unusable' })).toEqual([unusable]);
+  });
+
   it('sorts by the chosen field and pages with a total', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const folderId = await insertFolder();
