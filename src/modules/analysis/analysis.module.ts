@@ -11,6 +11,7 @@ import { ProjectMediaEntity } from '../../database/entities/project-media.entity
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { SystemLogEntity } from '../../database/entities/system-log.entity';
 import { QueueModule } from '../../infra/queue/queue.module';
+import { AccountModule } from '../account/account.module';
 import { StorageModule } from '../assets/storage/storage.module';
 import { LogsModule } from '../logs/logs.module';
 import { AnalysisBatchService } from './analysis-batch.service';
@@ -27,6 +28,7 @@ import { FarmTicketGuard } from './farm/farm-ticket.guard';
 
 @Module({
   imports: [
+    AccountModule,
     StorageModule,
     forwardRef(() => QueueModule),
     LogsModule,

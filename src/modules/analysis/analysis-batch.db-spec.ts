@@ -7,6 +7,7 @@ import type { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
+import type { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { OutboxService } from '../../common/outbox.service';
 import { AppDataSource } from '../../database/data-source';
 import { AnalysisBatchEntity } from '../../database/entities/analysis-batch.entity';
@@ -194,6 +195,7 @@ beforeAll(async () => {
     pipeline,
     farm as unknown as FarmClient,
     analysisLog,
+    { enrich: (rows: unknown[]) => Promise.resolve(rows) } as unknown as ActorEnrichmentService,
   );
 });
 
