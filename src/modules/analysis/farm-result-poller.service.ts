@@ -187,10 +187,15 @@ export class FarmResultPollerService implements OnModuleDestroy {
     }
 
     const { technical } = manifest;
+    const frame = originalFrame(asset, manifest.media);
     const artifacts: Record<string, unknown> = {
-      media: manifest.media,
+      media: { ...manifest.media, ...frame },
       scenes: manifest.scenes.length,
     };
+    // The worker read a rendered preview, not the original: keep the size it actually scanned
+    if (frame.width !== manifest.media.width || frame.height !== manifest.media.height) {
+      artifacts['scanned_frame'] = { width: manifest.media.width, height: manifest.media.height };
+    }
     if (manifest.proxy) artifacts['proxy'] = manifest.proxy;
     if (manifest.contact_sheet) artifacts['contact_sheet'] = manifest.contact_sheet;
     // A paused analysis stays paused (resume sends the description step); otherwise it is extracted.
@@ -384,6 +389,33 @@ export class FarmResultPollerService implements OnModuleDestroy {
     const prefix = `${assetVariantsPrefix(asset.originalStorageKey, asset.id)}analysis/${analysis.id}/`;
     return { analysis, asset, prefix };
   }
+}
+
+/**
+ * Displayed size of the original. scan.extract may have read a clean rendered preview (same
+ * aspect, smaller), so the size probed when the original was processed is used, turned to the
+ * scanned orientation since that probe is taken before rotation. Without it the scanned size stays.
+ */
+function originalFrame(
+  asset: AssetEntity,
+  media: ExtractManifest['media'],
+): { width: number; height: number } {
+  const { width, height } = (asset.sourceMetadata ?? {}) as { width?: unknown; height?: unknown };
+  if (
+    typeof width !== 'number' ||
+    typeof height !== 'number' ||
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    return { width: media.width, height: media.height };
+  }
+  const long = Math.max(width, height);
+  const short = Math.min(width, height);
+  if (media.width > media.height) return { width: long, height: short };
+  if (media.width < media.height) return { width: short, height: long };
+  return { width, height };
 }
 
 function errorMessage(error: unknown): string {
