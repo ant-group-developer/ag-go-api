@@ -13,10 +13,12 @@ export interface StorageAdapter {
     contentType: string,
     expiresInSeconds: number,
   ): Promise<string>;
+  /** `downloadFilename` makes the browser save the object under that name instead of showing it. */
   getPresignedGetUrl(
     storageKey: string,
     contentType: string,
     expiresInSeconds: number,
+    downloadFilename?: string,
   ): Promise<string>;
   headObject(storageKey: string): Promise<ObjectHead | null>;
   readObject(storageKey: string): Readable;
