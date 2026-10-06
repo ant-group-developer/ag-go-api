@@ -24,7 +24,7 @@ import { DownloadQueueService } from '../../infra/queue/download-queue.service';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { FolderAccessService } from '../folders/folder-access.service';
 import { CreateDownloadDto } from './dto/create-download.dto';
-import { findRenderedVariant } from './rendered-variant';
+import { findRenderedVariant, renderedFilename } from './rendered-variant';
 
 type RequestMetadata = {
   ipAddress?: string;
@@ -188,7 +188,12 @@ export class DownloadsService {
     let url: string | null = null;
     if (job.status === 'completed' && job.zipStorageKey) {
       const ttl = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
-      url = await this.storage.getPresignedGetUrl(job.zipStorageKey, 'application/zip', ttl);
+      url = await this.storage.getPresignedGetUrl(
+        job.zipStorageKey,
+        'application/zip',
+        ttl,
+        await this.zipFilename(job),
+      );
     }
     const [enrichedJob] = await this.actorEnrichment.enrich(
       [job as unknown as Record<string, unknown>],
@@ -229,8 +234,12 @@ export class DownloadsService {
             size: asset.fileSizeBytes,
           }
         : await this.resolveRenderedVariant(asset.id);
+    const filename =
+      dto.downloadType === 'original'
+        ? asset.originalFilename
+        : renderedFilename(asset.originalFilename, target.mimeType);
     const ttl = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
-    const url = await this.storage.getPresignedGetUrl(target.key, target.mimeType, ttl);
+    const url = await this.storage.getPresignedGetUrl(target.key, target.mimeType, ttl, filename);
     const log = await this.recordLog({
       userId,
       dto,
@@ -248,6 +257,15 @@ export class DownloadsService {
       fileSizeBytes: target.size,
       mimeType: target.mimeType,
     };
+  }
+
+  /** The saved archive is named after its project when it has one. */
+  private async zipFilename(job: DownloadJobEntity): Promise<string> {
+    const project = job.projectId
+      ? await this.projectRepository.findOne({ where: { id: job.projectId } })
+      : null;
+    const base = project?.name.trim().replace(/[\\/:*?"<>|]+/g, '_') || `download-${job.id}`;
+    return `${base}.zip`;
   }
 
   private async resolveMedia(dto: CreateDownloadDto): Promise<ProjectMediaEntity[]> {

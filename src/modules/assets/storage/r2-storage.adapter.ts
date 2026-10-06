@@ -63,6 +63,7 @@ export class R2StorageAdapter implements StorageAdapter {
     storageKey: string,
     contentType: string,
     expiresInSeconds: number,
+    downloadFilename?: string,
   ): Promise<string> {
     return getSignedUrl(
       this.client,
@@ -70,7 +71,9 @@ export class R2StorageAdapter implements StorageAdapter {
         Bucket: this.bucket,
         Key: storageKey,
         ResponseContentType: contentType,
-        ResponseContentDisposition: 'inline',
+        ResponseContentDisposition: downloadFilename
+          ? attachmentDisposition(downloadFilename)
+          : 'inline',
       }),
       { expiresIn: expiresInSeconds },
     );
@@ -359,4 +362,10 @@ export class R2StorageAdapter implements StorageAdapter {
     }
     return false;
   }
+}
+
+/** RFC 6266 attachment header: an ASCII fallback name plus the UTF-8 original. */
+function attachmentDisposition(filename: string): string {
+  const fallback = filename.replace(/[^\x20-\x7e]|["\\]/g, '_');
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
 }
