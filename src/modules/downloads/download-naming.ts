@@ -1,3 +1,20 @@
+/**
+ * Every packed ZIP lives under this prefix, so one R2 lifecycle rule
+ * (`yarn r2:download-lifecycle`) can delete them once their links have expired.
+ */
+export const DOWNLOAD_ZIP_PREFIX = 'downloads/';
+
+/**
+ * How long a packed ZIP can still be saved. Each poll signs a fresh link, so this only bounds
+ * how late a hidden tab or a reopened browser may pick the file up; it stays under the lifecycle
+ * rule's one day so a link never points at a deleted object.
+ */
+export const DOWNLOAD_ZIP_TTL_HOURS = 12;
+
+export function downloadZipStorageKey(userId: string, downloadJobId: string): string {
+  return `${DOWNLOAD_ZIP_PREFIX}${userId}/${downloadJobId}.zip`;
+}
+
 /** Time zone the download timestamp in archive names is written in. */
 const DOWNLOAD_TIME_ZONE = 'Asia/Ho_Chi_Minh';
 

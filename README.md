@@ -181,6 +181,31 @@ yarn worker:io
 yarn worker:outbox
 ```
 
+## Dọn file ZIP tải xuống trên R2
+
+Mọi ZIP do worker đóng gói nằm dưới prefix `downloads/` (`downloads/{userId}/{jobId}.zip`).
+ZIP chỉ tải được trong 12 giờ sau khi đóng gói (`DOWNLOAD_ZIP_TTL_HOURS`; hết hạn thì job chuyển
+`expired`). File không còn dùng sau đó nên được xóa bằng
+lifecycle rule của R2:
+
+```bash
+yarn r2:download-lifecycle --dry-run   # xem rule sẽ ghi
+yarn r2:download-lifecycle             # xóa sau 1 ngày (mặc định)
+yarn r2:download-lifecycle --days 3
+```
+
+Trong container production: `docker compose run --rm api node dist/scripts/r2-download-lifecycle.js`.
+
+Script giữ nguyên các rule khác của bucket, chỉ thay rule `ag-go-expire-download-zips`
+(xóa object sau N ngày, hủy multipart upload dở sau 1 ngày). Đổi cấu hình bucket cần R2 API
+token quyền **Admin Read & Write**; token chỉ có quyền Object Read & Write sẽ bị từ chối. Khi
+đó đặt tạm token admin vào `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY` lúc chạy script, hoặc tạo
+rule trên dashboard: R2 → bucket → Settings → Object lifecycle rules → Add rule, prefix
+`downloads/`, xóa object sau 1 ngày.
+
+ZIP tạo trước thay đổi này nằm ở `projects/{projectId}/downloads/` và không khớp rule; chúng
+chỉ bị xóa khi project bị xóa.
+
 ## CI/CD
 
 Các workflow trong `.github/workflows` kiểm tra format, typecheck, lint, test,
