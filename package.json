@@ -19,6 +19,7 @@
     "seed:perf": "ts-node --files src/scripts/seed-perf.ts",
     "openapi:generate": "ts-node --files src/scripts/generate-openapi.ts",
     "openapi:validate": "ts-node --files src/scripts/validate-openapi.ts",
+    "r2:download-lifecycle": "ts-node --files src/scripts/r2-download-lifecycle.ts",
     "worker": "ts-node --files src/workers/worker.ts",
     "worker:outbox": "ts-node --files src/workers/worker.ts outbox",
     "worker:media": "ts-node --files src/workers/worker.ts media",
