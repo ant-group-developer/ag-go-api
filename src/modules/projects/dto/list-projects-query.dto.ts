@@ -7,7 +7,14 @@ import {
   type ProjectEvaluationStatus,
 } from '../../media/evaluation-status';
 
-export const PROJECT_SORT_FIELDS = ['name', 'folder', 'createdAt', 'updatedAt'] as const;
+/** `relevance` ranks keyword matches, closest first; without a keyword it sorts newest first. */
+export const PROJECT_SORT_FIELDS = [
+  'relevance',
+  'name',
+  'folder',
+  'createdAt',
+  'updatedAt',
+] as const;
 export type ProjectSortField = (typeof PROJECT_SORT_FIELDS)[number];
 
 export const SORT_ORDERS = ['asc', 'desc'] as const;

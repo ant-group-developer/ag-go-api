@@ -25,6 +25,7 @@ import {
   deleteAssetsAndRefreshBatches,
   planProjectAssetCleanup,
 } from './project-asset-cleanup';
+import { buildProjectSearch } from './project-search';
 
 @Injectable()
 export class ProjectsService {
@@ -67,11 +68,9 @@ export class ProjectsService {
       );
     }
 
-    if (query.normalizedKeyword) {
-      projectQuery.andWhere(
-        "(LOWER(project.name) LIKE :keyword OR LOWER(COALESCE(project.description, '')) LIKE :keyword)",
-        { keyword: `%${query.normalizedKeyword.toLocaleLowerCase('vi-VN')}%` },
-      );
+    const search = query.normalizedKeyword ? buildProjectSearch(query.normalizedKeyword) : null;
+    if (search) {
+      projectQuery.andWhere(search.where, search.params);
     }
     const filterFolderIds = [
       ...new Set([...(query.folderIds ?? []), ...(query.folderId ? [query.folderId] : [])]),
@@ -124,7 +123,13 @@ export class ProjectsService {
     }
 
     const sortOrder = query.sortOrder === 'asc' ? 'ASC' : 'DESC';
-    if (query.sortBy === 'folder') {
+    if (query.sortBy === 'relevance') {
+      // Closest matches first; without a keyword there is nothing to rank, so newest first.
+      if (search) {
+        projectQuery.addSelect(search.score, 'search_score').orderBy('search_score', 'DESC');
+      }
+      projectQuery.addOrderBy('project.updatedAt', 'DESC');
+    } else if (query.sortBy === 'folder') {
       // Sort by the folder's full path so subfolders stay grouped under their parent; natural
       // order so "Folder 9" comes before "Folder 10", as the folder tree and footage sort it.
       projectQuery
@@ -199,6 +204,7 @@ export class ProjectsService {
       const folder = folderById.get(project.folderId);
 
       return Object.assign(project, {
+        folderName: folder?.name ?? '',
         folderPath: folder?.pathText ?? '',
         countryName: country?.name ?? null,
         countryFlagUrl: country?.flagUrl ?? null,
@@ -280,6 +286,7 @@ export class ProjectsService {
       [
         Object.assign(project, {
           renderedBytes,
+          folderName: folder?.name ?? '',
           folderPath: folder?.pathText ?? '',
           countryName: country?.name ?? null,
           countryFlagUrl: country?.flagUrl ?? null,
