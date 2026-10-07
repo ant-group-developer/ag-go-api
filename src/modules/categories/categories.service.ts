@@ -35,7 +35,7 @@ export class CategoriesService {
     return query.orderBy('category.sortOrder', 'ASC').addOrderBy('name_sort', 'ASC').getMany();
   }
 
-  async create(dto: CreateCategoryDto) {
+  async create(dto: CreateCategoryDto, userId: string) {
     await this.assertUnique(dto.name, dto.slug);
     return this.categoryRepository.save(
       this.categoryRepository.create({
@@ -44,6 +44,7 @@ export class CategoriesService {
         slug: dto.slug.trim().toLowerCase(),
         description: dto.description ?? null,
         sortOrder: dto.sortOrder ?? 0,
+        createdBy: userId,
       }),
     );
   }

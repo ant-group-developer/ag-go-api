@@ -72,6 +72,8 @@ import { AssetAnalysisV22060000000000 } from './migrations/2060000000000-asset-a
 import { DownloadProjectsScope2070000000000 } from './migrations/2070000000000-download-projects-scope';
 import { ProjectSearchText2080000000000 } from './migrations/2080000000000-project-search-text';
 import { CategoryAccessGrants2090000000000 } from './migrations/2090000000000-category-access-grants';
+import { CategoryCreatedBy2100000000000 } from './migrations/2100000000000-category-created-by';
+import { TagTimestamps2110000000000 } from './migrations/2110000000000-tag-timestamps';
 
 loadEnv();
 
@@ -163,6 +165,8 @@ export const AppDataSource = new DataSource({
     DownloadProjectsScope2070000000000,
     ProjectSearchText2080000000000,
     CategoryAccessGrants2090000000000,
+    CategoryCreatedBy2100000000000,
+    TagTimestamps2110000000000,
   ],
   synchronize: false,
 });
