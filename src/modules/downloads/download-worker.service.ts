@@ -1,9 +1,9 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectRepository } from '@nestjs/typeorm';
+import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { Job, Worker } from 'bullmq';
 import Redis from 'ioredis';
-import { In, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { DownloadJobItemEntity } from '../../database/entities/download-job-item.entity';
@@ -12,6 +12,9 @@ import { RenderProfileEntity } from '../../database/entities/render-profile.enti
 import type { DownloadQueueJobData } from '../../infra/queue/download-queue.service';
 import { DOWNLOAD_JOB, DOWNLOAD_QUEUE } from '../../infra/queue/queue.constants';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
+import { cancellableBody, DownloadCancelledError } from './download-cancellation';
+import { distinctProjects, loadDownloadJobProjects } from './download-job-projects';
+import { projectFolderName, ZipEntryNamer } from './download-naming';
 import { findRenderedVariant, renderedFilename } from './rendered-variant';
 import { createZipStream, type ZipStreamEntry } from './zip-stream';
 
@@ -25,6 +28,7 @@ export class DownloadWorkerService implements OnModuleDestroy {
 
   constructor(
     private readonly config: ConfigService,
+    @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(DownloadJobEntity)
     private readonly jobRepository: Repository<DownloadJobEntity>,
     @InjectRepository(DownloadJobItemEntity)
@@ -84,6 +88,10 @@ export class DownloadWorkerService implements OnModuleDestroy {
         where: { downloadJobId: download.id, status: In(['queued', 'added']) },
         order: { createdAt: 'ASC' },
       });
+      // An archive of several projects keeps each one in its own `[Folder] - [Project]/`.
+      const projectsByMedia = await loadDownloadJobProjects(this.dataSource, download.id);
+      const spansProjects = distinctProjects(projectsByMedia).length > 1;
+      const namer = new ZipEntryNamer();
       // Resolve every source first so a missing asset or unready variant fails the job
       // before anything is uploaded.
       const sources: ZipSource[] = [];
@@ -106,42 +114,74 @@ export class DownloadWorkerService implements OnModuleDestroy {
           key = variant.storageKey;
           filename = renderedFilename(asset.originalFilename, variant.mimeType);
         }
-        sources.push({ itemId: item.id, key, name: `${item.projectMediaId}-${filename}` });
+        const project = projectsByMedia.get(item.projectMediaId);
+        const folder =
+          spansProjects && project ? projectFolderName(project.folderName, project.name) : null;
+        sources.push({ itemId: item.id, key, name: namer.next(folder, filename) });
       }
       const storageKey = download.projectId
         ? `projects/${download.projectId}/downloads/${download.externalUserId}/${download.id}.zip`
         : `downloads/${download.externalUserId}/${download.id}.zip`;
       // The archive streams straight into a multipart upload, one source object at a time,
       // so memory stays bounded by the upload's part buffers whatever the archive size.
+      // A cancel while packing errors the stream, which aborts the multipart upload.
       const head = await this.storage.putObject(
         storageKey,
         createZipStream(this.zipEntries(download.id, sources)),
         'application/zip',
       );
-      await this.jobRepository.update(download.id, {
-        status: 'completed',
-        zipBucket: this.config.getOrThrow<string>('R2_BUCKET'),
-        zipStorageKey: storageKey,
-        zipSizeBytes: String(head.sizeBytes),
-        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-      });
+      // Only a job still processing becomes completed; one cancelled at the last moment stays so.
+      await this.jobRepository.update(
+        { id: download.id, status: 'processing' },
+        {
+          status: 'completed',
+          zipBucket: this.config.getOrThrow<string>('R2_BUCKET'),
+          zipStorageKey: storageKey,
+          zipSizeBytes: String(head.sizeBytes),
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+      );
     } catch (error) {
+      // The user stopped it: nothing failed and there is nothing to retry.
+      if (error instanceof DownloadCancelledError || (await this.isCancelled(download.id))) {
+        this.logger.log(`Download job ${download.id} cancelled while packing`);
+        return;
+      }
       const message = error instanceof Error ? error.message : 'Download worker failed';
-      await this.jobRepository.update(download.id, {
-        status: 'failed',
-        errorMessage: message.slice(0, 4000),
-      });
+      await this.jobRepository.update(
+        { id: download.id, status: 'processing' },
+        { status: 'failed', errorMessage: message.slice(0, 4000) },
+      );
       throw error;
     }
   }
 
-  /** Yields each source to the ZIP writer; an item counts as added once its body is written. */
+  private async isCancelled(downloadId: string): Promise<boolean> {
+    const job = await this.jobRepository.findOne({
+      where: { id: downloadId },
+      select: { id: true, status: true },
+    });
+    return !job || job.status === 'cancelled';
+  }
+
+  /**
+   * Yields each source to the ZIP writer; an item counts as added once its body is written.
+   * Stops with `DownloadCancelledError` as soon as the job is cancelled, checked before each
+   * file and every few seconds while a large one streams.
+   */
   private async *zipEntries(
     downloadId: string,
     sources: ZipSource[],
   ): AsyncGenerator<ZipStreamEntry> {
+    const isCancelled = () => this.isCancelled(downloadId);
     for (const source of sources) {
-      yield { name: source.name, body: this.storage.readObject(source.key) };
+      if (await isCancelled()) {
+        throw new DownloadCancelledError(downloadId);
+      }
+      yield {
+        name: source.name,
+        body: cancellableBody(this.storage.readObject(source.key), downloadId, isCancelled),
+      };
       // Resumes only after the writer has consumed the whole body and asks for the next entry.
       await this.itemRepository.update(source.itemId, { status: 'added' });
       await this.jobRepository.increment({ id: downloadId }, 'completedItems', 1);

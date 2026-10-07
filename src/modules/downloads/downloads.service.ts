@@ -23,6 +23,8 @@ import { RenderProfileEntity } from '../../database/entities/render-profile.enti
 import { DownloadQueueService } from '../../infra/queue/download-queue.service';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { FolderAccessService } from '../folders/folder-access.service';
+import { distinctProjects, loadDownloadJobProjects } from './download-job-projects';
+import { downloadZipFilename } from './download-naming';
 import { CreateDownloadDto } from './dto/create-download.dto';
 import { findRenderedVariant, renderedFilename } from './rendered-variant';
 
@@ -130,7 +132,7 @@ export class DownloadsService {
         manager.create(DownloadJobEntity, {
           id: uuidv7(),
           externalUserId: userId,
-          projectId: dto.projectId ?? null,
+          projectId: this.jobProjectId(dto),
           scope: dto.scope,
           downloadType: dto.downloadType,
           status: 'queued',
@@ -259,13 +261,22 @@ export class DownloadsService {
     };
   }
 
-  /** The saved archive is named after its project when it has one. */
+  /** A job spanning several projects belongs to none of them. */
+  private jobProjectId(dto: CreateDownloadDto): string | null {
+    if (dto.scope === 'projects') {
+      const projectIds = [...new Set(dto.projectIds ?? [])];
+      return projectIds.length === 1 ? projectIds[0] : null;
+    }
+    return dto.projectId ?? null;
+  }
+
+  /**
+   * `[Folder] - [Project] - [YYYYMMddHHmmss].zip` for one project, `Dự án (N) - [...].zip` when
+   * the archive holds several.
+   */
   private async zipFilename(job: DownloadJobEntity): Promise<string> {
-    const project = job.projectId
-      ? await this.projectRepository.findOne({ where: { id: job.projectId } })
-      : null;
-    const base = project?.name.trim().replace(/[\\/:*?"<>|]+/g, '_') || `download-${job.id}`;
-    return `${base}.zip`;
+    const projects = distinctProjects(await loadDownloadJobProjects(this.dataSource, job.id));
+    return downloadZipFilename(projects, job.createdAt, `download-${job.id}`);
   }
 
   private async resolveMedia(dto: CreateDownloadDto): Promise<ProjectMediaEntity[]> {
@@ -274,6 +285,19 @@ export class DownloadsService {
         throw new BadRequestException('projectMediaIds is required');
       }
       return this.mediaRepository.findBy({ id: In([...new Set(dto.projectMediaIds)]) });
+    }
+    if (dto.scope === 'projects') {
+      if (!dto.projectIds?.length) {
+        throw new BadRequestException('projectIds is required for projects download');
+      }
+      const projectIds = [...new Set(dto.projectIds)];
+      const media = await this.mediaRepository.find({
+        where: { projectId: In(projectIds) },
+        order: { sortOrder: 'ASC', id: 'ASC' },
+      });
+      // Keep the order the projects were picked in, then each project's own file order.
+      const rank = new Map(projectIds.map((id, index) => [id, index]));
+      return media.sort((a, b) => (rank.get(a.projectId) ?? 0) - (rank.get(b.projectId) ?? 0));
     }
     if (!dto.projectId) {
       throw new BadRequestException('projectId is required for project download');
