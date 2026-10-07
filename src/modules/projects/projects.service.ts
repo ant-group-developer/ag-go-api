@@ -25,6 +25,13 @@ import {
   deleteAssetsAndRefreshBatches,
   planProjectAssetCleanup,
 } from './project-asset-cleanup';
+import {
+  buildProjectSearch,
+  canMatchCloseSpelling,
+  CLOSE_SPELLINGS_SQL,
+  searchTokens,
+  typedTokenCondition,
+} from './project-search';
 
 @Injectable()
 export class ProjectsService {
@@ -67,12 +74,6 @@ export class ProjectsService {
       );
     }
 
-    if (query.normalizedKeyword) {
-      projectQuery.andWhere(
-        "(LOWER(project.name) LIKE :keyword OR LOWER(COALESCE(project.description, '')) LIKE :keyword)",
-        { keyword: `%${query.normalizedKeyword.toLocaleLowerCase('vi-VN')}%` },
-      );
-    }
     const filterFolderIds = [
       ...new Set([...(query.folderIds ?? []), ...(query.folderId ? [query.folderId] : [])]),
     ];
@@ -121,6 +122,31 @@ export class ProjectsService {
         )`,
         { tagIds: query.tagIds },
       );
+    }
+
+    // The keyword goes last: whether a word appears as typed is judged within the other filters.
+    const tokens = query.normalizedKeyword ? searchTokens(query.normalizedKeyword) : [];
+    const closeSpellings = new Map<string, string[]>();
+    for (const token of tokens.filter(canMatchCloseSpelling)) {
+      const foundAsTyped = await projectQuery
+        .clone()
+        .select('1')
+        .andWhere(typedTokenCondition('typed_token'), { typed_token: token })
+        .limit(1)
+        .getRawOne();
+      if (!foundAsTyped) {
+        const rows = (await this.dataSource.query(CLOSE_SPELLINGS_SQL, [token])) as Array<{
+          word: string;
+        }>;
+        closeSpellings.set(
+          token,
+          rows.map((row) => row.word),
+        );
+      }
+    }
+    const search = buildProjectSearch(tokens, closeSpellings);
+    if (search) {
+      projectQuery.andWhere(search.where, search.params);
     }
 
     const sortOrder = query.sortOrder === 'asc' ? 'ASC' : 'DESC';
@@ -199,6 +225,7 @@ export class ProjectsService {
       const folder = folderById.get(project.folderId);
 
       return Object.assign(project, {
+        folderName: folder?.name ?? '',
         folderPath: folder?.pathText ?? '',
         countryName: country?.name ?? null,
         countryFlagUrl: country?.flagUrl ?? null,
@@ -280,6 +307,7 @@ export class ProjectsService {
       [
         Object.assign(project, {
           renderedBytes,
+          folderName: folder?.name ?? '',
           folderPath: folder?.pathText ?? '',
           countryName: country?.name ?? null,
           countryFlagUrl: country?.flagUrl ?? null,

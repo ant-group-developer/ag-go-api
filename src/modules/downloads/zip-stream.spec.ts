@@ -93,11 +93,20 @@ describe('createZipStream', () => {
     expect(readZip(zip)).toEqual([]);
   });
 
-  it('replaces characters outside the safe filename set', async () => {
+  it('keeps Vietnamese names and folders, replacing only unsafe characters', async () => {
     const zip = await buildZip([
-      { name: 'ảnh đẹp 1.jpg', body: Readable.from([Buffer.from('x')]) },
+      { name: 'Hà Nội - Dự án/ảnh đẹp 1.jpg', body: Readable.from([Buffer.from('x')]) },
+      { name: '../a:b?.jpg', body: Readable.from([Buffer.from('y')]) },
     ]);
-    expect(readZip(zip)[0].name).toBe('_nh___p_1.jpg');
+    expect(readZip(zip).map((entry) => entry.name)).toEqual([
+      'Hà Nội - Dự án/ảnh đẹp 1.jpg',
+      '_/a_b_.jpg',
+    ]);
+  });
+
+  it('flags entry names as UTF-8', async () => {
+    const zip = await buildZip([{ name: 'ảnh.jpg', body: Readable.from([Buffer.from('x')]) }]);
+    expect(zip.readUInt16LE(6) & 0x0800).toBe(0x0800);
   });
 
   it('fails the stream when an entry body errors', async () => {

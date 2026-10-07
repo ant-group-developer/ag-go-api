@@ -12,7 +12,7 @@ export class DownloadJobEntity {
   projectId!: string | null;
 
   @Column({ type: 'varchar', length: 20 })
-  scope!: 'single' | 'multiple' | 'project';
+  scope!: 'single' | 'multiple' | 'project' | 'projects';
 
   @Column({ name: 'download_type', type: 'varchar', length: 20, default: 'original' })
   downloadType!: 'original' | 'rendered';
