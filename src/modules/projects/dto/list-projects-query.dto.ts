@@ -13,7 +13,30 @@ export type ProjectSortField = (typeof PROJECT_SORT_FIELDS)[number];
 export const SORT_ORDERS = ['asc', 'desc'] as const;
 export type SortOrder = (typeof SORT_ORDERS)[number];
 
+/**
+ * Which page the list is for; each decides who sees what (admins always see everything):
+ * - `all`: every project, admins only;
+ * - `evaluated` ("Projects"): evaluated projects of the categories granted to the user;
+ * - `evaluation` ("Project evaluations"): projects to evaluate in the folders granted to the user;
+ * - `mine` ("My projects"): projects the user created, whatever their folder access.
+ * Without a scope: every project in the user's folders (drafts only their own).
+ */
+export const PROJECT_LIST_SCOPES = ['all', 'evaluated', 'evaluation', 'mine'] as const;
+export type ProjectListScope = (typeof PROJECT_LIST_SCOPES)[number];
+
+export class ProjectScopeQueryDto {
+  @ApiPropertyOptional({ enum: PROJECT_LIST_SCOPES })
+  @IsOptional()
+  @IsIn(PROJECT_LIST_SCOPES)
+  scope?: ProjectListScope;
+}
+
 export class ListProjectsQueryDto extends BaseKeywordQueryDto {
+  @ApiPropertyOptional({ enum: PROJECT_LIST_SCOPES })
+  @IsOptional()
+  @IsIn(PROJECT_LIST_SCOPES)
+  scope?: ProjectListScope;
+
   @ApiPropertyOptional({ enum: PROJECT_SORT_FIELDS, default: 'updatedAt' })
   @IsOptional()
   @IsIn(PROJECT_SORT_FIELDS)

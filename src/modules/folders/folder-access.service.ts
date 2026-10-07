@@ -2,9 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, In, Repository } from 'typeorm';
 import { isAdminUserType } from '../../common/auth/user-type';
+import { CategoryAccessGrantEntity } from '../../database/entities/category-access-grant.entity';
 import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
+import type { ProjectEntity } from '../../database/entities/project.entity';
 
 const accessRank = {
   viewer: 1,
@@ -13,6 +15,17 @@ const accessRank = {
 } as const;
 
 export type FolderAccessLevel = keyof typeof accessRank;
+
+/** Statuses a category grant reaches: the evaluated projects listed on the "Projects" page. */
+export const CATEGORY_GRANT_PROJECT_STATUSES: ReadonlyArray<ProjectEntity['evaluationStatus']> = [
+  'completed',
+  'partially_completed',
+];
+
+export type ProjectViewTarget = Pick<
+  ProjectEntity,
+  'folderId' | 'categoryId' | 'ownerUserId' | 'evaluationStatus'
+>;
 
 export function maxAccessLevel(
   left: FolderAccessLevel | undefined,
@@ -30,7 +43,47 @@ export class FolderAccessService {
     private readonly closureRepository: Repository<FolderClosureEntity>,
     @InjectRepository(FolderEntity)
     private readonly folderRepository: Repository<FolderEntity>,
+    @InjectRepository(CategoryAccessGrantEntity)
+    private readonly categoryGrantRepository: Repository<CategoryAccessGrantEntity>,
   ) {}
+
+  /**
+   * Read access to one project: its folder (viewer), its owner, or a category grant when the
+   * project is evaluated. Edits keep requiring folder access through `canAccess`.
+   */
+  async canViewProject(
+    project: ProjectViewTarget,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    manager?: EntityManager,
+  ): Promise<boolean> {
+    if (isAdminUserType(userType) || project.ownerUserId === userId) {
+      return true;
+    }
+    if (await this.canAccess(project.folderId, userId, 'viewer', userType, manager)) {
+      return true;
+    }
+    if (
+      !project.categoryId ||
+      !CATEGORY_GRANT_PROJECT_STATUSES.includes(project.evaluationStatus)
+    ) {
+      return false;
+    }
+    const categoryGrantRepository =
+      manager?.getRepository(CategoryAccessGrantEntity) ?? this.categoryGrantRepository;
+    return categoryGrantRepository.exists({
+      where: { categoryId: project.categoryId, principalType: 'user', principalId: userId },
+    });
+  }
+
+  /** Categories granted to a user (admins need none: they see every category). */
+  async grantedCategoryIds(userId: string): Promise<string[]> {
+    const grants = await this.categoryGrantRepository.find({
+      select: { categoryId: true },
+      where: { principalType: 'user', principalId: userId },
+    });
+    return grants.map((grant) => grant.categoryId);
+  }
 
   async canAccess(
     folderId: string,

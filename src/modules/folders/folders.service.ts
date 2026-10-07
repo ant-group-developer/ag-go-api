@@ -134,6 +134,31 @@ export class FoldersService {
     });
   }
 
+  /**
+   * Every active folder, whatever the user's folder access, with only what a filter needs. The
+   * "Projects" page lists projects by category grants, so its folder filter is not limited.
+   */
+  options(): Promise<
+    Array<Pick<FolderEntity, 'id' | 'parentId' | 'name' | 'pathText' | 'pathIds' | 'depth'>>
+  > {
+    return this.folderRepository
+      .createQueryBuilder('folder')
+      .select([
+        'folder.id',
+        'folder.parentId',
+        'folder.name',
+        'folder.pathText',
+        'folder.pathIds',
+        'folder.depth',
+      ])
+      .addSelect('folder.name COLLATE natural_sort', 'name_sort')
+      .where('folder.isActive = true')
+      .orderBy('folder.depth', 'ASC')
+      .addOrderBy('folder.sortOrder', 'ASC')
+      .addOrderBy('name_sort', 'ASC')
+      .getMany();
+  }
+
   async tree(userId: string, userType?: 'ADMIN' | 'USER'): Promise<FolderTreeItem[]> {
     const levels = await this.accessService.accessLevels(userId, userType);
     const ids = [...levels.keys()];

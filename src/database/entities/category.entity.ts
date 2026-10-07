@@ -20,6 +20,10 @@ export class CategoryEntity {
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive!: boolean;
 
+  /** Null for categories created before this was recorded. */
+  @Column({ name: 'created_by', type: 'varchar', length: 128, nullable: true })
+  createdBy!: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 

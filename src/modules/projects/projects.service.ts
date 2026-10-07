@@ -1,6 +1,11 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, Repository, type SelectQueryBuilder } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService, type ActorUser } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
@@ -16,9 +21,12 @@ import { ProvinceEntity } from '../../database/entities/province.entity';
 import { TagEntity } from '../../database/entities/tag.entity';
 import { diffAuditSnapshots, type AuditValue } from '../audit/audit-changes';
 import { AuditService } from '../audit/audit.service';
-import { FolderAccessService } from '../folders/folder-access.service';
+import {
+  CATEGORY_GRANT_PROJECT_STATUSES,
+  FolderAccessService,
+} from '../folders/folder-access.service';
 import { CreateProjectDto } from './dto/create-project.dto';
-import { ListProjectsQueryDto } from './dto/list-projects-query.dto';
+import { ListProjectsQueryDto, type ProjectListScope } from './dto/list-projects-query.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import {
   ASSET_STORAGE_PURGE_EVENT,
@@ -32,6 +40,12 @@ import {
   searchTokens,
   typedTokenCondition,
 } from './project-search';
+
+/** Statuses of the "Project evaluations" page: still to evaluate, or to evaluate again. */
+const EVALUATION_SCOPE_STATUSES: ReadonlyArray<ProjectEntity['evaluationStatus']> = [
+  'pending',
+  'failed',
+];
 
 @Injectable()
 export class ProjectsService {
@@ -57,21 +71,9 @@ export class ProjectsService {
   ) {}
 
   async list(query: ListProjectsQueryDto, userId: string, userType?: 'ADMIN' | 'USER') {
-    const folderIds = await this.folderAccessService.accessibleFolderIds(userId, userType);
-    if (folderIds.length === 0) {
+    const projectQuery = await this.scopedQuery(query.scope, userId, userType);
+    if (!projectQuery) {
       return new ListResponseDto([], query.page, query.pageSize, 0);
-    }
-
-    const projectQuery = this.projectRepository
-      .createQueryBuilder('project')
-      .where('project.folderId IN (:...accessibleFolderIds)', { accessibleFolderIds: folderIds });
-
-    // Only admins can list everyone's drafts; other users only see their own drafts.
-    if (!isAdminUserType(userType)) {
-      projectQuery.andWhere(
-        "(project.evaluationStatus <> 'draft' OR project.ownerUserId = :currentUserId)",
-        { currentUserId: userId },
-      );
     }
 
     const filterFolderIds = [
@@ -247,25 +249,19 @@ export class ProjectsService {
 
   /** Owners (authors) of the projects the user can list, with how many projects each owns. */
   async owners(
+    scope: ProjectListScope | undefined,
     userId: string,
     userType?: 'ADMIN' | 'USER',
   ): Promise<Array<{ id: string; projectCount: number; user: ActorUser | null }>> {
-    const folderIds = await this.folderAccessService.accessibleFolderIds(userId, userType);
-    if (folderIds.length === 0) {
+    // Same visibility as the list of that page.
+    const query = await this.scopedQuery(scope, userId, userType);
+    if (!query) {
       return [];
     }
-    const query = this.projectRepository
-      .createQueryBuilder('project')
+    query
       .select('project.ownerUserId', 'id')
       .addSelect('COUNT(*)', 'projectCount')
-      .where('project.folderId IN (:...folderIds)', { folderIds })
       .groupBy('project.ownerUserId');
-    // Same visibility as the list: other users' drafts only for admins.
-    if (!isAdminUserType(userType)) {
-      query.andWhere("(project.evaluationStatus <> 'draft' OR project.ownerUserId = :userId)", {
-        userId,
-      });
-    }
     const rows = (await query.getRawMany<{ id: string; projectCount: string }>()).map((row) => ({
       id: row.id,
       projectCount: Number(row.projectCount),
@@ -275,12 +271,81 @@ export class ProjectsService {
     >;
   }
 
+  /**
+   * Projects a page may list (see `PROJECT_LIST_SCOPES`), before the user's filters; `null` when
+   * the user can see none.
+   */
+  private async scopedQuery(
+    scope: ProjectListScope | undefined,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<SelectQueryBuilder<ProjectEntity> | null> {
+    const isAdmin = isAdminUserType(userType);
+    const query = this.projectRepository.createQueryBuilder('project');
+
+    switch (scope) {
+      case 'all':
+        if (!isAdmin) {
+          throw new ForbiddenException('Only admins can list all projects');
+        }
+        return query;
+      case 'mine':
+        return query.where('project.ownerUserId = :currentUserId', { currentUserId: userId });
+      case 'evaluated': {
+        query.where('project.evaluationStatus IN (:...scopeStatuses)', {
+          scopeStatuses: CATEGORY_GRANT_PROJECT_STATUSES,
+        });
+        if (isAdmin) {
+          return query;
+        }
+        const categoryIds = await this.folderAccessService.grantedCategoryIds(userId);
+        if (categoryIds.length === 0) {
+          return null;
+        }
+        return query.andWhere('project.categoryId IN (:...grantedCategoryIds)', {
+          grantedCategoryIds: categoryIds,
+        });
+      }
+      case 'evaluation':
+        query.where('project.evaluationStatus IN (:...scopeStatuses)', {
+          scopeStatuses: EVALUATION_SCOPE_STATUSES,
+        });
+        return isAdmin ? query : this.withinAccessibleFolders(query, userId, userType);
+      default:
+        if (isAdmin) {
+          return query;
+        }
+        // Other users' drafts only for admins.
+        query.where(
+          "(project.evaluationStatus <> 'draft' OR project.ownerUserId = :currentUserId)",
+          { currentUserId: userId },
+        );
+        return this.withinAccessibleFolders(query, userId, userType);
+    }
+  }
+
+  private async withinAccessibleFolders(
+    query: SelectQueryBuilder<ProjectEntity>,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<SelectQueryBuilder<ProjectEntity> | null> {
+    const folderIds = await this.folderAccessService.accessibleFolderIds(userId, userType);
+    if (folderIds.length === 0) {
+      return null;
+    }
+    return query.andWhere('project.folderId IN (:...accessibleFolderIds)', {
+      accessibleFolderIds: folderIds,
+    });
+  }
+
   async findOne(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
     const project = await this.projectRepository.findOne({ where: { id } });
     if (!project) {
       throw new NotFoundException('Project not found');
     }
-    await this.requireFolderAccess(project.folderId, userId, 'viewer', userType);
+    if (!(await this.folderAccessService.canViewProject(project, userId, userType))) {
+      throw new ForbiddenException('Insufficient folder permission');
+    }
     const [folder, country, province, category, tags, renderedBytes] = await Promise.all([
       this.folderRepository.findOne({ where: { id: project.folderId } }),
       project.countryId
@@ -349,7 +414,7 @@ export class ProjectsService {
           folderId: dto.folderId,
           name: dto.name.trim(),
           description: dto.description?.trim() ?? null,
-          categoryId: dto.categoryId ?? null,
+          categoryId: dto.categoryId,
           countryId: dto.countryId ?? null,
           provinceId: dto.provinceId ?? null,
           evaluationStatus: 'draft',
@@ -404,12 +469,12 @@ export class ProjectsService {
     const countryId = dto.countryId === undefined ? project.countryId : dto.countryId;
     const provinceId =
       dto.provinceId === undefined ? (countryChanged ? null : project.provinceId) : dto.provinceId;
-    const categoryId = dto.categoryId === undefined ? project.categoryId : dto.categoryId;
-    await this.validateCatalogs(
-      countryId ?? undefined,
-      provinceId ?? undefined,
-      categoryId ?? undefined,
-    );
+    const categoryId = dto.categoryId ?? project.categoryId;
+    // Projects created before the category became required get one on their next edit.
+    if (!categoryId) {
+      throw new BadRequestException('Category is required');
+    }
+    await this.validateCatalogs(countryId ?? undefined, provinceId ?? undefined, categoryId);
 
     const updatePayload = {
       folderId,
@@ -627,7 +692,7 @@ export class ProjectsService {
   private async requireFolderAccess(
     folderId: string,
     userId: string,
-    level: 'viewer' | 'editor',
+    level: 'editor',
     userType?: 'ADMIN' | 'USER',
   ) {
     const allowed = await this.folderAccessService.canAccess(folderId, userId, level, userType);

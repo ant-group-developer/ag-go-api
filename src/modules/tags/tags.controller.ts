@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
+import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
@@ -25,11 +26,16 @@ export class TagsController {
   constructor(
     private readonly tagsService: TagsService,
     private readonly authContext: AuthContextService,
+    private readonly actorEnrichment: ActorEnrichmentService,
   ) {}
 
+  /** Each tag with its creator as `createdByUser` (null when unknown). */
   @Get()
-  list() {
-    return this.tagsService.list();
+  async list() {
+    const tags = await this.tagsService.list();
+    return this.actorEnrichment.enrich(tags as unknown as Array<Record<string, unknown>>, [
+      { id: 'createdBy', target: 'createdByUser' },
+    ]);
   }
 
   @Post()

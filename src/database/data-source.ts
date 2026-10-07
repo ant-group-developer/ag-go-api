@@ -9,6 +9,7 @@ import { AssetImportEntity } from './entities/asset-import.entity';
 import { AssetUploadSessionEntity } from './entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './entities/asset-variant.entity';
 import { AssetEntity } from './entities/asset.entity';
+import { CategoryAccessGrantEntity } from './entities/category-access-grant.entity';
 import { CategoryEntity } from './entities/category.entity';
 import { CountryEntity } from './entities/country.entity';
 import { DownloadJobItemEntity } from './entities/download-job-item.entity';
@@ -70,6 +71,9 @@ import { EvaluationPreviousStatus2050000000000 } from './migrations/205000000000
 import { AssetAnalysisV22060000000000 } from './migrations/2060000000000-asset-analysis-v2';
 import { DownloadProjectsScope2070000000000 } from './migrations/2070000000000-download-projects-scope';
 import { ProjectSearchText2080000000000 } from './migrations/2080000000000-project-search-text';
+import { CategoryAccessGrants2090000000000 } from './migrations/2090000000000-category-access-grants';
+import { CategoryCreatedBy2100000000000 } from './migrations/2100000000000-category-created-by';
+import { TagTimestamps2110000000000 } from './migrations/2110000000000-tag-timestamps';
 
 loadEnv();
 
@@ -95,6 +99,7 @@ export const AppDataSource = new DataSource({
     FolderEntity,
     FolderClosureEntity,
     FolderAccessGrantEntity,
+    CategoryAccessGrantEntity,
     CategoryEntity,
     CountryEntity,
     ProvinceEntity,
@@ -159,6 +164,9 @@ export const AppDataSource = new DataSource({
     AssetAnalysisV22060000000000,
     DownloadProjectsScope2070000000000,
     ProjectSearchText2080000000000,
+    CategoryAccessGrants2090000000000,
+    CategoryCreatedBy2100000000000,
+    TagTimestamps2110000000000,
   ],
   synchronize: false,
 });

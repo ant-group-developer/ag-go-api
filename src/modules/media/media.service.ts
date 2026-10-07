@@ -533,13 +533,17 @@ export class MediaService {
     userType?: 'ADMIN' | 'USER',
     manager?: import('typeorm').EntityManager,
   ): Promise<void> {
-    const allowed = await this.folderAccessService.canAccess(
-      project.folderId,
-      userId,
-      minimum,
-      userType,
-      manager,
-    );
+    // Reading also follows the owner and category grants; changing needs the folder.
+    const allowed =
+      minimum === 'viewer'
+        ? await this.folderAccessService.canViewProject(project, userId, userType, manager)
+        : await this.folderAccessService.canAccess(
+            project.folderId,
+            userId,
+            minimum,
+            userType,
+            manager,
+          );
     if (!allowed) {
       throw new ForbiddenException('Insufficient project permission');
     }
