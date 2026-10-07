@@ -14,7 +14,7 @@ import { DOWNLOAD_JOB, DOWNLOAD_QUEUE } from '../../infra/queue/queue.constants'
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { cancellableBody, DownloadCancelledError } from './download-cancellation';
 import { distinctProjects, loadDownloadJobProjects } from './download-job-projects';
-import { projectFolderName, ZipEntryNamer } from './download-naming';
+import { downloadZipStorageKey, projectFolderName, ZipEntryNamer } from './download-naming';
 import { findRenderedVariant, renderedFilename } from './rendered-variant';
 import { createZipStream, type ZipStreamEntry } from './zip-stream';
 
@@ -119,9 +119,7 @@ export class DownloadWorkerService implements OnModuleDestroy {
           spansProjects && project ? projectFolderName(project.folderName, project.name) : null;
         sources.push({ itemId: item.id, key, name: namer.next(folder, filename) });
       }
-      const storageKey = download.projectId
-        ? `projects/${download.projectId}/downloads/${download.externalUserId}/${download.id}.zip`
-        : `downloads/${download.externalUserId}/${download.id}.zip`;
+      const storageKey = downloadZipStorageKey(download.externalUserId, download.id);
       // The archive streams straight into a multipart upload, one source object at a time,
       // so memory stays bounded by the upload's part buffers whatever the archive size.
       // A cancel while packing errors the stream, which aborts the multipart upload.
