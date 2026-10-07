@@ -90,4 +90,27 @@ describe('FolderAccessOverviewService', () => {
     expect(sorted).toMatchObject({ total: 2, page: 2, limit: 1 });
     expect(sorted.data.map((row) => row.userId)).toEqual(['u-2']);
   });
+
+  it('lists only the first folders of each user but counts them all', async () => {
+    const manyFolders = ['E', 'C', 'A', 'D', 'B'].map((name) => ({
+      id: `f-${name}`,
+      name,
+      pathText: name,
+    }));
+    const service = new FolderAccessOverviewService(
+      {
+        find: jest
+          .fn()
+          .mockResolvedValue(manyFolders.map((folder) => grant(folder.id, 'u-1', 'viewer', 1))),
+      } as never,
+      { find: jest.fn().mockResolvedValue(manyFolders) } as never,
+      { accessLevels: jest.fn() } as never,
+      { enrich: jest.fn((rows: unknown[]) => Promise.resolve(rows)) } as never,
+    );
+
+    const [row] = (await service.users({}, 'admin', 'ADMIN')).data;
+
+    expect(row?.folderCount).toBe(5);
+    expect(row?.folders.map((folder) => folder.pathText)).toEqual(['A', 'B', 'C']);
+  });
 });

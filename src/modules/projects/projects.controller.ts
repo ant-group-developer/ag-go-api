@@ -5,7 +5,7 @@ import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CreateProjectDto } from './dto/create-project.dto';
-import { ListProjectsQueryDto } from './dto/list-projects-query.dto';
+import { ListProjectsQueryDto, ProjectScopeQueryDto } from './dto/list-projects-query.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
 import { ProjectsService } from './projects.service';
 
@@ -28,9 +28,9 @@ export class ProjectsController {
   @Get('owners')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
   @ApiOperation({ summary: 'Owners (authors) of the projects the user can list' })
-  owners(@Req() request: Request) {
+  owners(@Query() query: ProjectScopeQueryDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.projectsService.owners(context.userId, context.userType);
+    return this.projectsService.owners(query.scope, context.userId, context.userType);
   }
 
   @Post()

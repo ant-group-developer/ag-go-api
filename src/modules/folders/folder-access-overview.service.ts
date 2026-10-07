@@ -10,6 +10,8 @@ import { FolderAccessUsersQueryDto } from './dto/folder-access-users-query.dto';
 import { FolderAccessLevel, FolderAccessService, maxAccessLevel } from './folder-access.service';
 
 const levelRank: Record<FolderAccessLevel, number> = { viewer: 1, editor: 2, manager: 3 };
+/** Folders listed per user; the rest are counted, and loaded with the user's grants on demand. */
+const FOLDER_PREVIEW_LIMIT = 3;
 
 export type FolderAccessUserSummary = {
   userId: string;
@@ -17,6 +19,7 @@ export type FolderAccessUserSummary = {
   folderCount: number;
   highestLevel: FolderAccessLevel;
   lastUpdatedAt: Date;
+  /** The first folders by path (at most `FOLDER_PREVIEW_LIMIT`); `folderCount` has the total. */
   folders: Array<{ id: string; name: string; pathText: string; accessLevel: FolderAccessLevel }>;
 };
 
@@ -123,12 +126,15 @@ export class FolderAccessOverviewService {
               : displayName(a).localeCompare(displayName(b), 'vi', { sensitivity: 'base' });
       return result * direction;
     });
-    for (const row of rows) {
-      row.folders.sort((a, b) => a.pathText.localeCompare(b.pathText, 'vi', { numeric: true }));
+    const pageRows = rows.slice((page - 1) * limit, page * limit);
+    for (const row of pageRows) {
+      row.folders = row.folders
+        .sort((a, b) => a.pathText.localeCompare(b.pathText, 'vi', { numeric: true }))
+        .slice(0, FOLDER_PREVIEW_LIMIT);
     }
 
     return {
-      data: rows.slice((page - 1) * limit, page * limit),
+      data: pageRows,
       total: rows.length,
       page,
       limit,

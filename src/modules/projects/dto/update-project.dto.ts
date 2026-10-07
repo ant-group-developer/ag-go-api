@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsArray, IsOptional, IsString, IsUUID, MaxLength, ValidateIf } from 'class-validator';
 
 export class UpdateProjectDto {
   @ApiPropertyOptional({ format: 'uuid' })
@@ -18,10 +18,11 @@ export class UpdateProjectDto {
   @IsString()
   description?: string | null;
 
-  @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true })
-  @IsOptional()
+  /** Omit to keep the current category; it cannot be cleared. */
+  @ApiPropertyOptional({ type: String, format: 'uuid' })
+  @ValidateIf((_, value) => value !== undefined)
   @IsUUID()
-  categoryId?: string | null;
+  categoryId?: string;
 
   @ApiPropertyOptional({ type: String, format: 'uuid', nullable: true })
   @IsOptional()

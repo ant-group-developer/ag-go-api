@@ -6,6 +6,7 @@ export const GO_PERMISSIONS = {
   PROJECT_DOWNLOAD_RENDERED: 'go.project.download_rendered',
   FOLDER_MANAGE: 'go.folder.manage',
   FOLDER_CREATE_ROOT: 'go.folder.create_root',
+  CATEGORY_ACCESS_MANAGE: 'go.category.access_manage',
   CATALOG_MANAGE: 'go.catalog.manage',
   CATEGORY_CREATE: 'go.category.create',
   CATEGORY_EDIT: 'go.category.edit',

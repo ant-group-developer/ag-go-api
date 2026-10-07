@@ -33,7 +33,7 @@ export class AuditService {
     if (!project) {
       throw new NotFoundException('Project not found');
     }
-    if (!(await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))) {
+    if (!(await this.folderAccess.canViewProject(project, userId, userType))) {
       throw new ForbiddenException('Insufficient audit permission');
     }
 

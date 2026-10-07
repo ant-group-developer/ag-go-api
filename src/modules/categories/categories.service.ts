@@ -16,14 +16,23 @@ export class CategoriesService {
     private readonly projectRepository: Repository<ProjectEntity>,
   ) {}
 
-  list() {
-    return this.categoryRepository
+  /** Active categories; only those granted to `grantedToUserId` when given. */
+  list(grantedToUserId?: string) {
+    const query = this.categoryRepository
       .createQueryBuilder('category')
       .addSelect('category.name COLLATE natural_sort', 'name_sort')
-      .where('category.isActive = true')
-      .orderBy('category.sortOrder', 'ASC')
-      .addOrderBy('name_sort', 'ASC')
-      .getMany();
+      .where('category.isActive = true');
+    if (grantedToUserId) {
+      query.andWhere(
+        `category.id IN (
+          SELECT category_grant.category_id
+          FROM category_access_grants category_grant
+          WHERE category_grant.principal_type = 'user' AND category_grant.principal_id = :userId
+        )`,
+        { userId: grantedToUserId },
+      );
+    }
+    return query.orderBy('category.sortOrder', 'ASC').addOrderBy('name_sort', 'ASC').getMany();
   }
 
   async create(dto: CreateCategoryDto) {
@@ -63,7 +72,15 @@ export class CategoriesService {
         `Category is used by ${projectCount} project(s) and cannot be deleted`,
       );
     }
-    await this.categoryRepository.remove(category);
+    try {
+      await this.categoryRepository.remove(category);
+    } catch (error) {
+      // A project took the category between the count and the delete; the foreign key refused.
+      if (isForeignKeyViolation(error)) {
+        throw new ConflictException('Category is used by a project and cannot be deleted');
+      }
+      throw error;
+    }
   }
 
   private async findOrFail(id: string) {
@@ -88,4 +105,17 @@ export class CategoriesService {
       throw new ConflictException('Category name or slug already exists');
     }
   }
+}
+
+function isForeignKeyViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('driverError' in error)) {
+    return false;
+  }
+  const driverError = error.driverError;
+  return (
+    typeof driverError === 'object' &&
+    driverError !== null &&
+    'code' in driverError &&
+    driverError.code === '23503'
+  );
 }
