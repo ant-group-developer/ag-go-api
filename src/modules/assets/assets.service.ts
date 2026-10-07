@@ -652,7 +652,11 @@ export class AssetsService implements OnModuleDestroy {
       .where('media.asset_id = :assetId', { assetId })
       .getMany();
     for (const project of projects) {
-      if (await this.folderAccessService.canAccess(project.folderId, userId, minimum, userType)) {
+      const allowed =
+        minimum === 'viewer'
+          ? await this.folderAccessService.canViewProject(project, userId, userType)
+          : await this.folderAccessService.canAccess(project.folderId, userId, minimum, userType);
+      if (allowed) {
         return asset;
       }
     }

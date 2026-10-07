@@ -435,10 +435,7 @@ export class RenderService {
 
   async listBatches(projectId: string, userId: string, userType?: 'ADMIN' | 'USER') {
     const project = await this.projectRepository.findOne({ where: { id: projectId } });
-    if (
-      !project ||
-      !(await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))
-    ) {
+    if (!project || !(await this.folderAccess.canViewProject(project, userId, userType))) {
       throw new ForbiddenException('Insufficient project permission');
     }
     return this.enrichBatches(
@@ -566,10 +563,7 @@ export class RenderService {
 
     if (options.projectId) {
       const project = await this.projectRepository.findOne({ where: { id: options.projectId } });
-      if (
-        !project ||
-        !(await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))
-      ) {
+      if (!project || !(await this.folderAccess.canViewProject(project, userId, userType))) {
         throw new ForbiddenException('Insufficient project permission');
       }
       query.andWhere(

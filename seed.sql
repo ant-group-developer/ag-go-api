@@ -43,7 +43,8 @@ VALUES
   ('9a000015-dbef-11f0-ab89-18c04dc47bd5', '[GO] Analysis Manage', 'go.analysis.manage', 'Manage media content analysis (backfill, enqueue)', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000016-dbef-11f0-ab89-18c04dc47bd5', '[GO] Footage Search', 'go.footage.search', 'Search and browse footage segments', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000017-dbef-11f0-ab89-18c04dc47bd5', '[GO] Footage Produce', 'go.footage.produce', 'Resolve footage segments for production rendering', @app_id, 1, NOW(), NOW(), NULL, NULL),
-  ('9a000018-dbef-11f0-ab89-18c04dc47bd5', '[GO] Folder Create Root', 'go.folder.create_root', 'Create root folders and move folders to the root', @app_id, 1, NOW(), NOW(), NULL, NULL)
+  ('9a000018-dbef-11f0-ab89-18c04dc47bd5', '[GO] Folder Create Root', 'go.folder.create_root', 'Create root folders and move folders to the root', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a000019-dbef-11f0-ab89-18c04dc47bd5', '[GO] Category Access Manage', 'go.category.access_manage', 'Grant users access to projects by category (Projects menu)', @app_id, 1, NOW(), NOW(), NULL, NULL)
 ON DUPLICATE KEY UPDATE
   name = VALUES(name),
   description = VALUES(description),
@@ -82,6 +83,7 @@ FROM (
   UNION ALL SELECT '[GO] Admin', 'go.project.download_rendered'
   UNION ALL SELECT '[GO] Admin', 'go.folder.manage'
   UNION ALL SELECT '[GO] Admin', 'go.folder.create_root'
+  UNION ALL SELECT '[GO] Admin', 'go.category.access_manage'
   UNION ALL SELECT '[GO] Admin', 'go.catalog.manage'
   UNION ALL SELECT '[GO] Admin', 'go.category.create'
   UNION ALL SELECT '[GO] Admin', 'go.tag.create'
@@ -108,6 +110,7 @@ FROM (
   UNION ALL SELECT '[GO] Manager', 'go.project.download_rendered'
   UNION ALL SELECT '[GO] Manager', 'go.folder.manage'
   UNION ALL SELECT '[GO] Manager', 'go.folder.create_root'
+  UNION ALL SELECT '[GO] Manager', 'go.category.access_manage'
   UNION ALL SELECT '[GO] Manager', 'go.catalog.manage'
   UNION ALL SELECT '[GO] Manager', 'go.category.create'
   UNION ALL SELECT '[GO] Manager', 'go.tag.create'
@@ -141,11 +144,13 @@ FROM (
   UNION ALL SELECT '[GO] Reviewer', 'go.project.read'
   UNION ALL SELECT '[GO] Reviewer', 'go.project.evaluate'
   UNION ALL SELECT '[GO] Reviewer', 'go.project.download_rendered'
+  UNION ALL SELECT '[GO] Reviewer', 'go.project.download_original'
   UNION ALL SELECT '[GO] Reviewer', 'go.render.read'
 
   -- AG Go Viewer: chỉ xem
   UNION ALL SELECT '[GO] Viewer', 'go.project.read'
   UNION ALL SELECT '[GO] Viewer', 'go.project.download_rendered'
+  UNION ALL SELECT '[GO] Viewer', 'go.project.download_original'
 ) AS m
 JOIN roles r ON r.name = m.role_name AND r.application_id = @app_id
 JOIN permissions p ON p.code = m.perm_code AND p.application_id = @app_id

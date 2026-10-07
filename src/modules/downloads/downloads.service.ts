@@ -316,10 +316,7 @@ export class DownloadsService {
     const projectsById = new Map(projects.map((project) => [project.id, project]));
     for (const item of media) {
       const project = projectsById.get(item.projectId);
-      if (
-        !project ||
-        !(await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))
-      ) {
+      if (!project || !(await this.folderAccess.canViewProject(project, userId, userType))) {
         throw new ForbiddenException('Insufficient download folder permission');
       }
     }

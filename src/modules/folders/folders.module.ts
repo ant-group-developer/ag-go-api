@@ -1,10 +1,14 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthContextService } from '../../common/auth-context.service';
+import { CategoryAccessGrantEntity } from '../../database/entities/category-access-grant.entity';
+import { CategoryEntity } from '../../database/entities/category.entity';
 import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
 import { AccountModule } from '../account/account.module';
+import { CategoryAccessController } from './category-access.controller';
+import { CategoryAccessService } from './category-access.service';
 import { FolderAccessOverviewService } from './folder-access-overview.service';
 import { FolderAccessController } from './folder-access.controller';
 import { FolderAccessService } from './folder-access.service';
@@ -14,10 +18,22 @@ import { FoldersService } from './folders.service';
 @Module({
   imports: [
     AccountModule,
-    TypeOrmModule.forFeature([FolderEntity, FolderClosureEntity, FolderAccessGrantEntity]),
+    TypeOrmModule.forFeature([
+      FolderEntity,
+      FolderClosureEntity,
+      FolderAccessGrantEntity,
+      CategoryAccessGrantEntity,
+      CategoryEntity,
+    ]),
   ],
-  controllers: [FoldersController, FolderAccessController],
-  providers: [AuthContextService, FolderAccessService, FolderAccessOverviewService, FoldersService],
+  controllers: [FoldersController, FolderAccessController, CategoryAccessController],
+  providers: [
+    AuthContextService,
+    FolderAccessService,
+    FolderAccessOverviewService,
+    FoldersService,
+    CategoryAccessService,
+  ],
   exports: [FolderAccessService],
 })
 export class FoldersModule {}

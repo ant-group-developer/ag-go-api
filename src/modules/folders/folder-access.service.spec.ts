@@ -14,6 +14,7 @@ describe('FolderAccessService', () => {
       accessLevel: 'viewer' | 'editor' | 'manager';
       inheritChildren: boolean;
     }>,
+    categoryGrants: Array<{ categoryId: string; principalId: string }> = [],
   ) {
     const grantQuery = {
       where: jest.fn().mockReturnThis(),
@@ -30,6 +31,16 @@ describe('FolderAccessService', () => {
       } as never,
       {
         find: jest.fn().mockResolvedValue([]),
+      } as never,
+      {
+        exists: jest.fn(({ where }: { where: { categoryId: string; principalId: string } }) =>
+          Promise.resolve(
+            categoryGrants.some(
+              (grant) =>
+                grant.categoryId === where.categoryId && grant.principalId === where.principalId,
+            ),
+          ),
+        ),
       } as never,
     );
   }
@@ -131,5 +142,56 @@ describe('FolderAccessService', () => {
       service.canAccess('root', 'alice', 'manager', 'USER', manager as never),
     ).resolves.toBe(false);
     expect(manager.getRepository).toHaveBeenCalledTimes(2);
+  });
+
+  describe('canViewProject', () => {
+    const project = {
+      folderId: 'root',
+      categoryId: 'news',
+      ownerUserId: 'owner',
+      evaluationStatus: 'completed' as const,
+    };
+
+    it('lets the owner view their project without any grant', async () => {
+      const service = createService([], []);
+
+      await expect(service.canViewProject(project, 'owner', 'USER')).resolves.toBe(true);
+    });
+
+    it('lets a category grant view an evaluated project of that category', async () => {
+      const service = createService([], [], [{ categoryId: 'news', principalId: 'alice' }]);
+
+      await expect(service.canViewProject(project, 'alice', 'USER')).resolves.toBe(true);
+      await expect(
+        service.canViewProject({ ...project, categoryId: 'sport' }, 'alice', 'USER'),
+      ).resolves.toBe(false);
+    });
+
+    it('does not let a category grant view a project still being evaluated', async () => {
+      const service = createService([], [], [{ categoryId: 'news', principalId: 'alice' }]);
+
+      await expect(
+        service.canViewProject({ ...project, evaluationStatus: 'pending' }, 'alice', 'USER'),
+      ).resolves.toBe(false);
+    });
+
+    it('still accepts a folder viewer grant', async () => {
+      const service = createService(
+        [{ ancestorId: 'root', descendantId: 'root', depth: 0 }],
+        [
+          {
+            folderId: 'root',
+            principalType: 'user',
+            principalId: 'bob',
+            accessLevel: 'viewer',
+            inheritChildren: true,
+          },
+        ],
+      );
+
+      await expect(
+        service.canViewProject({ ...project, evaluationStatus: 'pending' }, 'bob', 'USER'),
+      ).resolves.toBe(true);
+    });
   });
 });

@@ -65,15 +65,28 @@ export class ProvincesService {
       );
     }
 
-    const [items, total] = await builder
+    builder
       .addSelect('country.name COLLATE natural_sort', 'country_name_sort')
-      .addSelect('province.name COLLATE natural_sort', 'province_name_sort')
-      .orderBy('country_name_sort', 'ASC')
-      .addOrderBy('province.sort_order', 'ASC')
-      .addOrderBy('province_name_sort', 'ASC')
-      .skip(query.skip)
-      .take(pageSize)
-      .getManyAndCount();
+      .addSelect('province.name COLLATE natural_sort', 'province_name_sort');
+    const direction = query.sortOrder === 'desc' ? 'DESC' : 'ASC';
+    switch (query.sortBy) {
+      case 'name':
+        builder.orderBy('province_name_sort', direction).addOrderBy('country_name_sort', 'ASC');
+        break;
+      case 'code':
+        // Provinces without a code stay last in both directions.
+        builder
+          .orderBy('province.code', direction, 'NULLS LAST')
+          .addOrderBy('province_name_sort', 'ASC');
+        break;
+      default:
+        builder
+          .orderBy('country_name_sort', direction)
+          .addOrderBy('province.sort_order', 'ASC')
+          .addOrderBy('province_name_sort', 'ASC');
+    }
+
+    const [items, total] = await builder.skip(query.skip).take(pageSize).getManyAndCount();
 
     return new ListResponseDto(items, page, pageSize, total);
   }

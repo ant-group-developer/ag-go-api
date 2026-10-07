@@ -17,6 +17,7 @@ import { AssetImportEntity } from './database/entities/asset-import.entity';
 import { AssetUploadSessionEntity } from './database/entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './database/entities/asset-variant.entity';
 import { AssetEntity } from './database/entities/asset.entity';
+import { CategoryAccessGrantEntity } from './database/entities/category-access-grant.entity';
 import { CategoryEntity } from './database/entities/category.entity';
 import { CountryEntity } from './database/entities/country.entity';
 import { DownloadJobItemEntity } from './database/entities/download-job-item.entity';
@@ -84,6 +85,7 @@ import { TagsModule } from './modules/tags/tags.module';
           FolderEntity,
           FolderClosureEntity,
           FolderAccessGrantEntity,
+          CategoryAccessGrantEntity,
           CategoryEntity,
           CountryEntity,
           ProvinceEntity,

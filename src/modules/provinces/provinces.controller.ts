@@ -15,7 +15,7 @@ import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { MAX_CSV_FILE_SIZE_BYTES, type CsvUploadFile } from '../../common/csv/csv-import';
 import { CreateProvinceDto } from './dto/create-province.dto';
-import { ListProvincesQueryDto } from './dto/list-provinces-query.dto';
+import { ListProvincesQueryDto, PROVINCE_SORT_FIELDS } from './dto/list-provinces-query.dto';
 import { ProvincesService } from './provinces.service';
 
 @ApiTags('provinces')
@@ -30,6 +30,8 @@ export class ProvincesController {
   @ApiQuery({ name: 'search', required: false, type: String, deprecated: true })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'pageSize', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'sortBy', required: false, enum: PROVINCE_SORT_FIELDS })
+  @ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'] })
   list(@Query() query: ListProvincesQueryDto) {
     return this.provincesService.list(query);
   }

@@ -16,10 +16,10 @@ export class CreateProjectDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ format: 'uuid' })
-  @IsOptional()
+  /** Required: category grants decide who sees the project on the "Projects" page. */
+  @ApiProperty({ format: 'uuid' })
   @IsUUID()
-  categoryId?: string;
+  categoryId!: string;
 
   @ApiPropertyOptional({ format: 'uuid' })
   @IsOptional()

@@ -561,10 +561,7 @@ export class GoogleDriveService implements OnModuleDestroy {
 
   async listImports(projectId: string, userId: string, userType?: 'ADMIN' | 'USER') {
     const project = await this.projectRepository.findOne({ where: { id: projectId } });
-    if (
-      !project ||
-      !(await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))
-    ) {
+    if (!project || !(await this.folderAccess.canViewProject(project, userId, userType))) {
       throw new ForbiddenException('Insufficient project permission');
     }
     const batches = await this.batchRepository.find({

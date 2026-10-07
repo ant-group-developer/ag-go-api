@@ -30,6 +30,7 @@ import { AppDataSource } from '../../database/data-source';
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
+import { CategoryAccessGrantEntity } from '../../database/entities/category-access-grant.entity';
 import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
@@ -67,6 +68,7 @@ beforeAll(async () => {
     ds.getRepository(FolderAccessGrantEntity),
     ds.getRepository(FolderClosureEntity),
     ds.getRepository(FolderEntity),
+    ds.getRepository(CategoryAccessGrantEntity),
   );
   scopeService = new FootageScopeService(folderAccess, ds);
 

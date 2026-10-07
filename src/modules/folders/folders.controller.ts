@@ -10,7 +10,7 @@ import {
   Put,
   Req,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
@@ -35,6 +35,15 @@ export class FoldersController {
   tree(@Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.foldersService.tree(context.userId, context.userType);
+  }
+
+  @Get('options')
+  @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
+  @ApiOperation({
+    summary: 'Every active folder, to filter the "Projects" page (listed by category grants)',
+  })
+  options() {
+    return this.foldersService.options();
   }
 
   @Post()
