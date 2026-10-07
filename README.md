@@ -184,7 +184,8 @@ yarn worker:outbox
 ## Dọn file ZIP tải xuống trên R2
 
 Mọi ZIP do worker đóng gói nằm dưới prefix `downloads/` (`downloads/{userId}/{jobId}.zip`).
-Link tải chỉ sống 1 giờ (job chuyển `expired`), sau đó file không còn dùng nên được xóa bằng
+ZIP chỉ tải được trong 12 giờ sau khi đóng gói (`DOWNLOAD_ZIP_TTL_HOURS`; hết hạn thì job chuyển
+`expired`). File không còn dùng sau đó nên được xóa bằng
 lifecycle rule của R2:
 
 ```bash

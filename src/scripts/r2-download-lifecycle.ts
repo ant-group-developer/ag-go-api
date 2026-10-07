@@ -15,8 +15,9 @@ import { DOWNLOAD_ZIP_PREFIX } from '../modules/downloads/download-naming';
  *   yarn r2:download-lifecycle --days 3
  *   yarn r2:download-lifecycle --dry-run    # print the rules without saving them
  *
- * A download link lives an hour (`expiresAt` of the job), so a day is the shortest rule R2
- * allows that never removes a ZIP someone may still save. Other rules on the bucket are kept:
+ * A ZIP can be saved for `DOWNLOAD_ZIP_TTL_HOURS` after it is packed (`expiresAt` of the job),
+ * so a day is the shortest rule R2 allows that never removes a ZIP someone may still save.
+ * Other rules on the bucket are kept:
  * the S3 API replaces the whole configuration, so this reads it, swaps in its own rule by ID
  * and writes the lot back.
  */

@@ -4,6 +4,13 @@
  */
 export const DOWNLOAD_ZIP_PREFIX = 'downloads/';
 
+/**
+ * How long a packed ZIP can still be saved. Each poll signs a fresh link, so this only bounds
+ * how late a hidden tab or a reopened browser may pick the file up; it stays under the lifecycle
+ * rule's one day so a link never points at a deleted object.
+ */
+export const DOWNLOAD_ZIP_TTL_HOURS = 12;
+
 export function downloadZipStorageKey(userId: string, downloadJobId: string): string {
   return `${DOWNLOAD_ZIP_PREFIX}${userId}/${downloadJobId}.zip`;
 }

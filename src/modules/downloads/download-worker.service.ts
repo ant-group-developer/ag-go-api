@@ -14,7 +14,12 @@ import { DOWNLOAD_JOB, DOWNLOAD_QUEUE } from '../../infra/queue/queue.constants'
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { cancellableBody, DownloadCancelledError } from './download-cancellation';
 import { distinctProjects, loadDownloadJobProjects } from './download-job-projects';
-import { downloadZipStorageKey, projectFolderName, ZipEntryNamer } from './download-naming';
+import {
+  DOWNLOAD_ZIP_TTL_HOURS,
+  downloadZipStorageKey,
+  projectFolderName,
+  ZipEntryNamer,
+} from './download-naming';
 import { findRenderedVariant, renderedFilename } from './rendered-variant';
 import { createZipStream, type ZipStreamEntry } from './zip-stream';
 
@@ -136,7 +141,7 @@ export class DownloadWorkerService implements OnModuleDestroy {
           zipBucket: this.config.getOrThrow<string>('R2_BUCKET'),
           zipStorageKey: storageKey,
           zipSizeBytes: String(head.sizeBytes),
-          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+          expiresAt: new Date(Date.now() + DOWNLOAD_ZIP_TTL_HOURS * 60 * 60 * 1000),
         },
       );
     } catch (error) {
