@@ -8,6 +8,10 @@ const UINT32_MAX = 0xffffffff;
 // General purpose flag bit 3: CRC and sizes follow the data in a data descriptor, so an
 // entry can be written while it streams instead of being buffered to compute them first.
 const FLAG_DATA_DESCRIPTOR = 0x0008;
+// General purpose flag bit 11: entry names are UTF-8, so Vietnamese names survive in every
+// modern unzip tool (Windows Explorer, macOS Archive Utility, 7-Zip, unzip).
+const FLAG_UTF8 = 0x0800;
+const ENTRY_FLAGS = FLAG_DATA_DESCRIPTOR | FLAG_UTF8;
 const VERSION_DEFAULT = 20;
 const VERSION_ZIP64 = 45;
 
@@ -32,7 +36,7 @@ async function* zipChunks(entries: AsyncIterable<ZipStreamEntry>): AsyncGenerato
   const modified = dosDateTime(new Date());
   let offset = 0;
   for await (const entry of entries) {
-    const name = Buffer.from(entry.name.replace(/[^\w.\-/]/g, '_'), 'utf8');
+    const name = Buffer.from(safeEntryName(entry.name), 'utf8');
     const header = localHeader(name, modified);
     yield header;
 
@@ -64,6 +68,22 @@ async function* zipChunks(entries: AsyncIterable<ZipStreamEntry>): AsyncGenerato
   yield* endOfCentralDirectory(records.length, centralSize, centralOffset);
 }
 
+/**
+ * Keeps letters of any language and `/` folder separators; characters Windows rejects in a
+ * path segment, control characters, and `.`/`..` segments become `_`.
+ */
+function safeEntryName(name: string): string {
+  return name
+    .normalize('NFC')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter((segment) => segment !== '')
+    .map((segment) =>
+      segment === '.' || segment === '..' ? '_' : segment.replace(/[:*?"<>|\x00-\x1f\x7f]/g, '_'),
+    )
+    .join('/');
+}
+
 /** Every entry is stamped with the archive's creation time (MS-DOS format, UTC). */
 function dosDateTime(value: Date): DosDateTime {
   return {
@@ -82,7 +102,7 @@ function localHeader(name: Buffer, modified: DosDateTime): Buffer {
   const header = Buffer.alloc(30 + name.length);
   header.writeUInt32LE(0x04034b50, 0);
   header.writeUInt16LE(VERSION_DEFAULT, 4);
-  header.writeUInt16LE(FLAG_DATA_DESCRIPTOR, 6);
+  header.writeUInt16LE(ENTRY_FLAGS, 6);
   // Method 0 (stored); CRC and sizes stay 0 and are given by the data descriptor.
   header.writeUInt16LE(modified.time, 10);
   header.writeUInt16LE(modified.date, 12);
@@ -130,7 +150,7 @@ function centralHeader({ name, crc, size, offset }: CentralRecord, modified: Dos
   header.writeUInt32LE(0x02014b50, 0);
   header.writeUInt16LE(version, 4);
   header.writeUInt16LE(version, 6);
-  header.writeUInt16LE(FLAG_DATA_DESCRIPTOR, 8);
+  header.writeUInt16LE(ENTRY_FLAGS, 8);
   header.writeUInt16LE(modified.time, 12);
   header.writeUInt16LE(modified.date, 14);
   header.writeUInt32LE(crc, 16);

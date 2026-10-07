@@ -54,9 +54,13 @@ export class ProvincesService {
     }
     const keyword = query.normalizedKeyword ?? query.search?.trim() ?? undefined;
     if (keyword) {
+      // Accent-insensitive, so "ninh binh" finds "Ninh Bình".
       const search = `%${keyword.toLowerCase()}%`;
       builder.andWhere(
-        "(LOWER(province.name) LIKE :search OR LOWER(COALESCE(province.code, '')) LIKE :search OR LOWER(country.name) LIKE :search OR LOWER(COALESCE(country.code, '')) LIKE :search)",
+        `(immutable_unaccent(LOWER(province.name)) LIKE immutable_unaccent(:search)
+          OR LOWER(COALESCE(province.code, '')) LIKE :search
+          OR immutable_unaccent(LOWER(country.name)) LIKE immutable_unaccent(:search)
+          OR LOWER(COALESCE(country.code, '')) LIKE :search)`,
         { search },
       );
     }
