@@ -69,6 +69,7 @@ import { AssetSourceShortEdge2040000000000 } from './migrations/2040000000000-as
 import { EvaluationPreviousStatus2050000000000 } from './migrations/2050000000000-evaluation-previous-status';
 import { AssetAnalysisV22060000000000 } from './migrations/2060000000000-asset-analysis-v2';
 import { DownloadProjectsScope2070000000000 } from './migrations/2070000000000-download-projects-scope';
+import { ProjectSearchText2080000000000 } from './migrations/2080000000000-project-search-text';
 
 loadEnv();
 
@@ -157,6 +158,7 @@ export const AppDataSource = new DataSource({
     EvaluationPreviousStatus2050000000000,
     AssetAnalysisV22060000000000,
     DownloadProjectsScope2070000000000,
+    ProjectSearchText2080000000000,
   ],
   synchronize: false,
 });

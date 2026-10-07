@@ -25,7 +25,13 @@ import {
   deleteAssetsAndRefreshBatches,
   planProjectAssetCleanup,
 } from './project-asset-cleanup';
-import { buildProjectSearch } from './project-search';
+import {
+  buildProjectSearch,
+  canMatchCloseSpelling,
+  CLOSE_SPELLINGS_SQL,
+  searchTokens,
+  typedTokenCondition,
+} from './project-search';
 
 @Injectable()
 export class ProjectsService {
@@ -68,10 +74,6 @@ export class ProjectsService {
       );
     }
 
-    const search = query.normalizedKeyword ? buildProjectSearch(query.normalizedKeyword) : null;
-    if (search) {
-      projectQuery.andWhere(search.where, search.params);
-    }
     const filterFolderIds = [
       ...new Set([...(query.folderIds ?? []), ...(query.folderId ? [query.folderId] : [])]),
     ];
@@ -122,14 +124,33 @@ export class ProjectsService {
       );
     }
 
-    const sortOrder = query.sortOrder === 'asc' ? 'ASC' : 'DESC';
-    if (query.sortBy === 'relevance') {
-      // Closest matches first; without a keyword there is nothing to rank, so newest first.
-      if (search) {
-        projectQuery.addSelect(search.score, 'search_score').orderBy('search_score', 'DESC');
+    // The keyword goes last: whether a word appears as typed is judged within the other filters.
+    const tokens = query.normalizedKeyword ? searchTokens(query.normalizedKeyword) : [];
+    const closeSpellings = new Map<string, string[]>();
+    for (const token of tokens.filter(canMatchCloseSpelling)) {
+      const foundAsTyped = await projectQuery
+        .clone()
+        .select('1')
+        .andWhere(typedTokenCondition('typed_token'), { typed_token: token })
+        .limit(1)
+        .getRawOne();
+      if (!foundAsTyped) {
+        const rows = (await this.dataSource.query(CLOSE_SPELLINGS_SQL, [token])) as Array<{
+          word: string;
+        }>;
+        closeSpellings.set(
+          token,
+          rows.map((row) => row.word),
+        );
       }
-      projectQuery.addOrderBy('project.updatedAt', 'DESC');
-    } else if (query.sortBy === 'folder') {
+    }
+    const search = buildProjectSearch(tokens, closeSpellings);
+    if (search) {
+      projectQuery.andWhere(search.where, search.params);
+    }
+
+    const sortOrder = query.sortOrder === 'asc' ? 'ASC' : 'DESC';
+    if (query.sortBy === 'folder') {
       // Sort by the folder's full path so subfolders stay grouped under their parent; natural
       // order so "Folder 9" comes before "Folder 10", as the folder tree and footage sort it.
       projectQuery

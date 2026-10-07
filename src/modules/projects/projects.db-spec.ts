@@ -201,8 +201,8 @@ describe('ProjectsService — keyword search', () => {
     return id;
   }
 
-  async function search(userId: string, keyword: string, sortBy?: 'relevance') {
-    return (await service.list(listQuery({ keyword, sortBy }), userId, 'USER')).items.map(
+  async function search(userId: string, keyword: string) {
+    return (await service.list(listQuery({ keyword }), userId, 'USER')).items.map(
       (p) => (p as unknown as { id: string }).id,
     );
   }
@@ -265,16 +265,71 @@ describe('ProjectsService — keyword search', () => {
     expect(await search(userId, 'nha trangg')).toEqual([project]);
   });
 
-  it('ranks name matches first when sorting by relevance', async () => {
+  it('still tries a close spelling when a word only shows up across a space', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const folderId = await insertGrantedFolder(userId);
-    const inDescription = await namedProject(
-      folderId,
-      'Gamma',
-      `, description = 'gần biển Sầm Sơn', updated_at = now() + interval '1 hour'`,
-    );
-    const inName = await namedProject(folderId, 'Sầm Sơn Beach');
+    const danang = await namedProject(folderId, 'Bãi biển Đà Nẵng');
+    // "nắng gió" reads "nanggio" without its space, which holds "nangg".
+    const windy = await namedProject(folderId, 'Đà Lạt nắng gió');
 
-    expect(await search(userId, 'sam son', 'relevance')).toEqual([inName, inDescription]);
+    expect((await search(userId, 'da nangg')).sort()).toEqual([danang, windy].sort());
+  });
+
+  it('only tries close spellings for words found nowhere as typed', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertGrantedFolder(userId);
+    const exact = await namedProject(folderId, 'Trang trại');
+    // A close spelling of "trang", which is found as typed above.
+    await namedProject(folderId, 'Tráng men');
+
+    expect(await search(userId, 'trang trai')).toEqual([exact]);
+  });
+
+  it('follows renamed tags, folders and categories', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertGrantedFolder(userId);
+    const project = await namedProject(folderId, 'Omega');
+    const categoryId = randomUUID();
+    const tagId = randomUUID();
+    await ds.query(
+      `INSERT INTO categories (id, name, slug, sort_order, is_active) VALUES ($1, 'Cũ', $2, 0, true)`,
+      [categoryId, `cu-${categoryId}`],
+    );
+    await ds.query(
+      `INSERT INTO tags (id, name, normalized_name, created_by) VALUES ($1,'cũ',$2,'t')`,
+      [tagId, `cũ ${tagId}`],
+    );
+    await ds.query(`UPDATE projects SET category_id = $2 WHERE id = $1`, [project, categoryId]);
+    await ds.query(`INSERT INTO project_tags (project_id, tag_id) VALUES ($1,$2)`, [
+      project,
+      tagId,
+    ]);
+
+    try {
+      await ds.query(`UPDATE tags SET name = $2 WHERE id = $1`, [
+        tagId,
+        `Thác nước ${tagId.slice(0, 6)}`,
+      ]);
+      await ds.query(`UPDATE categories SET name = $2 WHERE id = $1`, [
+        categoryId,
+        `Khu nghỉ dưỡng ${categoryId.slice(0, 6)}`,
+      ]);
+      await ds.query(`UPDATE folders SET path_text = $2 WHERE id = $1`, [
+        folderId,
+        'Tây Bắc / Mộc Châu',
+      ]);
+
+      expect(await search(userId, 'thac nuoc omega')).toEqual([project]);
+      expect(await search(userId, 'khu nghi duong omega')).toEqual([project]);
+      expect(await search(userId, 'moc chau omega')).toEqual([project]);
+
+      await ds.query(`DELETE FROM project_tags WHERE project_id = $1`, [project]);
+      expect(await search(userId, 'thac nuoc omega')).toEqual([]);
+    } finally {
+      await ds.query(`DELETE FROM project_tags WHERE project_id = $1`, [project]);
+      await ds.query(`UPDATE projects SET category_id = NULL WHERE id = $1`, [project]);
+      await ds.query(`DELETE FROM categories WHERE id = $1`, [categoryId]);
+      await ds.query(`DELETE FROM tags WHERE id = $1`, [tagId]);
+    }
   });
 });
