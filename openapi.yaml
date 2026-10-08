@@ -682,6 +682,23 @@ paths:
           in: query
           schema:
             type: string
+        - name: sortBy
+          required: false
+          in: query
+          schema:
+            enum:
+              - name
+              - code
+              - country
+            type: string
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            enum:
+              - asc
+              - desc
+            type: string
         - name: search
           required: false
           in: query
