@@ -1,9 +1,10 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Brackets, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { CategoryEntity } from '../../database/entities/category.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
+import { CATEGORY_GRANT_PROJECT_STATUSES } from '../folders/folder-access.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 
@@ -16,20 +17,38 @@ export class CategoriesService {
     private readonly projectRepository: Repository<ProjectEntity>,
   ) {}
 
-  /** Active categories; only those granted to `grantedToUserId` when given. */
-  list(grantedToUserId?: string) {
+  /**
+   * Active categories. With `grantedToUserId`, only those the user's "Projects" page reaches:
+   * granted to the user, or of an evaluated project in `accessibleFolderIds`.
+   */
+  list(grantedToUserId?: string, accessibleFolderIds: string[] = []) {
     const query = this.categoryRepository
       .createQueryBuilder('category')
       .addSelect('category.name COLLATE natural_sort', 'name_sort')
       .where('category.isActive = true');
     if (grantedToUserId) {
       query.andWhere(
-        `category.id IN (
-          SELECT category_grant.category_id
-          FROM category_access_grants category_grant
-          WHERE category_grant.principal_type = 'user' AND category_grant.principal_id = :userId
-        )`,
-        { userId: grantedToUserId },
+        new Brackets((access) => {
+          access.where(
+            `category.id IN (
+              SELECT category_grant.category_id
+              FROM category_access_grants category_grant
+              WHERE category_grant.principal_type = 'user' AND category_grant.principal_id = :userId
+            )`,
+            { userId: grantedToUserId },
+          );
+          if (accessibleFolderIds.length) {
+            access.orWhere(
+              `category.id IN (
+                SELECT folder_project.category_id
+                FROM projects folder_project
+                WHERE folder_project.folder_id IN (:...accessibleFolderIds)
+                  AND folder_project.evaluation_status IN (:...evaluatedStatuses)
+              )`,
+              { accessibleFolderIds, evaluatedStatuses: CATEGORY_GRANT_PROJECT_STATUSES },
+            );
+          }
+        }),
       );
     }
     return query.orderBy('category.sortOrder', 'ASC').addOrderBy('name_sort', 'ASC').getMany();

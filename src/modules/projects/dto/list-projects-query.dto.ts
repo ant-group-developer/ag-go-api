@@ -16,7 +16,7 @@ export type SortOrder = (typeof SORT_ORDERS)[number];
 /**
  * Which page the list is for; each decides who sees what (admins always see everything):
  * - `all`: every project, admins only;
- * - `evaluated` ("Projects"): evaluated projects of the categories granted to the user;
+ * - `evaluated` ("Projects"): evaluated projects of the categories or folders granted to the user;
  * - `evaluation` ("Project evaluations"): projects to evaluate in the folders granted to the user;
  * - `mine` ("My projects"): projects the user created, whatever their folder access.
  * Without a scope: every project in the user's folders (drafts only their own).

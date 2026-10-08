@@ -224,6 +224,19 @@ describe('ProjectsService — page scopes', () => {
     expect(await listIds('evaluated', userId)).toEqual([completed, partial].sort());
   });
 
+  it('also lists the evaluated projects of granted folders on "Projects", whatever the category', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertGrantedFolder(userId);
+    const hiddenFolderId = await insertGrantedFolder(`other-${randomUUID().slice(0, 8)}`);
+    // Created by a collaborator in the folder, granted to nobody yet.
+    const ungranted = await insertCategory();
+    const completed = await categorizedProject(folderId, ungranted, 'completed');
+    await categorizedProject(folderId, ungranted, 'pending');
+    await categorizedProject(hiddenFolderId, ungranted, 'completed');
+
+    expect(await listIds('evaluated', userId)).toEqual([completed]);
+  });
+
   it('lists projects to evaluate of granted folders only on "Project evaluations"', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const folderId = await insertGrantedFolder(userId);
