@@ -17,6 +17,7 @@ import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { isAdminUserType } from '../../common/auth/user-type';
+import { FolderAccessService } from '../folders/folder-access.service';
 import { CategoriesService } from './categories.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { ListCategoriesQueryDto } from './dto/list-categories-query.dto';
@@ -30,17 +31,25 @@ export class CategoriesController {
     private readonly categoriesService: CategoriesService,
     private readonly authContext: AuthContextService,
     private readonly actorEnrichment: ActorEnrichmentService,
+    private readonly folderAccessService: FolderAccessService,
   ) {}
 
   /** Each category with its creator as `createdByUser` (null when unknown). */
   @Get()
   async list(@Query() query: ListCategoriesQueryDto, @Req() request: Request) {
     let grantedToUserId: string | undefined;
+    let accessibleFolderIds: string[] = [];
     if (query.granted) {
       const context = this.authContext.getContext(request);
-      grantedToUserId = isAdminUserType(context.userType) ? undefined : context.userId;
+      if (!isAdminUserType(context.userType)) {
+        grantedToUserId = context.userId;
+        accessibleFolderIds = await this.folderAccessService.accessibleFolderIds(
+          context.userId,
+          context.userType,
+        );
+      }
     }
-    const categories = await this.categoriesService.list(grantedToUserId);
+    const categories = await this.categoriesService.list(grantedToUserId, accessibleFolderIds);
     return this.actorEnrichment.enrich(categories as unknown as Array<Record<string, unknown>>, [
       { id: 'createdBy', target: 'createdByUser' },
     ]);

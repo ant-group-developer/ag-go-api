@@ -37,7 +37,8 @@ export type UserCategoryGrant = CategoryAccessGrantEntity & {
 };
 
 /**
- * Category grants decide what a user sees on the "Projects" page. Managed by holders of
+ * Category grants decide what a user sees on the "Projects" page beyond the evaluated projects
+ * of their own folders. Managed by holders of
  * `go.category.access_manage`, on every category: categories have no owner to delegate to.
  */
 @Injectable()

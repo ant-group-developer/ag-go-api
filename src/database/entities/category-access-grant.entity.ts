@@ -1,8 +1,9 @@
 import { Column, CreateDateColumn, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
 /**
- * Lets a user see the evaluated projects of a category on the "Projects" page, read-only.
- * Unlike folder grants there is no level: editing still needs an editor grant on the folder.
+ * Lets a user see the evaluated projects of a category on the "Projects" page, read-only, in
+ * any folder (folder grants add those of their folders). Unlike folder grants there is no
+ * level: editing still needs an editor grant on the folder.
  */
 @Entity('category_access_grants')
 export class CategoryAccessGrantEntity {
