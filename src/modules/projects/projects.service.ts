@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository, type SelectQueryBuilder } from 'typeorm';
+import { Brackets, DataSource, In, Repository, type SelectQueryBuilder } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService, type ActorUser } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
@@ -298,13 +298,29 @@ export class ProjectsService {
         if (isAdmin) {
           return query;
         }
-        const categoryIds = await this.folderAccessService.grantedCategoryIds(userId);
-        if (categoryIds.length === 0) {
+        // Category grants reach every folder; folder grants keep their projects once evaluated,
+        // even in a category nobody granted yet (one a collaborator just created).
+        const [categoryIds, folderIds] = await Promise.all([
+          this.folderAccessService.grantedCategoryIds(userId),
+          this.folderAccessService.accessibleFolderIds(userId, userType),
+        ]);
+        if (categoryIds.length === 0 && folderIds.length === 0) {
           return null;
         }
-        return query.andWhere('project.categoryId IN (:...grantedCategoryIds)', {
-          grantedCategoryIds: categoryIds,
-        });
+        return query.andWhere(
+          new Brackets((access) => {
+            if (categoryIds.length) {
+              access.orWhere('project.categoryId IN (:...grantedCategoryIds)', {
+                grantedCategoryIds: categoryIds,
+              });
+            }
+            if (folderIds.length) {
+              access.orWhere('project.folderId IN (:...accessibleFolderIds)', {
+                accessibleFolderIds: folderIds,
+              });
+            }
+          }),
+        );
       }
       case 'evaluation':
         query.where('project.evaluationStatus IN (:...scopeStatuses)', {
