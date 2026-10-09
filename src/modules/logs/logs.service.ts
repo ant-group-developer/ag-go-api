@@ -25,8 +25,8 @@ export class LogsService {
       filters.push(`a.category = $${values.length}`);
     }
     if (query.action) {
-      values.push(query.action);
-      filters.push(`a.action = $${values.length}`);
+      values.push(`%${query.action}%`);
+      filters.push(`a.action ILIKE $${values.length}`);
     }
     if (query.level) {
       values.push(query.level);
