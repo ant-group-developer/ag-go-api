@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Raw, Repository } from 'typeorm';
+import { DataSource, In, Raw, Repository, SelectQueryBuilder } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
@@ -72,6 +72,14 @@ export function isAutoJobStatusFilter(value: unknown): value is AutoJobStatusFil
 
 export type AutoJobCounts = Record<AutoJobStatusFilter, number>;
 
+const EMPTY_JOB_COUNTS: AutoJobCounts = {
+  all: 0,
+  active: 0,
+  completed: 0,
+  failed: 0,
+  cancelled: 0,
+};
+
 /**
  * Sortable columns of the auto render job list: when the job was queued, when processing
  * started, and how long processing took (finished - started).
@@ -92,6 +100,26 @@ const AUTO_JOB_SORT_EXPRESSIONS: Record<AutoJobSortField, string> = {
 };
 
 export type RenderJobSource = 'batch' | 'upload' | 'import' | 'retry' | 'other';
+
+/** Paging, status tab, search and sort of a render job list. */
+export type RenderJobPageOptions = {
+  page?: number;
+  pageSize?: number;
+  status?: AutoJobStatusFilter;
+  search?: string;
+  sortBy?: AutoJobSortField;
+  sortOrder?: AutoJobSortOrder;
+};
+
+function pageBounds(options: RenderJobPageOptions): { page: number; pageSize: number } {
+  return {
+    page: Math.max(Math.trunc(options.page ?? 1) || 1, 1),
+    pageSize: Math.min(
+      Math.max(Math.trunc(options.pageSize ?? AUTO_JOBS_DEFAULT_PAGE_SIZE) || 1, 1),
+      AUTO_JOBS_MAX_PAGE_SIZE,
+    ),
+  };
+}
 
 @Injectable()
 export class RenderService {
@@ -421,11 +449,7 @@ export class RenderService {
     userId: string,
     userType?: 'ADMIN' | 'USER',
   ): Promise<RenderBatchEntity> {
-    const batch = await this.batchRepository.findOne({ where: { id } });
-    if (!batch) {
-      throw new NotFoundException('Render batch not found');
-    }
-    await this.assertBatchAccess(batch, userId, userType);
+    const batch = await this.findAccessibleBatch(id, userId, userType);
     const [enrichedBatch] = await this.actorEnrichment.enrich(
       [batch as unknown as Record<string, unknown>],
       [{ id: 'createdBy', target: 'createdByUser' }],
@@ -523,14 +547,22 @@ export class RenderService {
     );
   }
 
-  /** Jobs of a batch, described by {@link describeJobs}. */
-  async listJobs(batchId: string, userId: string, userType?: 'ADMIN' | 'USER') {
-    const batch = await this.getBatch(batchId, userId, userType);
-    const jobs = await this.jobRepository.find({
-      where: { renderBatchId: batch.id },
-      order: { createdAt: 'ASC' },
-    });
-    return this.describeJobs(jobs);
+  /**
+   * Jobs of a batch, described by {@link describeJobs}, one page at a time like
+   * {@link listAutoJobs}: a batch re-rendering every project holds thousands of jobs, too many
+   * to describe on each poll of the batch detail.
+   */
+  async listJobs(
+    batchId: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    options: RenderJobPageOptions = {},
+  ) {
+    const batch = await this.findAccessibleBatch(batchId, userId, userType);
+    const query = this.jobRepository
+      .createQueryBuilder('job')
+      .where('job.render_batch_id = :batchId', { batchId: batch.id });
+    return this.pageJobs(query, options);
   }
 
   /**
@@ -542,23 +574,8 @@ export class RenderService {
   async listAutoJobs(
     userId: string,
     userType?: 'ADMIN' | 'USER',
-    options: {
-      projectId?: string;
-      page?: number;
-      pageSize?: number;
-      status?: AutoJobStatusFilter;
-      search?: string;
-      sortBy?: AutoJobSortField;
-      sortOrder?: AutoJobSortOrder;
-    } = {},
+    options: RenderJobPageOptions & { projectId?: string } = {},
   ) {
-    const page = Math.max(Math.trunc(options.page ?? 1) || 1, 1);
-    const pageSize = Math.min(
-      Math.max(Math.trunc(options.pageSize ?? AUTO_JOBS_DEFAULT_PAGE_SIZE) || 1, 1),
-      AUTO_JOBS_MAX_PAGE_SIZE,
-    );
-    const status = options.status ?? 'all';
-    const emptyCounts: AutoJobCounts = { all: 0, active: 0, completed: 0, failed: 0, cancelled: 0 };
     const query = this.jobRepository.createQueryBuilder('job').where('job.render_batch_id IS NULL');
 
     if (options.projectId) {
@@ -574,7 +591,7 @@ export class RenderService {
     } else if (!isAdminUserType(userType)) {
       const folderIds = await this.folderAccess.accessibleFolderIds(userId, userType);
       if (folderIds.length === 0) {
-        return { items: [], total: 0, page, pageSize, counts: emptyCounts };
+        return { items: [], total: 0, ...pageBounds(options), counts: { ...EMPTY_JOB_COUNTS } };
       }
       query.andWhere(
         `EXISTS (SELECT 1 FROM project_media media
@@ -583,6 +600,19 @@ export class RenderService {
         { folderIds },
       );
     }
+    return this.pageJobs(query, options);
+  }
+
+  /**
+   * One page of the jobs `query` selects, searched, filtered by status and sorted. `counts`
+   * ignores the status filter (but not the search) so every tab shows its size.
+   */
+  private async pageJobs(
+    query: SelectQueryBuilder<MediaRenderJobEntity>,
+    options: RenderJobPageOptions,
+  ) {
+    const { page, pageSize } = pageBounds(options);
+    const status = options.status ?? 'all';
 
     const search = options.search?.trim();
     if (search) {
@@ -608,7 +638,7 @@ export class RenderService {
       .addSelect(`COUNT(*) FILTER (WHERE job.status = 'failed')::int`, 'failed')
       .addSelect(`COUNT(*) FILTER (WHERE job.status = 'cancelled')::int`, 'cancelled')
       .getRawOne<AutoJobCounts>();
-    const counts = countRow ?? emptyCounts;
+    const counts = countRow ?? { ...EMPTY_JOB_COUNTS };
 
     if (status === 'active') {
       query.andWhere('job.status IN (:...activeStatuses)', {
@@ -648,9 +678,9 @@ export class RenderService {
       return [];
     }
     const [assets, variants, projects] = await Promise.all([
-      this.assetRepository.findBy({ id: In(assetIds) }),
+      this.assetRepository.findBy({ id: anyOf(assetIds) }),
       this.dataSource.getRepository(AssetVariantEntity).find({
-        where: { assetId: In(assetIds), status: 'ready' },
+        where: { assetId: anyOf(assetIds), status: 'ready' },
         order: { width: 'ASC' },
       }),
       this.dataSource.query(
@@ -665,6 +695,16 @@ export class RenderService {
     ]);
     const assetById = new Map(assets.map((asset) => [asset.id, asset]));
     const projectByAsset = new Map(projects.map((project) => [project.assetId, project]));
+    // Grouped once: filtering every variant for each job is quadratic on large lists.
+    const variantsByAsset = new Map<string, AssetVariantEntity[]>();
+    for (const variant of variants) {
+      const list = variantsByAsset.get(variant.assetId);
+      if (list) {
+        list.push(variant);
+      } else {
+        variantsByAsset.set(variant.assetId, [variant]);
+      }
+    }
     return this.actorEnrichment.enrich(
       jobs.map((job) => {
         const asset = assetById.get(job.assetId);
@@ -687,20 +727,18 @@ export class RenderService {
               }
             : null,
           project: project ? { id: project.id, name: project.name } : null,
-          outputs: variants
-            .filter((variant) => variant.assetId === job.assetId)
-            .map((variant) => ({
-              variantCode: variant.variantCode,
-              mimeType: variant.mimeType,
-              width: variant.width,
-              height: variant.height,
-              resolution:
-                variant.variantCode === THUMBNAIL_VARIANT_CODE ? null : variantResolution(variant),
-              fileSizeBytes: variant.fileSizeBytes,
-              hasWatermark: variant.hasWatermark,
-              renderVersion: variant.renderVersion,
-              reused: job.renderSummary?.reused.includes(variant.variantCode) ?? false,
-            })),
+          outputs: (variantsByAsset.get(job.assetId) ?? []).map((variant) => ({
+            variantCode: variant.variantCode,
+            mimeType: variant.mimeType,
+            width: variant.width,
+            height: variant.height,
+            resolution:
+              variant.variantCode === THUMBNAIL_VARIANT_CODE ? null : variantResolution(variant),
+            fileSizeBytes: variant.fileSizeBytes,
+            hasWatermark: variant.hasWatermark,
+            renderVersion: variant.renderVersion,
+            reused: job.renderSummary?.reused.includes(variant.variantCode) ?? false,
+          })),
         };
       }) as unknown as Array<Record<string, unknown>>,
       [{ id: 'createdBy', target: 'createdByUser' }],
@@ -959,6 +997,19 @@ export class RenderService {
       }
     }
     throw new ForbiddenException('Insufficient render job permission');
+  }
+
+  private async findAccessibleBatch(
+    id: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<RenderBatchEntity> {
+    const batch = await this.batchRepository.findOne({ where: { id } });
+    if (!batch) {
+      throw new NotFoundException('Render batch not found');
+    }
+    await this.assertBatchAccess(batch, userId, userType);
+    return batch;
   }
 
   private async assertBatchAccess(
