@@ -19,9 +19,14 @@ import {
   comparePreviews,
   describePreview,
   isPreviewVariantCode,
+  variantResolution,
   type PreviewDescription,
 } from '../render/render-sizes';
-import { findActiveRenderProfile, isVariantServable } from '../render/watermark-policy';
+import {
+  canViewUnwatermarked,
+  findActiveRenderProfile,
+  isVariantServable,
+} from '../render/watermark-policy';
 import type { FootageCatalogBodyDto } from './dto/catalog-query.dto';
 import type {
   ResolveAssetsResponse,
@@ -34,6 +39,17 @@ import type {
   FootageSortOrder,
 } from './dto/search-query.dto';
 import { FootageScopeService } from './footage-scope.service';
+import { pickRendition, shortEdgeOf, type Rendition, type ResolvePrefer } from './resolve-prefer';
+
+/** Height of the analysis proxy the scan worker encodes (when the source is higher). */
+const PROXY_HEIGHT = 720;
+
+/** One file a preview render may read, as `preferredRendition` weighs it. */
+type RenditionRef = {
+  variant?: AssetVariantEntity;
+  proxy?: { key: string; sizeBytes: number | null; analysisId: string };
+  original?: true;
+};
 
 /** One analysed video as footage (see the asset-level contract). */
 export type FootageVideo = DescriptionView & {
@@ -504,8 +520,10 @@ export class FootageService {
     userType?: 'ADMIN' | 'USER',
     userPermissions?: string[],
     requestId?: string,
+    prefer?: ResolvePrefer,
   ): Promise<ResolveAssetsResponse> {
     const uniqueIds = [...new Set(assetIds)];
+    const viewerClean = canViewUnwatermarked(userPermissions, userType);
     await this.scopeService.assertAssetsInScope(uniqueIds, { userId, userType });
 
     const canAccessOriginal =
@@ -537,6 +555,19 @@ export class FootageService {
         cacheKey: `original:${asset.id}`,
         expiresAt,
       });
+
+      // a preview render that says what it would rather read: the nearest clean rendition it may see
+      if (purpose === 'preview' && prefer) {
+        const picked = await this.preferredRendition(asset, analysis, {
+          canAccessOriginal: Boolean(canAccessOriginal),
+          viewerClean,
+          prefer,
+        });
+        if (picked) {
+          items.push(await this.renditionItem(picked, asset, durationMs, ttl, expiresAt));
+          continue;
+        }
+      }
 
       if (canAccessOriginal) {
         if (purpose === 'final' || !analysis) {
@@ -589,7 +620,13 @@ export class FootageService {
         message: `Resolved ${items.length} videos for userId=${userId} purpose=${purpose}`,
         requestId,
         userId,
-        metadata: { videoCount: items.length, missing: missing.length, purpose, canAccessOriginal },
+        metadata: {
+          videoCount: items.length,
+          missing: missing.length,
+          purpose,
+          canAccessOriginal,
+          prefer: prefer ?? null,
+        },
       });
     } catch {
       // Audit failure must not block the response
@@ -940,6 +977,120 @@ export class FootageService {
       approved: Boolean(row.approved),
       analyzedAt: row.analyzedAt ? new Date(row.analyzedAt).toISOString() : '',
       thumbnailUrl,
+    };
+  }
+
+  /**
+   * The renditions a preview render may read for this user, and the one `prefer` picks: the ready preview variants
+   * they may see (clean ones only for people who may see un-watermarked media), and for people who may open originals
+   * the analysis proxy (720 px high) and the original.
+   */
+  private async preferredRendition(
+    asset: AssetEntity,
+    analysis: AssetAnalysisEntity | null,
+    o: { canAccessOriginal: boolean; viewerClean: boolean; prefer: ResolvePrefer },
+  ): Promise<Rendition<RenditionRef> | undefined> {
+    const [variants, profile] = await Promise.all([
+      this.variantRepo.find({ where: { assetId: asset.id, status: 'ready' } }),
+      findActiveRenderProfile(this.renderProfileRepo),
+    ]);
+    const candidates: Rendition<RenditionRef>[] = variants
+      .filter(
+        (v) => isPreviewVariantCode(v.variantCode) && isVariantServable(v, profile, o.viewerClean),
+      )
+      .map((v) => ({
+        kind: 'preview' as const,
+        shortEdge: variantResolution(v),
+        watermarked: v.hasWatermark,
+        ref: { variant: v },
+      }));
+    if (o.canAccessOriginal) {
+      const meta = (asset.sourceMetadata ?? {}) as { width?: unknown; height?: unknown };
+      const original = shortEdgeOf(meta.width, meta.height);
+      if (analysis) {
+        const proxyKey = `${analysisPrefix(asset.originalStorageKey, asset.id, analysis.id)}proxy.mp4`;
+        const head = await this.storage.headObject(proxyKey).catch(() => null);
+        if (head) {
+          const w = typeof meta.width === 'number' ? meta.width : null;
+          const h = typeof meta.height === 'number' ? meta.height : null;
+          // the scan worker encodes the proxy 720 px high when the source is higher (else it analyses the source)
+          const proxy =
+            w && h
+              ? h > PROXY_HEIGHT
+                ? shortEdgeOf(Math.round((w * PROXY_HEIGHT) / h), PROXY_HEIGHT)
+                : Math.min(w, h)
+              : PROXY_HEIGHT;
+          candidates.push({
+            kind: 'proxy',
+            shortEdge: proxy,
+            watermarked: false,
+            ref: { proxy: { key: proxyKey, sizeBytes: head.sizeBytes, analysisId: analysis.id } },
+          });
+        }
+      }
+      candidates.push({
+        kind: 'original',
+        shortEdge: original,
+        watermarked: false,
+        ref: { original: true },
+      });
+    }
+    return pickRendition(candidates, o.prefer);
+  }
+
+  private async renditionItem(
+    picked: Rendition<RenditionRef>,
+    asset: AssetEntity,
+    durationMs: number | null,
+    ttl: number,
+    expiresAt: string,
+  ): Promise<ResolvedAssetItem> {
+    const meta = (asset.sourceMetadata ?? {}) as { width?: unknown; height?: unknown };
+    const num = (v: unknown) => (typeof v === 'number' ? v : null);
+    if (picked.ref.variant) {
+      const v = picked.ref.variant;
+      return {
+        assetId: asset.id,
+        url: await this.storage.getPresignedGetUrl(v.storageKey, v.mimeType, ttl),
+        sourceKind: 'preview',
+        watermarked: v.hasWatermark,
+        contentType: v.mimeType,
+        sizeBytes: Number(v.fileSizeBytes) || null,
+        durationMs,
+        cacheKey: `variant:${v.id}`,
+        expiresAt,
+        width: v.width,
+        height: v.height,
+      };
+    }
+    if (picked.ref.proxy) {
+      const p = picked.ref.proxy;
+      return {
+        assetId: asset.id,
+        url: await this.storage.getPresignedGetUrl(p.key, 'video/mp4', ttl),
+        sourceKind: 'proxy',
+        watermarked: false,
+        contentType: 'video/mp4',
+        sizeBytes: p.sizeBytes,
+        durationMs,
+        cacheKey: `proxy:${p.analysisId}`,
+        expiresAt,
+        width: null,
+        height: null,
+      };
+    }
+    return {
+      assetId: asset.id,
+      url: await this.storage.getPresignedGetUrl(asset.originalStorageKey, asset.mimeType, ttl),
+      sourceKind: 'original',
+      watermarked: false,
+      contentType: asset.mimeType,
+      sizeBytes: Number(asset.fileSizeBytes) || null,
+      durationMs,
+      cacheKey: `original:${asset.id}`,
+      expiresAt,
+      width: num(meta.width),
+      height: num(meta.height),
     };
   }
 
