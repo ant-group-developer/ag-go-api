@@ -99,6 +99,7 @@ export class FootageController {
       ctx.userType,
       ctx.permissions,
       (req as Request & { requestId?: string }).requestId,
+      dto.prefer,
     );
   }
 
