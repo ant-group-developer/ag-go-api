@@ -20,7 +20,12 @@ import { CreateRenderBatchDto } from './dto/create-render-batch.dto';
 import { CreateWatermarkLogoUploadSessionDto } from './dto/create-watermark-logo-upload-session.dto';
 import { RerenderWatermarkDto } from './dto/rerender-watermark.dto';
 import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
-import { isAutoJobSortField, isAutoJobStatusFilter, RenderService } from './render.service';
+import {
+  isAutoJobSortField,
+  isAutoJobStatusFilter,
+  RenderService,
+  type RenderJobPageOptions,
+} from './render.service';
 
 @ApiTags('render')
 @ApiBearerAuth()
@@ -113,40 +118,31 @@ export class RenderController {
     return this.renderService.listBatches(projectId, context.userId, context.userType);
   }
 
+  /** One page of the batch's jobs; takes the same paging query as `render-jobs/auto`. */
   @Get('render-batches/:id/jobs')
   @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
-  listJobs(@Param('id') id: string, @Req() request: Request) {
+  listJobs(
+    @Param('id') id: string,
+    @Query() query: Record<string, string | undefined>,
+    @Req() request: Request,
+  ) {
     const context = this.authContext.getContext(request);
-    return this.renderService.listJobs(id, context.userId, context.userType);
+    return this.renderService.listJobs(
+      id,
+      context.userId,
+      context.userType,
+      parseJobPageQuery(query),
+    );
   }
 
   /** Jobs queued automatically after an upload or a Drive import (not part of a batch). */
   @Get('render-jobs/auto')
   @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
-  listAutoJobs(
-    @Query('projectId') projectId: string | undefined,
-    @Query('page') page: string | undefined,
-    @Query('pageSize') pageSize: string | undefined,
-    @Query('status') status: string | undefined,
-    @Query('search') search: string | undefined,
-    @Query('sortBy') sortBy: string | undefined,
-    @Query('sortOrder') sortOrder: string | undefined,
-    @Req() request: Request,
-  ) {
+  listAutoJobs(@Query() query: Record<string, string | undefined>, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    const parsedPage = page ? Number.parseInt(page, 10) : undefined;
-    const parsedPageSize = pageSize ? Number.parseInt(pageSize, 10) : undefined;
-    const normalizedSortOrder = sortOrder?.toUpperCase();
     return this.renderService.listAutoJobs(context.userId, context.userType, {
-      ...(projectId ? { projectId } : {}),
-      ...(Number.isFinite(parsedPage) ? { page: parsedPage } : {}),
-      ...(Number.isFinite(parsedPageSize) ? { pageSize: parsedPageSize } : {}),
-      ...(isAutoJobStatusFilter(status) ? { status } : {}),
-      ...(search?.trim() ? { search: search.trim().slice(0, 200) } : {}),
-      ...(isAutoJobSortField(sortBy) ? { sortBy } : {}),
-      ...(normalizedSortOrder === 'ASC' || normalizedSortOrder === 'DESC'
-        ? { sortOrder: normalizedSortOrder }
-        : {}),
+      ...(query.projectId ? { projectId: query.projectId } : {}),
+      ...parseJobPageQuery(query),
     });
   }
 
@@ -199,4 +195,23 @@ export class RenderController {
     const context = this.authContext.getContext(request);
     return this.renderService.resumeBatch(id, context.userId, context.userType);
   }
+}
+
+/** Paging, status tab, search and sort of a render job list, from its query string. */
+function parseJobPageQuery(query: Record<string, string | undefined>): RenderJobPageOptions {
+  const { page, pageSize, status, search, sortBy, sortOrder } = query;
+  const parsedPage = page ? Number.parseInt(page, 10) : undefined;
+  const parsedPageSize = pageSize ? Number.parseInt(pageSize, 10) : undefined;
+  const normalizedSortOrder = typeof sortOrder === 'string' ? sortOrder.toUpperCase() : undefined;
+  const trimmedSearch = typeof search === 'string' ? search.trim() : '';
+  return {
+    ...(Number.isFinite(parsedPage) ? { page: parsedPage } : {}),
+    ...(Number.isFinite(parsedPageSize) ? { pageSize: parsedPageSize } : {}),
+    ...(isAutoJobStatusFilter(status) ? { status } : {}),
+    ...(trimmedSearch ? { search: trimmedSearch.slice(0, 200) } : {}),
+    ...(isAutoJobSortField(sortBy) ? { sortBy } : {}),
+    ...(normalizedSortOrder === 'ASC' || normalizedSortOrder === 'DESC'
+      ? { sortOrder: normalizedSortOrder }
+      : {}),
+  };
 }
