@@ -25,8 +25,8 @@ export class LogsService {
       filters.push(`a.category = $${values.length}`);
     }
     if (query.action) {
-      values.push(query.action);
-      filters.push(`a.action = $${values.length}`);
+      values.push(`%${query.action}%`);
+      filters.push(`a.action ILIKE $${values.length}`);
     }
     if (query.level) {
       values.push(query.level);
@@ -44,11 +44,11 @@ export class LogsService {
     const countRows = await this.dataSource.query(
       `SELECT COUNT(*)::int AS total
        FROM (
-         SELECT pal.id::text, 'audit' AS category, pal.action, pal.actor_user_id AS user_id,
+         SELECT pal.id::text, 'audit' AS category, 'info' AS level, pal.action, pal.actor_user_id AS user_id,
                 pal.project_id, pal.created_at
          FROM project_audit_logs pal
          UNION ALL
-         SELECT sl.id::text, sl.category, sl.action, sl.user_id, sl.project_id, sl.created_at
+         SELECT sl.id::text, sl.category, sl.level, sl.action, sl.user_id, sl.project_id, sl.created_at
          FROM system_logs sl
        ) a
        LEFT JOIN projects p ON p.id = a.project_id
