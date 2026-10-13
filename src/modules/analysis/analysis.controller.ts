@@ -27,6 +27,7 @@ import { BackfillAnalysisDto } from './dto/backfill-analysis.dto';
 import { EnqueueAnalysisDto } from './dto/enqueue-analysis.dto';
 import { FarmTicketGuard } from './farm/farm-ticket.guard';
 import { SignRequestSchema } from './farm/sign';
+import { PrepSignService } from './prep/prep-sign.service';
 
 @ApiTags('analysis')
 @Controller()
@@ -36,6 +37,7 @@ export class AnalysisController {
     private readonly batchService: AnalysisBatchService,
     private readonly analysisLog: AnalysisLogService,
     private readonly signService: AnalysisSignService,
+    private readonly prepSignService: PrepSignService,
     private readonly authContext: AuthContextService,
   ) {}
 
@@ -55,8 +57,10 @@ export class AnalysisController {
       throw new BadRequestException(`Invalid sign request: ${parsed.error.message}`);
     }
     const claims = req.farmTicketClaims!;
-    const job = req.farmJob!;
-    return this.signService.sign(claims, job, parsed.data.ops, req.requestId);
+    if (req.prepFarmJob) {
+      return this.prepSignService.sign(claims, req.prepFarmJob, parsed.data.ops, req.requestId);
+    }
+    return this.signService.sign(claims, req.farmJob!, parsed.data.ops, req.requestId);
   }
 
   // ---------------------------------------------------------------------------

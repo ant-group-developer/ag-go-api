@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { DataSource } from 'typeorm';
 import type { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
 import type { AnalysisOutboxService } from '../../modules/analysis/analysis-outbox.service';
+import type { PrepPipelineService } from '../../modules/analysis/prep/prep-pipeline.service';
 import type { StorageAdapter } from '../../modules/assets/storage/storage-adapter';
 import type { MediaQueueService } from './media-queue.service';
 import { OutboxDispatcherService } from './outbox-dispatcher.service';
@@ -14,6 +15,9 @@ jest.mock('@nestjs/typeorm', () => ({
 jest.mock('./media-queue.service', () => ({ MediaQueueService: class {} }));
 jest.mock('../../modules/analysis/analysis-outbox.service', () => ({
   AnalysisOutboxService: class {},
+}));
+jest.mock('../../modules/analysis/prep/prep-pipeline.service', () => ({
+  PrepPipelineService: class {},
 }));
 
 function purgeEvent(attemptCount: number): OutboxEventEntity {
@@ -368,6 +372,62 @@ describe('OutboxDispatcherService', () => {
       expect(update).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({ status: 'failed' }),
+      );
+    });
+  });
+
+  describe('asset.prep.requested branch', () => {
+    it('sends the prep to the farm through PrepPipelineService', async () => {
+      const prepId = randomUUID();
+      const event: OutboxEventEntity = {
+        id: randomUUID(),
+        eventType: 'asset.prep.requested',
+        aggregateType: 'asset_prep',
+        aggregateId: prepId,
+        payload: { prepId },
+        status: 'pending',
+        attemptCount: 0,
+        availableAt: new Date(),
+        publishedAt: null,
+        lastError: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const queryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        setLock: jest.fn().mockReturnThis(),
+        setOnLocked: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([event]),
+      };
+      const manager = {
+        createQueryBuilder: jest.fn(() => queryBuilder),
+        update: jest.fn().mockResolvedValue(undefined),
+      };
+      const update = jest.fn().mockResolvedValue(undefined);
+      const dataSource = {
+        transaction: jest.fn((work: (m: typeof manager) => unknown) => work(manager)),
+        getRepository: jest.fn(() => ({ update })),
+      } as unknown as DataSource;
+      const handlePrepRequested = jest.fn().mockResolvedValue(undefined);
+      const service = new OutboxDispatcherService(
+        dataSource,
+        { addProcessingJob: jest.fn() } as unknown as MediaQueueService,
+        {} as ConfigService,
+        { deletePrefix: jest.fn() } as unknown as StorageAdapter,
+        undefined,
+        { handlePrepRequested } as unknown as PrepPipelineService,
+      );
+
+      await service.dispatchPending();
+
+      expect(handlePrepRequested).toHaveBeenCalledWith(prepId);
+      expect(update).toHaveBeenCalledWith(
+        event.id,
+        expect.objectContaining({ status: 'published' }),
       );
     });
   });

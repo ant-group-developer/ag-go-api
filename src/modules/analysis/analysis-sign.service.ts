@@ -6,14 +6,11 @@ import { AnalysisFarmJobEntity } from '../../database/entities/analysis-farm-job
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
-import {
-  STORAGE_ADAPTER,
-  type StorageAdapter,
-  type UploadedPart,
-} from '../assets/storage/storage-adapter';
+import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
 import { SystemLogService } from '../logs/system-log.service';
 import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
 import { isPreviewVariantCode } from '../render/render-sizes';
+import { guessContentType, isSafeRelativePath, signWriteOp } from './farm-sign-ops';
 import { AI_MANIFEST_PATH, AI_TRACE_PATH } from './farm/scan';
 import type { SignOp, SignResponse, SignResult } from './farm/sign';
 import type { TicketClaims } from './farm/ticket';
@@ -105,62 +102,7 @@ export class AnalysisSignService {
     }
 
     // Write ops land under the analysis prefix; authorizeOp already checked the path.
-    const output = op.output;
-
-    if (op.op === 'put') {
-      const url = await this.storage.getPresignedPutUrl(
-        `${analysisPrefix}${output}`,
-        op.content_type,
-        ttl,
-      );
-      return {
-        op: 'put',
-        output,
-        url,
-        expires_at: expiresAt,
-        headers: { 'Content-Type': op.content_type },
-      };
-    }
-
-    if (op.op === 'mp_create') {
-      const uploadId = await this.storage.createMultipartUpload(
-        `${analysisPrefix}${output}`,
-        op.content_type,
-      );
-      return { op: 'mp_create', output, upload_id: uploadId };
-    }
-
-    if (op.op === 'mp_part_urls') {
-      const urls = await Promise.all(
-        op.parts.map(async (partNumber) => ({
-          part_number: partNumber,
-          url: await this.storage.getPresignedUploadPartUrl(
-            `${analysisPrefix}${output}`,
-            op.upload_id,
-            partNumber,
-            ttl,
-          ),
-        })),
-      );
-      return { op: 'mp_part_urls', output, upload_id: op.upload_id, expires_at: expiresAt, urls };
-    }
-
-    if (op.op === 'mp_complete') {
-      const parts: UploadedPart[] = op.parts.map((p) => ({
-        partNumber: p.part_number,
-        etag: p.etag,
-        sizeBytes: 0,
-      }));
-      await this.storage.completeMultipartUpload(`${analysisPrefix}${output}`, op.upload_id, parts);
-      return { op: 'mp_complete', output };
-    }
-
-    if (op.op === 'mp_abort') {
-      await this.storage.abortMultipartUpload(`${analysisPrefix}${output}`, op.upload_id);
-      return { op: 'mp_abort', output };
-    }
-
-    throw new ForbiddenException(`Unknown sign op: ${(op as { op: string }).op}`);
+    return signWriteOp(this.storage, op, analysisPrefix, ttl, expiresAt);
   }
 
   private async signGet(
@@ -204,7 +146,7 @@ export class AnalysisSignService {
     if (input.startsWith('artifact:')) {
       const path = input.slice('artifact:'.length);
       // Must not escape the analysis prefix
-      if (!this.isPathSafe(path)) {
+      if (!isSafeRelativePath(path)) {
         throw new ForbiddenException(`Artifact path is not safe: ${path}`);
       }
       const storageKey = `${analysisPrefix}${path}`;
@@ -304,7 +246,7 @@ export class AnalysisSignService {
       }
       if (op.input.startsWith('artifact:')) {
         const path = op.input.slice('artifact:'.length);
-        if (!this.isPathSafe(path)) {
+        if (!isSafeRelativePath(path)) {
           throw new ForbiddenException(`Artifact path is not safe: ${path}`);
         }
         return;
@@ -312,7 +254,7 @@ export class AnalysisSignService {
       throw new ForbiddenException(`Unknown or disallowed get input: ${op.input}`);
     }
 
-    if (!this.isPathSafe(op.output)) {
+    if (!isSafeRelativePath(op.output)) {
       throw new ForbiddenException(`Output path is not safe: ${op.output}`);
     }
     if (job.type === 'scan.ai' && op.output !== AI_MANIFEST_PATH && op.output !== AI_TRACE_PATH) {
@@ -321,18 +263,4 @@ export class AnalysisSignService {
       );
     }
   }
-
-  private isPathSafe(path: string): boolean {
-    if (!path || path.includes('..') || path.includes('\\')) return false;
-    const segments = path.split('/');
-    return !segments.some((s) => s === '' || s === '.' || s === '..');
-  }
-}
-
-function guessContentType(path: string): string {
-  if (path.endsWith('.json')) return 'application/json';
-  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
-  if (path.endsWith('.png')) return 'image/png';
-  if (path.endsWith('.mp4') || path.endsWith('.m4v')) return 'video/mp4';
-  return 'application/octet-stream';
 }

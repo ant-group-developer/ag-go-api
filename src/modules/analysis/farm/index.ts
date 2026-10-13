@@ -3,4 +3,5 @@
 export * from './protocol';
 export * from './scan';
 export * from './sign';
+export * from './studio';
 export * from './ticket';

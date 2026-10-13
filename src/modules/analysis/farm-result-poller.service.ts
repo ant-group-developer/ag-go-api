@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
@@ -22,6 +22,7 @@ import {
   type AiManifest,
   type ExtractManifest,
 } from './farm/scan';
+import { PrepIngestService } from './prep/prep-ingest.service';
 
 /** How long one outbox host may hold a farm result while ingesting it. */
 const PROCESSING_LOCK_SECONDS = 300;
@@ -36,7 +37,8 @@ const CORRELATION_PATTERN =
 type LoadedAnalysis = { analysis: AssetAnalysisEntity; asset: AssetEntity; prefix: string };
 
 /**
- * Polls ag-farm for completed/failed scan jobs and ingests their results.
+ * Polls ag-farm for completed/failed scan jobs and ingests their results (analyses here, preps in
+ * `PrepIngestService`).
  * Runs only in the `outbox` worker role, and only when FARM_URL is configured. Several outbox
  * hosts may run it at once: each result is locked (`locked_until`) while one host ingests it, and
  * every step is idempotent, so a result that fails half-way is simply processed again next poll.
@@ -66,6 +68,7 @@ export class FarmResultPollerService implements OnModuleDestroy {
     private readonly pipeline: AnalysisPipelineService,
     private readonly analysisLog: AnalysisLogService,
     private readonly config: ConfigService,
+    @Optional() private readonly prepIngest?: PrepIngestService,
   ) {}
 
   start(): void {
@@ -137,6 +140,9 @@ export class FarmResultPollerService implements OnModuleDestroy {
   async processJob(job: ListedJob): Promise<boolean> {
     const row = await this.findOrAdoptFarmJob(job);
     if (!row) {
+      // A prep's farm job (scan.prep, studio.transcribe)
+      const prep = await this.prepIngest?.processJob(job);
+      if (prep !== undefined && prep !== null) return prep;
       // Not ours to ingest (another pipeline's correlation, a type this host does not run, or a
       // closed analysis): acknowledged so it stops coming back and never blocks the poll.
       this.logger.warn(
