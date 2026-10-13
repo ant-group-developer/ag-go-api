@@ -33,6 +33,7 @@ import { ProjectEntity } from './entities/project.entity';
 import { ProvinceEntity } from './entities/province.entity';
 import { RenderBatchEntity } from './entities/render-batch.entity';
 import { RenderProfileEntity } from './entities/render-profile.entity';
+import { StudioUsageEventEntity } from './entities/studio-usage-event.entity';
 import { SystemLogEntity } from './entities/system-log.entity';
 import { SystemSettingEntity } from './entities/system-setting.entity';
 import { TagEntity } from './entities/tag.entity';
@@ -78,6 +79,7 @@ import { CategoryAccessGrants2090000000000 } from './migrations/2090000000000-ca
 import { CategoryCreatedBy2100000000000 } from './migrations/2100000000000-category-created-by';
 import { TagTimestamps2110000000000 } from './migrations/2110000000000-tag-timestamps';
 import { AssetPreps2120000000000 } from './migrations/2120000000000-asset-preps';
+import { StudioUsage2130000000000 } from './migrations/2130000000000-studio-usage';
 
 loadEnv();
 
@@ -131,6 +133,7 @@ export const AppDataSource = new DataSource({
     AssetPrepEntity,
     AssetPrepBatchEntity,
     AssetPrepFarmJobEntity,
+    StudioUsageEventEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -175,6 +178,7 @@ export const AppDataSource = new DataSource({
     CategoryCreatedBy2100000000000,
     TagTimestamps2110000000000,
     AssetPreps2120000000000,
+    StudioUsage2130000000000,
   ],
   synchronize: false,
 });

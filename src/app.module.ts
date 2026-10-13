@@ -41,6 +41,7 @@ import { ProjectEntity } from './database/entities/project.entity';
 import { ProvinceEntity } from './database/entities/province.entity';
 import { RenderBatchEntity } from './database/entities/render-batch.entity';
 import { RenderProfileEntity } from './database/entities/render-profile.entity';
+import { StudioUsageEventEntity } from './database/entities/studio-usage-event.entity';
 import { SystemLogEntity } from './database/entities/system-log.entity';
 import { SystemSettingEntity } from './database/entities/system-setting.entity';
 import { TagEntity } from './database/entities/tag.entity';
@@ -64,6 +65,7 @@ import { RenderModule } from './modules/render/render.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
 import { TagsModule } from './modules/tags/tags.module';
+import { UsageModule } from './modules/usage/usage.module';
 
 @Module({
   imports: [
@@ -119,6 +121,7 @@ import { TagsModule } from './modules/tags/tags.module';
           AssetPrepEntity,
           AssetPrepBatchEntity,
           AssetPrepFarmJobEntity,
+          StudioUsageEventEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -143,6 +146,7 @@ import { TagsModule } from './modules/tags/tags.module';
     LogsModule,
     AnalysisModule,
     FootageModule,
+    UsageModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
