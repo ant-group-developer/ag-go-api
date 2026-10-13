@@ -31,6 +31,8 @@ import { FarmTicketGuard } from './farm/farm-ticket.guard';
 import { PrepIngestService } from './prep/prep-ingest.service';
 import { PrepPipelineService } from './prep/prep-pipeline.service';
 import { PrepSignService } from './prep/prep-sign.service';
+import { PrepController } from './prep/prep.controller';
+import { PrepService } from './prep/prep.service';
 
 @Module({
   imports: [
@@ -53,7 +55,7 @@ import { PrepSignService } from './prep/prep-sign.service';
       SystemLogEntity,
     ]),
   ],
-  controllers: [AnalysisController],
+  controllers: [AnalysisController, PrepController],
   providers: [
     AuthContextService,
     FarmClient,
@@ -69,6 +71,7 @@ import { PrepSignService } from './prep/prep-sign.service';
     PrepPipelineService,
     PrepIngestService,
     PrepSignService,
+    PrepService,
   ],
   exports: [
     AnalysisEnqueueService,

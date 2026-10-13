@@ -30,6 +30,7 @@ import type { TranscribeManifest } from '../farm/studio';
 import { prepPrefix } from './prep-batches';
 import { PrepIngestService } from './prep-ingest.service';
 import { PrepPipelineService } from './prep-pipeline.service';
+import { PrepService } from './prep.service';
 
 // Ids stay unique across runs: the test database keeps its rows
 jest.mock('uuid', () => ({
@@ -439,5 +440,105 @@ describe('prep pipeline', () => {
     ];
     await poller.poll();
     expect(farm.acked).toHaveLength(1);
+  });
+});
+
+describe('prep backfill and batches', () => {
+  let service: PrepService;
+  let asset: AssetEntity;
+
+  beforeAll(() => {
+    service = new PrepService(
+      ds,
+      ds.getRepository(AssetPrepEntity),
+      ds.getRepository(AssetPrepBatchEntity),
+      pipeline,
+      farm as unknown as FarmClient,
+      new OutboxService(ds.getRepository(OutboxEventEntity)),
+    );
+  });
+
+  beforeEach(async () => {
+    // Earlier runs leave footage behind: prepare it so only this test's asset is missing
+    await ds.query(
+      `UPDATE asset_preps SET status = 'cancelled' WHERE status IN ('queued','cutting','transcribing')`,
+    );
+    const folderId = randomUUID();
+    const name = `prep-${folderId.slice(0, 8)}`;
+    await ds.query(
+      `INSERT INTO folders (id, parent_id, name, path_key, path_ids, path_text, depth, created_by)
+       VALUES ($1, NULL, $2, $3, '{}', $4, 0, 'test')`,
+      [folderId, name, name, name],
+    );
+    const projectId = randomUUID();
+    await ds.query(
+      `INSERT INTO projects (id, owner_user_id, folder_id, name) VALUES ($1,'test-user',$2,$3)`,
+      [projectId, folderId, name],
+    );
+    asset = await insertAsset();
+    await ds.query(
+      `INSERT INTO project_media (id, project_id, asset_id, created_by) VALUES ($1,$2,$3,'test')`,
+      [randomUUID(), projectId, asset.id],
+    );
+  });
+
+  it('counts footage by prep state and queues the missing ones in a batch', async () => {
+    const before = await service.stats();
+    expect(before.counts.missing).toBeGreaterThanOrEqual(1);
+
+    const dry = await service.backfill({ mode: 'missing', dryRun: true, requestedBy: 'u1' });
+    expect(dry.batchId).toBeNull();
+    expect(dry.count).toBeGreaterThanOrEqual(1);
+
+    const run = await service.backfill({ mode: 'missing', requestedBy: 'u1' });
+    expect(run.batchId).not.toBeNull();
+    const queued = await ds.getRepository(AssetPrepEntity).findOneByOrFail({ assetId: asset.id });
+    expect(queued).toMatchObject({
+      status: 'queued',
+      lane: 'batch',
+      priority: -10,
+      batchId: run.batchId,
+    });
+    const after = await service.stats();
+    expect(after.counts.running).toBe(before.counts.running + run.count);
+    expect(after.batches[0]).toMatchObject({
+      id: run.batchId,
+      status: 'running',
+      total: run.count,
+    });
+
+    // A second backfill skips footage whose prep runs
+    const again = await service.backfill({ mode: 'all', dryRun: true, requestedBy: 'u1' });
+    expect(again.count).toBe(0);
+  });
+
+  it('holds a paused batch and sends its preps when it resumes', async () => {
+    const { batchId } = await service.backfill({ mode: 'missing', requestedBy: 'u1' });
+    const prepRow = await ds.getRepository(AssetPrepEntity).findOneByOrFail({ assetId: asset.id });
+    expect((await service.pause(batchId!)).status).toBe('paused');
+
+    await pipeline.handlePrepRequested(prepRow.id);
+    expect(farm.submissions).toHaveLength(0);
+    expect((await prep(prepRow.id)).status).toBe('queued');
+
+    expect((await service.resume(batchId!)).status).toBe('running');
+    const events = await ds.query(
+      `SELECT count(*)::int AS n FROM outbox_events WHERE aggregate_id = $1`,
+      [prepRow.id],
+    );
+    expect(events[0].n).toBe(2);
+    await pipeline.handlePrepRequested(prepRow.id);
+    expect(farm.submissions[0]).toMatchObject({
+      type: 'scan.prep',
+      group_key: `prep-batch:${batchId}`,
+    });
+  });
+
+  it('cancels the unfinished preps of a cancelled batch', async () => {
+    const { batchId } = await service.backfill({ mode: 'missing', requestedBy: 'u1' });
+    const view = await service.cancel(batchId!);
+    expect(view.status).toBe('cancelled');
+    const prepRow = await ds.getRepository(AssetPrepEntity).findOneByOrFail({ assetId: asset.id });
+    expect(prepRow.status).toBe('cancelled');
   });
 });
