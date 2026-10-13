@@ -6,6 +6,9 @@ import { AnalysisBatchEntity } from './entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from './entities/asset-analysis.entity';
 import { AssetImportEntity } from './entities/asset-import.entity';
+import { AssetPrepBatchEntity } from './entities/asset-prep-batch.entity';
+import { AssetPrepFarmJobEntity } from './entities/asset-prep-farm-job.entity';
+import { AssetPrepEntity } from './entities/asset-prep.entity';
 import { AssetUploadSessionEntity } from './entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './entities/asset-variant.entity';
 import { AssetEntity } from './entities/asset.entity';
@@ -74,6 +77,7 @@ import { ProjectSearchText2080000000000 } from './migrations/2080000000000-proje
 import { CategoryAccessGrants2090000000000 } from './migrations/2090000000000-category-access-grants';
 import { CategoryCreatedBy2100000000000 } from './migrations/2100000000000-category-created-by';
 import { TagTimestamps2110000000000 } from './migrations/2110000000000-tag-timestamps';
+import { AssetPreps2120000000000 } from './migrations/2120000000000-asset-preps';
 
 loadEnv();
 
@@ -124,6 +128,9 @@ export const AppDataSource = new DataSource({
     AssetAnalysisEntity,
     AnalysisBatchEntity,
     AnalysisFarmJobEntity,
+    AssetPrepEntity,
+    AssetPrepBatchEntity,
+    AssetPrepFarmJobEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -167,6 +174,7 @@ export const AppDataSource = new DataSource({
     CategoryAccessGrants2090000000000,
     CategoryCreatedBy2100000000000,
     TagTimestamps2110000000000,
+    AssetPreps2120000000000,
   ],
   synchronize: false,
 });

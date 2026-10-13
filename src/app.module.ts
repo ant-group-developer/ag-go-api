@@ -14,6 +14,9 @@ import { AnalysisBatchEntity } from './database/entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './database/entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from './database/entities/asset-analysis.entity';
 import { AssetImportEntity } from './database/entities/asset-import.entity';
+import { AssetPrepBatchEntity } from './database/entities/asset-prep-batch.entity';
+import { AssetPrepFarmJobEntity } from './database/entities/asset-prep-farm-job.entity';
+import { AssetPrepEntity } from './database/entities/asset-prep.entity';
 import { AssetUploadSessionEntity } from './database/entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './database/entities/asset-variant.entity';
 import { AssetEntity } from './database/entities/asset.entity';
@@ -113,6 +116,9 @@ import { TagsModule } from './modules/tags/tags.module';
           AssetAnalysisEntity,
           AnalysisBatchEntity,
           AnalysisFarmJobEntity,
+          AssetPrepEntity,
+          AssetPrepBatchEntity,
+          AssetPrepFarmJobEntity,
         ],
         synchronize: false,
         migrationsRun: false,
