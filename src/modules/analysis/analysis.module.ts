@@ -31,6 +31,7 @@ import { FarmTicketGuard } from './farm/farm-ticket.guard';
 import { PrepIngestService } from './prep/prep-ingest.service';
 import { PrepPipelineService } from './prep/prep-pipeline.service';
 import { PrepSignService } from './prep/prep-sign.service';
+import { PrepStudioService } from './prep/prep-studio.service';
 import { PrepController } from './prep/prep.controller';
 import { PrepService } from './prep/prep.service';
 
@@ -72,12 +73,14 @@ import { PrepService } from './prep/prep.service';
     PrepIngestService,
     PrepSignService,
     PrepService,
+    PrepStudioService,
   ],
   exports: [
     AnalysisEnqueueService,
     AnalysisOutboxService,
     FarmResultPollerService,
     PrepPipelineService,
+    PrepStudioService,
   ],
 })
 export class AnalysisModule {}

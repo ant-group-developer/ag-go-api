@@ -30,6 +30,7 @@ import type { TranscribeManifest } from '../farm/studio';
 import { prepPrefix } from './prep-batches';
 import { PrepIngestService } from './prep-ingest.service';
 import { PrepPipelineService } from './prep-pipeline.service';
+import { PrepStudioService } from './prep-studio.service';
 import { PrepService } from './prep.service';
 
 // Ids stay unique across runs: the test database keeps its rows
@@ -81,6 +82,14 @@ class FakeFarmClient {
   async controlJobs(): Promise<number> {
     return 0;
   }
+  raised: Array<{ id: string; lane?: string; priority: number }> = [];
+  async raiseJob(id: string, request: { lane?: string; priority: number }): Promise<void> {
+    this.raised.push({ id, ...request });
+  }
+  jobs = new Map<string, Partial<SubmitJobResponse['job']>>();
+  async getJob(id: string): Promise<SubmitJobResponse['job']> {
+    return { ...jobView(id, 'scan.prep', 'queued', 'x'), ...(this.jobs.get(id) ?? {}) };
+  }
 }
 
 class FakeStorage {
@@ -90,6 +99,9 @@ class FakeStorage {
     const value = this.objects.get(key);
     if (value === undefined) throw new Error(`no object ${key}`);
     return value;
+  }
+  async getPresignedGetUrl(key: string): Promise<string> {
+    return `https://r2.test/${key}`;
   }
   async deleteObject(key: string): Promise<void> {
     this.deleted.push(key);
@@ -540,5 +552,138 @@ describe('prep backfill and batches', () => {
     expect(view.status).toBe('cancelled');
     const prepRow = await ds.getRepository(AssetPrepEntity).findOneByOrFail({ assetId: asset.id });
     expect(prepRow.status).toBe('cancelled');
+  });
+});
+
+describe('prep for AG Studio', () => {
+  let studio: PrepStudioService;
+
+  beforeAll(() => {
+    studio = new PrepStudioService(
+      ds,
+      ds.getRepository(AssetPrepEntity),
+      ds.getRepository(AssetPrepFarmJobEntity),
+      ds.getRepository(AssetEntity),
+      storage as unknown as StorageAdapter,
+      farm as unknown as FarmClient,
+      pipeline,
+      { get: () => undefined } as unknown as ConfigService,
+    );
+  });
+
+  beforeEach(() => {
+    farm.raised = [];
+    farm.jobs.clear();
+  });
+
+  it('answers missing, then runs it interactive and reports the farm phase', async () => {
+    const asset = await insertAsset();
+    expect((await studio.read([asset.id])).items).toEqual([
+      { assetId: asset.id, state: 'missing', phase: null, progress: null, error: null, prep: null },
+    ]);
+
+    const { items } = await studio.run([asset.id], 'user-1');
+    expect(farm.submissions[0]).toMatchObject({
+      type: 'scan.prep',
+      lane: 'interactive',
+      priority: 50,
+    });
+    expect(items[0]).toMatchObject({ state: 'running', phase: 'queued', progress: null });
+
+    const prepRow = await ds.getRepository(AssetPrepEntity).findOneByOrFail({ assetId: asset.id });
+    farm.jobs.set(farm.jobIdOf(`${prepRow.id}:prep`), { status: 'leased', progress_percent: 40 });
+    expect((await studio.read([asset.id])).items[0]).toMatchObject({
+      state: 'running',
+      phase: 'cutting',
+      progress: 0.4,
+    });
+
+    // Asking again while it runs interactive does nothing
+    await studio.run([asset.id], 'user-1');
+    expect(farm.submissions).toHaveLength(1);
+  });
+
+  it('returns a ready prep with signed frame and sheet URLs', async () => {
+    const asset = await insertAsset();
+    const prepId = await enqueue(asset);
+    await pipeline.handlePrepRequested(prepId);
+    const prefix = prefixOf(asset, prepId);
+    storage.objects.set(`${prefix}prep.json`, JSON.stringify(prepManifest(asset.id)));
+    await finish(`${prepId}:prep`, 'scan.prep');
+    storage.objects.set(
+      `${prefix}transcribe.json`,
+      JSON.stringify(transcribeManifest(prepId, asset.id)),
+    );
+    await finish(`${prepId}:transcribe`, 'studio.transcribe');
+
+    const [item] = (await studio.read([asset.id])).items;
+    expect(item.state).toBe('ready');
+    expect(item.prep).toMatchObject({
+      prepId,
+      durationS: 25,
+      width: 854,
+      height: 480,
+      fps: 25,
+      hasAudio: true,
+      scene: { threshold: 0.3, minShotS: 1, maxShotS: 20 },
+      transcriptStatus: 'done',
+    });
+    expect(item.prep?.shots[0]).toEqual({
+      n: 1,
+      in: 0,
+      out: 12.5,
+      frame: 'frames/001.jpg',
+      url: `https://r2.test/${prefix}frames/001.jpg`,
+    });
+    expect(item.prep?.sheets[0].url).toBe(`https://r2.test/${prefix}sheets/01.jpg`);
+    expect(item.prep?.transcript?.segments).toHaveLength(2);
+  });
+
+  it('raises a prep waiting in the batch lane, and sends one held by a paused batch', async () => {
+    const waiting = await insertAsset();
+    const waitingId = await enqueue(waiting);
+    await pipeline.handlePrepRequested(waitingId);
+    await studio.run([waiting.id], 'user-1');
+    expect(farm.raised).toEqual([
+      { id: farm.jobIdOf(`${waitingId}:prep`), lane: 'interactive', priority: 50 },
+    ]);
+    expect(await prep(waitingId)).toMatchObject({ lane: 'interactive', priority: 50 });
+
+    const held = await insertAsset();
+    const batch = await ds.getRepository(AssetPrepBatchEntity).save({
+      name: 'b',
+      mode: 'missing',
+      priority: -10,
+      status: 'paused',
+      createdBy: null,
+    });
+    const heldId = await ds.transaction((manager) =>
+      pipeline.enqueueInsideTransaction(manager, held, {
+        lane: 'batch',
+        priority: -10,
+        batchId: batch.id,
+      }),
+    );
+    await pipeline.handlePrepRequested(heldId!);
+    expect(farm.submissions.filter((s) => s.correlation_id === `${heldId}:prep`)).toHaveLength(0);
+    await studio.run([held.id], 'user-1');
+    expect(farm.submissions.find((s) => s.correlation_id === `${heldId}:prep`)).toMatchObject({
+      lane: 'interactive',
+      priority: 50,
+      group_key: null,
+    });
+  });
+
+  it('reports a failed prep with its error, and runs a new one on request', async () => {
+    const asset = await insertAsset();
+    const prepId = await enqueue(asset);
+    await pipeline.handlePrepRequested(prepId);
+    await finish(`${prepId}:prep`, 'scan.prep', 'failed');
+    const [item] = (await studio.read([asset.id])).items;
+    expect(item).toMatchObject({ state: 'failed' });
+    expect(item.error).toContain('worker died');
+
+    const [again] = (await studio.run([asset.id], 'user-1')).items;
+    expect(again.state).toBe('running');
   });
 });

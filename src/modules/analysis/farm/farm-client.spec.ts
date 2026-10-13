@@ -538,3 +538,26 @@ describe('FarmClient.controlJobs', () => {
     await expect(client.controlJobs('resume', { ids: ['y'] })).rejects.toThrow(/400/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// FarmClient.raiseJob
+// ---------------------------------------------------------------------------
+
+describe('FarmClient.raiseJob', () => {
+  it('posts the lane and priority to /v1/owner/jobs/:id/raise', async () => {
+    const jobId = randomUUID();
+    fetchMock.mockResolvedValueOnce(envelopeSuccess(makeJobView({ id: jobId })));
+    await makeFarmClient().raiseJob(jobId, { lane: 'interactive', priority: 50 });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`http://farm.test/v1/owner/jobs/${jobId}/raise`);
+    expect(JSON.parse(init.body as string)).toEqual({ lane: 'interactive', priority: 50 });
+  });
+
+  it('throws on 409 job_not_queued', async () => {
+    fetchMock.mockResolvedValueOnce(envelopeError(409, 'job_not_queued', 'Job is not queued'));
+    await expect(
+      makeFarmClient().raiseJob(randomUUID(), { lane: 'interactive', priority: 50 }),
+    ).rejects.toThrow(/409/);
+  });
+});

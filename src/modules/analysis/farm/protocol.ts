@@ -158,6 +158,17 @@ export const ListJobsResponseSchema = z.object({
 });
 export type ListJobsResponse = z.infer<typeof ListJobsResponseSchema>;
 
+/**
+ * `POST /v1/owner/jobs/:id/raise`: đổi lane và độ ưu tiên của một job còn `queued` của chính chủ job (ví dụ nâng
+ * job chuẩn bị đang chờ trong lô chạy bù khi Studio cần ngay). Job ở trạng thái khác → 409 `job_not_queued`.
+ */
+export const RaiseJobRequestSchema = z.strictObject({
+  /** Thiếu thì giữ lane đang có. */
+  lane: LaneSchema.optional(),
+  priority: z.int().min(-100).max(100),
+});
+export type RaiseJobRequest = z.infer<typeof RaiseJobRequestSchema>;
+
 /** `POST /v1/owner/jobs/{pause|resume|cancel}`: theo danh sách id hoặc cả nhóm. */
 export const JobControlResponseSchema = z.strictObject({ affected: z.int().nonnegative() });
 export type JobControlResponse = z.infer<typeof JobControlResponseSchema>;
@@ -168,4 +179,5 @@ export const OWNER_API = {
   job: (jobId: string) => `/v1/owner/jobs/${jobId}`,
   ack: (jobId: string) => `/v1/owner/jobs/${jobId}/ack`,
   cancel: (jobId: string) => `/v1/owner/jobs/${jobId}/cancel`,
+  raise: (jobId: string) => `/v1/owner/jobs/${jobId}/raise`,
 } as const;
