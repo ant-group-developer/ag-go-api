@@ -8,6 +8,7 @@ import { StatisticsOperationsService } from './statistics-operations.service';
 import { StatisticsProgressService } from './statistics-progress.service';
 import { StatisticsProjectTrendService } from './statistics-project-trend.service';
 import { StatisticsScopeService } from './statistics-scope.service';
+import { StatisticsStudioUsageService } from './statistics-studio-usage.service';
 import { StatisticsSummaryService } from './statistics-summary.service';
 import { StatisticsTeamService } from './statistics-team.service';
 import { StatisticsTrendService } from './statistics-trend.service';
@@ -27,6 +28,7 @@ import { StatisticsController } from './statistics.controller';
     StatisticsProjectTrendService,
     StatisticsBreakdownService,
     StatisticsCacheService,
+    StatisticsStudioUsageService,
   ],
 })
 export class StatisticsModule {}
