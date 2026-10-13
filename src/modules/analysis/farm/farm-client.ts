@@ -2,7 +2,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { readApiError, unwrapApiResponse } from './api-envelope';
-import type { JobControlAction, JobView, SubmitJobRequest, SubmitJobResponse } from './protocol';
+import type {
+  JobControlAction,
+  JobView,
+  ListedJob,
+  SubmitJobRequest,
+  SubmitJobResponse,
+} from './protocol';
 import {
   GetJobResponseSchema,
   JobControlResponseSchema,
@@ -55,8 +61,11 @@ export class FarmClient {
     return parsed.data.job;
   }
 
-  /** Lists unacked completed/failed jobs. */
-  async listUnackedFinished(limit = 100): Promise<JobView[]> {
+  /**
+   * Lists unacked completed/failed jobs. Read leniently (`ListedJob`): a job of a type this copy of
+   * the protocol does not know must not hide the others.
+   */
+  async listUnackedFinished(limit = 100): Promise<ListedJob[]> {
     const data = await this.get<unknown>(
       `/v1/owner/jobs?status=completed,failed&unacked=1&limit=${limit}`,
     );

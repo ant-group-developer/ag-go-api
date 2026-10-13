@@ -1,12 +1,21 @@
 // Copied from ag-farm packages/protocol (common.ts, owner-api.ts) — keep in sync
 import { z } from 'zod';
 
+/**
+ * Every job type the hub knows, not only the ones ag-go submits: a job view or a ticket naming a
+ * type missing here would not parse. A hub newer than this list still lists its own jobs fine
+ * (`ListedJobSchema`), so the poller acknowledges what it does not own instead of failing.
+ */
 export const JOB_TYPES = [
   'scan.extract',
   'scan.ai',
+  'scan.prep',
   'studio.tts',
   'studio.render_preview',
   'studio.render_final',
+  'studio.export_premiere',
+  'studio.transcribe',
+  'studio.reference_fetch',
 ] as const;
 export const JobTypeSchema = z.enum(JOB_TYPES);
 export type JobType = z.infer<typeof JobTypeSchema>;
@@ -135,8 +144,16 @@ export const GetJobResponseSchema = z.strictObject({
 });
 export type GetJobResponse = z.infer<typeof GetJobResponseSchema>;
 
-export const ListJobsResponseSchema = z.strictObject({
-  jobs: z.array(JobViewSchema),
+/**
+ * A job as the owner's job list shows it, read leniently: a type this copy does not know yet, or a
+ * field a newer hub added, must not make the whole list unreadable. Only the poller reads it, and
+ * it acknowledges any job it does not recognise.
+ */
+export const ListedJobSchema = z.object({ ...JobViewSchema.shape, type: z.string().min(1) });
+export type ListedJob = z.infer<typeof ListedJobSchema>;
+
+export const ListJobsResponseSchema = z.object({
+  jobs: z.array(ListedJobSchema),
   next_cursor: z.string().nullable(),
 });
 export type ListJobsResponse = z.infer<typeof ListJobsResponseSchema>;

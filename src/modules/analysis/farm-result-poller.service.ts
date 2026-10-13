@@ -13,7 +13,7 @@ import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
 import { AnalysisLogService } from './analysis-log.service';
 import { AnalysisPipelineService } from './analysis-pipeline.service';
 import { FarmClient } from './farm/farm-client';
-import type { JobView } from './farm/protocol';
+import type { ListedJob } from './farm/protocol';
 import {
   AI_MANIFEST_PATH,
   AiManifestSchema,
@@ -134,10 +134,14 @@ export class FarmResultPollerService implements OnModuleDestroy {
   }
 
   /** Ingests one finished farm job. Returns whether it may be acked. */
-  async processJob(job: JobView): Promise<boolean> {
+  async processJob(job: ListedJob): Promise<boolean> {
     const row = await this.findOrAdoptFarmJob(job);
     if (!row) {
-      this.logger.warn(`Unknown farm job ${job.id} (${job.correlation_id}) — acknowledging`);
+      // Not ours to ingest (another pipeline's correlation, a type this host does not run, or a
+      // closed analysis): acknowledged so it stops coming back and never blocks the poll.
+      this.logger.warn(
+        `Unknown farm job ${job.id} (${job.type}, ${job.correlation_id}) — acknowledging`,
+      );
       return true;
     }
     if (row.ingestedAt) return true;
@@ -290,7 +294,7 @@ export class FarmResultPollerService implements OnModuleDestroy {
   // Failed
   // ---------------------------------------------------------------------------
 
-  private async handleFailed(row: AnalysisFarmJobEntity, job: JobView): Promise<void> {
+  private async handleFailed(row: AnalysisFarmJobEntity, job: ListedJob): Promise<void> {
     const reason = job.error
       ? `Farm job ${job.status}: ${job.error.code} — ${job.error.message}`
       : `Farm job ${job.status}`;
@@ -345,7 +349,7 @@ export class FarmResultPollerService implements OnModuleDestroy {
    * The local row of a farm job, recreated from its correlation id when it is missing (the process
    * stopped between submitting a job and saving its row, or another host is still saving it).
    */
-  private async findOrAdoptFarmJob(job: JobView): Promise<AnalysisFarmJobEntity | null> {
+  private async findOrAdoptFarmJob(job: ListedJob): Promise<AnalysisFarmJobEntity | null> {
     const row = await this.farmJobRepo.findOne({ where: { farmJobId: job.id } });
     if (row) return row;
     const match = CORRELATION_PATTERN.exec(job.correlation_id);
