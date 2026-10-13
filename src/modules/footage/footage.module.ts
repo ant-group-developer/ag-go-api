@@ -36,5 +36,6 @@ import { FootageService } from './footage.service';
   ],
   controllers: [FootageController],
   providers: [AuthContextService, FootageScopeService, FootageService],
+  exports: [FootageScopeService],
 })
 export class FootageModule {}
