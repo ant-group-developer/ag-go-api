@@ -4,6 +4,8 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
 import { AnalysisOutboxService } from '../../modules/analysis/analysis-outbox.service';
+import { ASSET_PREP_REQUESTED_EVENT } from '../../modules/analysis/prep/prep-batches';
+import { PrepPipelineService } from '../../modules/analysis/prep/prep-pipeline.service';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../../modules/assets/storage/storage-adapter';
 import { ASSET_STORAGE_PURGE_EVENT } from '../../modules/projects/project-asset-cleanup';
 import { MediaQueueService } from './media-queue.service';
@@ -47,6 +49,9 @@ export class OutboxDispatcherService implements OnModuleDestroy {
     @Optional()
     @Inject(forwardRef(() => AnalysisOutboxService))
     private readonly analysisOutbox?: AnalysisOutboxService,
+    @Optional()
+    @Inject(forwardRef(() => PrepPipelineService))
+    private readonly prepPipeline?: PrepPipelineService,
   ) {}
 
   start(): void {
@@ -162,6 +167,15 @@ export class OutboxDispatcherService implements OnModuleDestroy {
           throw new Error('AnalysisOutboxService not available — AnalysisModule not loaded');
         }
         await this.analysisOutbox.handleAnalysisRequested(analysisId);
+      } else if (event.eventType === ASSET_PREP_REQUESTED_EVENT) {
+        const prepId = this.readString(event.payload.prepId);
+        if (!prepId) {
+          throw new Error('Outbox event asset.prep.requested is missing prepId');
+        }
+        if (!this.prepPipeline) {
+          throw new Error('PrepPipelineService not available — AnalysisModule not loaded');
+        }
+        await this.prepPipeline.handlePrepRequested(prepId);
       } else if (event.eventType === ASSET_ANALYSIS_COMPLETED_EVENT) {
         // No consumer yet: published as is.
       } else {

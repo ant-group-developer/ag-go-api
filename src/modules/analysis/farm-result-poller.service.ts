@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull, Repository } from 'typeorm';
@@ -13,7 +13,7 @@ import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
 import { AnalysisLogService } from './analysis-log.service';
 import { AnalysisPipelineService } from './analysis-pipeline.service';
 import { FarmClient } from './farm/farm-client';
-import type { JobView } from './farm/protocol';
+import type { ListedJob } from './farm/protocol';
 import {
   AI_MANIFEST_PATH,
   AiManifestSchema,
@@ -22,6 +22,7 @@ import {
   type AiManifest,
   type ExtractManifest,
 } from './farm/scan';
+import { PrepIngestService } from './prep/prep-ingest.service';
 
 /** How long one outbox host may hold a farm result while ingesting it. */
 const PROCESSING_LOCK_SECONDS = 300;
@@ -36,7 +37,8 @@ const CORRELATION_PATTERN =
 type LoadedAnalysis = { analysis: AssetAnalysisEntity; asset: AssetEntity; prefix: string };
 
 /**
- * Polls ag-farm for completed/failed scan jobs and ingests their results.
+ * Polls ag-farm for completed/failed scan jobs and ingests their results (analyses here, preps in
+ * `PrepIngestService`).
  * Runs only in the `outbox` worker role, and only when FARM_URL is configured. Several outbox
  * hosts may run it at once: each result is locked (`locked_until`) while one host ingests it, and
  * every step is idempotent, so a result that fails half-way is simply processed again next poll.
@@ -66,6 +68,7 @@ export class FarmResultPollerService implements OnModuleDestroy {
     private readonly pipeline: AnalysisPipelineService,
     private readonly analysisLog: AnalysisLogService,
     private readonly config: ConfigService,
+    @Optional() private readonly prepIngest?: PrepIngestService,
   ) {}
 
   start(): void {
@@ -134,10 +137,17 @@ export class FarmResultPollerService implements OnModuleDestroy {
   }
 
   /** Ingests one finished farm job. Returns whether it may be acked. */
-  async processJob(job: JobView): Promise<boolean> {
+  async processJob(job: ListedJob): Promise<boolean> {
     const row = await this.findOrAdoptFarmJob(job);
     if (!row) {
-      this.logger.warn(`Unknown farm job ${job.id} (${job.correlation_id}) — acknowledging`);
+      // A prep's farm job (scan.prep, studio.transcribe)
+      const prep = await this.prepIngest?.processJob(job);
+      if (prep !== undefined && prep !== null) return prep;
+      // Not ours to ingest (another pipeline's correlation, a type this host does not run, or a
+      // closed analysis): acknowledged so it stops coming back and never blocks the poll.
+      this.logger.warn(
+        `Unknown farm job ${job.id} (${job.type}, ${job.correlation_id}) — acknowledging`,
+      );
       return true;
     }
     if (row.ingestedAt) return true;
@@ -290,7 +300,7 @@ export class FarmResultPollerService implements OnModuleDestroy {
   // Failed
   // ---------------------------------------------------------------------------
 
-  private async handleFailed(row: AnalysisFarmJobEntity, job: JobView): Promise<void> {
+  private async handleFailed(row: AnalysisFarmJobEntity, job: ListedJob): Promise<void> {
     const reason = job.error
       ? `Farm job ${job.status}: ${job.error.code} — ${job.error.message}`
       : `Farm job ${job.status}`;
@@ -345,7 +355,7 @@ export class FarmResultPollerService implements OnModuleDestroy {
    * The local row of a farm job, recreated from its correlation id when it is missing (the process
    * stopped between submitting a job and saving its row, or another host is still saving it).
    */
-  private async findOrAdoptFarmJob(job: JobView): Promise<AnalysisFarmJobEntity | null> {
+  private async findOrAdoptFarmJob(job: ListedJob): Promise<AnalysisFarmJobEntity | null> {
     const row = await this.farmJobRepo.findOne({ where: { farmJobId: job.id } });
     if (row) return row;
     const match = CORRELATION_PATTERN.exec(job.correlation_id);

@@ -349,6 +349,30 @@ describe('FarmClient.listUnackedFinished', () => {
     expect(result[0].id).toBe(jobs[0].id);
   });
 
+  it('keeps a job of a type it does not know, and fields a newer hub added', async () => {
+    const known = makeJobView();
+    const foreign = { ...makeJobView(), type: 'studio.not_yet_invented', extra_field: 1 };
+    fetchMock.mockResolvedValueOnce(rawSuccess({ jobs: [known, foreign], next_cursor: null }));
+
+    const result = await makeFarmClient().listUnackedFinished();
+
+    expect(result.map((job) => job.type)).toEqual(['scan.extract', 'studio.not_yet_invented']);
+  });
+
+  it('reads the job types of every owner (scan.prep, studio.transcribe, ...)', async () => {
+    const jobs = [
+      makeJobView({ type: 'scan.prep' }),
+      makeJobView({ type: 'studio.transcribe' }),
+      makeJobView({ type: 'studio.export_premiere' }),
+      makeJobView({ type: 'studio.reference_fetch' }),
+    ];
+    fetchMock.mockResolvedValueOnce(rawSuccess(makeListRaw(jobs)));
+
+    const result = await makeFarmClient().listUnackedFinished();
+
+    expect(result).toHaveLength(4);
+  });
+
   it('passes the limit as a query parameter', async () => {
     fetchMock.mockResolvedValueOnce(rawSuccess(makeListRaw([])));
     const client = makeFarmClient();
@@ -512,5 +536,28 @@ describe('FarmClient.controlJobs', () => {
     fetchMock.mockResolvedValueOnce(envelopeError(400, 'bad_request', 'Invalid selector'));
     const client = makeFarmClient();
     await expect(client.controlJobs('resume', { ids: ['y'] })).rejects.toThrow(/400/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FarmClient.raiseJob
+// ---------------------------------------------------------------------------
+
+describe('FarmClient.raiseJob', () => {
+  it('posts the lane and priority to /v1/owner/jobs/:id/raise', async () => {
+    const jobId = randomUUID();
+    fetchMock.mockResolvedValueOnce(envelopeSuccess(makeJobView({ id: jobId })));
+    await makeFarmClient().raiseJob(jobId, { lane: 'interactive', priority: 50 });
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`http://farm.test/v1/owner/jobs/${jobId}/raise`);
+    expect(JSON.parse(init.body as string)).toEqual({ lane: 'interactive', priority: 50 });
+  });
+
+  it('throws on 409 job_not_queued', async () => {
+    fetchMock.mockResolvedValueOnce(envelopeError(409, 'job_not_queued', 'Job is not queued'));
+    await expect(
+      makeFarmClient().raiseJob(randomUUID(), { lane: 'interactive', priority: 50 }),
+    ).rejects.toThrow(/409/);
   });
 });

@@ -14,6 +14,9 @@ import { AnalysisBatchEntity } from './database/entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './database/entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from './database/entities/asset-analysis.entity';
 import { AssetImportEntity } from './database/entities/asset-import.entity';
+import { AssetPrepBatchEntity } from './database/entities/asset-prep-batch.entity';
+import { AssetPrepFarmJobEntity } from './database/entities/asset-prep-farm-job.entity';
+import { AssetPrepEntity } from './database/entities/asset-prep.entity';
 import { AssetUploadSessionEntity } from './database/entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './database/entities/asset-variant.entity';
 import { AssetEntity } from './database/entities/asset.entity';
@@ -38,6 +41,7 @@ import { ProjectEntity } from './database/entities/project.entity';
 import { ProvinceEntity } from './database/entities/province.entity';
 import { RenderBatchEntity } from './database/entities/render-batch.entity';
 import { RenderProfileEntity } from './database/entities/render-profile.entity';
+import { StudioUsageEventEntity } from './database/entities/studio-usage-event.entity';
 import { SystemLogEntity } from './database/entities/system-log.entity';
 import { SystemSettingEntity } from './database/entities/system-setting.entity';
 import { TagEntity } from './database/entities/tag.entity';
@@ -61,6 +65,7 @@ import { RenderModule } from './modules/render/render.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
 import { TagsModule } from './modules/tags/tags.module';
+import { UsageModule } from './modules/usage/usage.module';
 
 @Module({
   imports: [
@@ -113,6 +118,10 @@ import { TagsModule } from './modules/tags/tags.module';
           AssetAnalysisEntity,
           AnalysisBatchEntity,
           AnalysisFarmJobEntity,
+          AssetPrepEntity,
+          AssetPrepBatchEntity,
+          AssetPrepFarmJobEntity,
+          StudioUsageEventEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -137,6 +146,7 @@ import { TagsModule } from './modules/tags/tags.module';
     LogsModule,
     AnalysisModule,
     FootageModule,
+    UsageModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

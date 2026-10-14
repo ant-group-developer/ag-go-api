@@ -1439,6 +1439,99 @@ paths:
         - bearer: []
       summary: Get analysis status for all media in a project
       tags: *a19
+  /prep/stats:
+    get:
+      operationId: PrepController_stats
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a20
+        - bearer: []
+      summary: Footage by prep state, and the latest prep backfills
+      tags: &a21
+        - prep
+  /prep/backfill:
+    post:
+      operationId: PrepController_backfill
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrepBackfillDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a20
+      summary: Queue a prep (lane batch) for footage without one, or for all of it
+      tags: *a21
+  /prep/batches/{batchId}/pause:
+    post:
+      operationId: PrepController_pause
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a20
+      summary: Pause a prep backfill
+      tags: *a21
+  /prep/batches/{batchId}/resume:
+    post:
+      operationId: PrepController_resume
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a20
+      summary: Resume a paused prep backfill
+      tags: *a21
+  /prep/batches/{batchId}/cancel:
+    post:
+      operationId: PrepController_cancel
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a20
+      summary: Cancel everything unfinished in a prep backfill
+      tags: *a21
   /logs:
     get:
       operationId: LogsController_list
@@ -1470,9 +1563,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a20
+      security: &a22
         - bearer: []
-      tags: &a21
+      tags: &a23
         - project-media
     post:
       operationId: MediaController_attach
@@ -1495,8 +1588,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
-      tags: *a21
+      security: *a22
+      tags: *a23
   /project-media/{id}:
     patch:
       operationId: MediaController_update
@@ -1519,8 +1612,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
-      tags: *a21
+      security: *a22
+      tags: *a23
     delete:
       operationId: MediaController_remove
       parameters:
@@ -1536,8 +1629,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
-      tags: *a21
+      security: *a22
+      tags: *a23
   /project-media/bulk-approve:
     post:
       operationId: MediaController_bulkApproveMedia
@@ -1555,8 +1648,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
-      tags: *a21
+      security: *a22
+      tags: *a23
   /projects/bulk-approve:
     post:
       operationId: MediaController_bulkApproveProjects
@@ -1574,8 +1667,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
-      tags: *a21
+      security: *a22
+      tags: *a23
   /project-media/{id}/evaluations:
     get:
       operationId: MediaController_listEvaluationHistory
@@ -1592,8 +1685,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
-      tags: *a21
+      security: *a22
+      tags: *a23
   /projects/{projectId}/reorder-media:
     patch:
       operationId: MediaController_reorder
@@ -1616,8 +1709,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
-      tags: *a21
+      security: *a22
+      tags: *a23
   /projects/{projectId}/thumbnail:
     patch:
       operationId: MediaController_setThumbnail
@@ -1640,8 +1733,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
-      tags: *a21
+      security: *a22
+      tags: *a23
   /assets/upload-session:
     post:
       operationId: AssetsController_createUploadSession
@@ -1659,9 +1752,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a22
+      security: &a24
         - bearer: []
-      tags: &a23
+      tags: &a25
         - assets
   /assets/{assetId}/upload-parts:
     post:
@@ -1685,9 +1778,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
+      security: *a24
       summary: Presigned URL để upload từng phần của phiên upload multipart
-      tags: *a23
+      tags: *a25
   /assets/{assetId}/complete:
     post:
       operationId: AssetsController_completeUpload
@@ -1710,8 +1803,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /assets/{assetId}/abort:
     post:
       operationId: AssetsController_abortUpload
@@ -1734,8 +1827,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /assets/{assetId}/variants:
     get:
       operationId: AssetsController_listVariants
@@ -1752,8 +1845,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /assets/{assetId}/original-url:
     get:
       operationId: AssetsController_originalUrl
@@ -1770,9 +1863,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
+      security: *a24
       summary: Presigned URL file gốc (không watermark) để đánh giá media
-      tags: *a23
+      tags: *a25
   /assets/{assetId}/renditions:
     get:
       operationId: AssetsController_listRenditions
@@ -1789,11 +1882,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
+      security: *a24
       summary:
         Các bản preview (độ phân giải, watermark, bitrate) người xem được chọn;
         bản không watermark chỉ cho người có quyền xem file gốc
-      tags: *a23
+      tags: *a25
   /assets/{assetId}/preview/{variantCode}:
     get:
       operationId: AssetsController_preview
@@ -1811,8 +1904,8 @@ paths:
       responses:
         "200":
           description: ""
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /assets/{assetId}/preview-url:
     get:
       operationId: AssetsController_previewUrl
@@ -1829,11 +1922,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
+      security: *a24
       summary:
         Tạo presigned URL để tải preview trực tiếp từ R2. variantCode=preview
         kèm width chọn kích thước phù hợp.
-      tags: *a23
+      tags: *a25
   /assets/{assetId}/retry:
     post:
       operationId: AssetsController_retry
@@ -1850,8 +1943,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /render-profiles:
     get:
       operationId: RenderController_listProfiles
@@ -1863,9 +1956,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a24
+      security: &a26
         - bearer: []
-      tags: &a25
+      tags: &a27
         - render
   /render-profiles/{id}:
     patch:
@@ -1889,8 +1982,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-watermark/upload-session:
     post:
       operationId: RenderController_createWatermarkUploadSession
@@ -1908,8 +2001,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-watermark/logos/{assetId}/url:
     get:
       operationId: RenderController_getWatermarkLogoUrl
@@ -1926,8 +2019,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-watermark/assets/{assetId}/complete:
     post:
       operationId: RenderController_completeWatermarkUpload
@@ -1950,8 +2043,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-watermark/assets/{assetId}/abort:
     post:
       operationId: RenderController_abortWatermarkUpload
@@ -1974,8 +2067,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-batches:
     post:
       operationId: RenderController_createBatch
@@ -1993,8 +2086,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
     get:
       operationId: RenderController_listAllBatches
       parameters: []
@@ -2005,8 +2098,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /projects/{projectId}/render-batches:
     get:
       operationId: RenderController_listBatches
@@ -2023,8 +2116,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-batches/{id}/jobs:
     get:
       operationId: RenderController_listJobs
@@ -2041,8 +2134,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-jobs/auto:
     get:
       operationId: RenderController_listAutoJobs
@@ -2054,8 +2147,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-jobs/{id}/retry:
     post:
       operationId: RenderController_retryJob
@@ -2072,8 +2165,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-watermark/rerender:
     post:
       operationId: RenderController_rerenderWatermark
@@ -2091,8 +2184,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-batches/{id}:
     get:
       operationId: RenderController_getBatch
@@ -2109,8 +2202,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-batches/{id}/cancel:
     post:
       operationId: RenderController_cancelBatch
@@ -2127,8 +2220,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-batches/{id}/retry-failed:
     post:
       operationId: RenderController_retryFailedJobs
@@ -2145,8 +2238,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-batches/{id}/pause:
     post:
       operationId: RenderController_pauseBatch
@@ -2163,8 +2256,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-batches/{id}/resume:
     post:
       operationId: RenderController_resumeBatch
@@ -2181,8 +2274,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /downloads:
     post:
       operationId: DownloadsController_create
@@ -2200,9 +2293,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a26
+      security: &a28
         - bearer: []
-      tags: &a27
+      tags: &a29
         - downloads
   /downloads/{id}:
     get:
@@ -2220,8 +2313,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /downloads/{id}/cancel:
     post:
       operationId: DownloadsController_cancel
@@ -2238,8 +2331,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /statistics/summary:
     get:
       operationId: StatisticsController_summary
@@ -2272,9 +2365,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a28
+      security: &a30
         - bearer: []
-      tags: &a29
+      tags: &a31
         - statistics
   /statistics/trend:
     get:
@@ -2308,8 +2401,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a30
+      tags: *a31
   /statistics/project-trend:
     get:
       operationId: StatisticsController_projectTrend
@@ -2342,8 +2435,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a30
+      tags: *a31
   /statistics/breakdown:
     get:
       operationId: StatisticsController_breakdown
@@ -2399,8 +2492,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a30
+      tags: *a31
   /statistics/progress:
     get:
       operationId: StatisticsController_progress
@@ -2419,8 +2512,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a30
+      tags: *a31
   /statistics/team:
     get:
       operationId: StatisticsController_team
@@ -2453,8 +2546,42 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a30
+      tags: *a31
+  /statistics/studio-usage:
+    get:
+      operationId: StatisticsController_studioUsage
+      parameters:
+        - name: from
+          required: true
+          in: query
+          description: Start of the period (inclusive)
+          schema:
+            example: 2026-09-01T00:00:00+07:00
+            type: string
+        - name: to
+          required: true
+          in: query
+          description: End of the period (exclusive)
+          schema:
+            example: 2026-10-01T00:00:00+07:00
+            type: string
+        - name: tz
+          required: false
+          in: query
+          description: IANA time zone used to group the trend by day or week
+          schema:
+            default: Asia/Ho_Chi_Minh
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a30
+      tags: *a31
   /statistics/operations:
     get:
       operationId: StatisticsController_operations
@@ -2487,8 +2614,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a30
+      tags: *a31
   /statistics/activity:
     get:
       operationId: StatisticsController_activity
@@ -2507,8 +2634,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a30
+      tags: *a31
   /google-drive/connection:
     get:
       operationId: GoogleDriveController_connection
@@ -2520,9 +2647,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a30
+      security: &a32
         - bearer: []
-      tags: &a31
+      tags: &a33
         - google-drive
     delete:
       operationId: GoogleDriveController_disconnect
@@ -2534,8 +2661,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/connection/start:
     post:
       operationId: GoogleDriveController_start
@@ -2557,8 +2684,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/connection/callback:
     get:
       operationId: GoogleDriveController_callback
@@ -2580,8 +2707,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/picker-token:
     get:
       operationId: GoogleDriveController_pickerToken
@@ -2593,8 +2720,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/sources/summary:
     post:
       operationId: GoogleDriveController_summarizeSources
@@ -2612,8 +2739,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/imports:
     post:
       operationId: GoogleDriveController_createImport
@@ -2631,8 +2758,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
     get:
       operationId: GoogleDriveController_listImports
       parameters:
@@ -2700,8 +2827,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/imports/{batchId}:
     get:
       operationId: GoogleDriveController_getImport
@@ -2718,8 +2845,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/imports/{batchId}/cancel:
     post:
       operationId: GoogleDriveController_cancel
@@ -2736,8 +2863,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/imports/{batchId}/pause:
     post:
       operationId: GoogleDriveController_pause
@@ -2754,8 +2881,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/imports/{batchId}/resume:
     post:
       operationId: GoogleDriveController_resume
@@ -2772,8 +2899,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/imports/{batchId}/items:
     get:
       operationId: GoogleDriveController_items
@@ -2839,8 +2966,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/imports/{batchId}/items/{itemId}/retry:
     post:
       operationId: GoogleDriveController_retry
@@ -2862,8 +2989,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /settings/public:
     get:
       operationId: SettingsController_getPublic
@@ -2875,7 +3002,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      tags: &a32
+      tags: &a34
         - settings
   /settings:
     get:
@@ -2890,7 +3017,7 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security:
         - bearer: []
-      tags: *a32
+      tags: *a34
     patch:
       operationId: SettingsController_update
       parameters: []
@@ -2909,7 +3036,7 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security:
         - bearer: []
-      tags: *a32
+      tags: *a34
   /footage/folders:
     get:
       operationId: FootageController_getFolders
@@ -2922,11 +3049,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - &a33
+        - &a35
           bearer: []
         - service-key: []
       summary: List accessible folders with analysed video counts
-      tags: &a34
+      tags: &a36
         - footage
   /footage/catalog:
     post:
@@ -2946,10 +3073,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a33
+        - *a35
         - service-key: []
       summary: Analysed videos of the given folders with their descriptions (AI input)
-      tags: *a34
+      tags: *a36
   /footage/assets/{assetId}/media:
     get:
       operationId: FootageController_getAssetMedia
@@ -2967,10 +3094,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a33
+        - *a35
         - service-key: []
       summary: Preview URL of the whole video, keyframes and contact sheet
-      tags: *a34
+      tags: *a36
   /footage/assets/{assetId}/preview-url:
     get:
       operationId: FootageController_getPreviewUrl
@@ -2994,10 +3121,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a33
+        - *a35
         - service-key: []
       summary: Presigned URL of one preview offered by the footage player
-      tags: *a34
+      tags: *a36
   /footage/assets/resolve:
     post:
       operationId: FootageController_resolveAssets
@@ -3016,10 +3143,58 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a33
+        - *a35
         - service-key: []
       summary: Signed URLs of whole video files for rendering (respects decision 8)
-      tags: *a34
+      tags: *a36
+  /footage/assets/prep:
+    post:
+      operationId: FootageController_readPreps
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrepAssetsDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a35
+        - service-key: []
+      summary:
+        Prepared Studio inputs (shots, frames, sheets, transcript) or how far
+        their prep is
+      tags: *a36
+  /footage/assets/prep/run:
+    post:
+      operationId: FootageController_runPreps
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrepAssetsDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a35
+        - service-key: []
+      summary:
+        Run the prep of footage now (missing or failed), or raise one waiting
+        in a backfill
+      tags: *a36
   /footage/search:
     get:
       operationId: FootageController_search
@@ -3204,10 +3379,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a33
+        - *a35
         - service-key: []
       summary: Full-text + trigram search across analysed videos
-      tags: *a34
+      tags: *a36
   /footage/facets:
     get:
       operationId: FootageController_getFacets
@@ -3392,10 +3567,72 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a33
+        - *a35
         - service-key: []
       summary: Facet counts for search filters
-      tags: *a34
+      tags: *a36
+  /usage/studio-events:
+    post:
+      operationId: StudioUsageController_record
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StudioUsageEventsDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - service-key: []
+      summary: Footage usage events from AG Studio (service key only)
+      tags: &a37
+        - usage
+  /footage/assets/{assetId}/studio-usage:
+    get:
+      operationId: StudioUsageController_assetUsage
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      summary: How AG Studio used one footage, and its downloads
+      tags: *a37
+  /projects/{projectId}/studio-usage:
+    get:
+      operationId: StudioUsageController_projectUsage
+      parameters:
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      summary: How AG Studio used a project's footage, and their downloads
+      tags: *a37
 info:
   title: AG Go API
   description: AG Go backend API
@@ -3403,7 +3640,7 @@ info:
   contact: {}
 tags: []
 servers:
-  - url: http://localhost:3737/api
+  - url: http://localhost:3738/api
 components:
   securitySchemes:
     bearer:
@@ -3580,6 +3817,20 @@ components:
           type: number
           default: 0
           description: Priority for this analysis job
+    PrepBackfillDto:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+            - missing
+            - all
+        dryRun:
+          type: boolean
+          default: false
+          description: Only count the footage that would be queued
+      required:
+        - mode
     CreateProjectMediaDto:
       type: object
       properties:
@@ -3917,6 +4168,17 @@ components:
         cursor:
           type: string
           description: Opaque pagination cursor from the previous response.
+    ResolvePreferDto:
+      type: object
+      properties:
+        short_edge:
+          type: number
+          description:
+            "Short edge in pixels wanted (e.g. 480): that size, else the
+            smallest above, else the largest below."
+        clean:
+          type: boolean
+          description: An un-watermarked rendition first, when the user may see one.
     ResolveAssetsDto:
       type: object
       properties:
@@ -3930,9 +4192,74 @@ components:
           enum:
             - preview
             - final
+        prefer:
+          $ref: "#/components/schemas/ResolvePreferDto"
       required:
         - assetIds
         - purpose
+    PrepAssetsDto:
+      type: object
+      properties:
+        assetIds:
+          description: Asset (video) IDs (1–200).
+          type: array
+          items:
+            type: string
+      required:
+        - assetIds
+    StudioUsageEventDto:
+      type: object
+      properties:
+        eventKey:
+          type: string
+          description: Unique per event; a resent event is not counted twice
+        kind:
+          type: string
+          enum:
+            - source_added
+            - source_removed
+            - final_render
+            - premiere_export
+        occurredAt:
+          type: string
+          description: ISO date-time
+        assetId:
+          type: object
+          nullable: true
+          description: Footage; null for a whole ag-go project
+        agGoProjectId:
+          type: object
+          nullable: true
+        studioProjectId:
+          type: string
+        studioProjectName:
+          type: string
+        studioVideoId:
+          type: object
+          nullable: true
+        studioVideoTitle:
+          type: object
+          nullable: true
+        studioUserId:
+          type: object
+          nullable: true
+          description: Full Auth0 subject; `auth0|` is dropped
+      required:
+        - eventKey
+        - kind
+        - occurredAt
+        - studioProjectId
+        - studioProjectName
+    StudioUsageEventsDto:
+      type: object
+      properties:
+        events:
+          description: 1–500 events
+          type: array
+          items:
+            $ref: "#/components/schemas/StudioUsageEventDto"
+      required:
+        - events
     ApiError:
       type: object
       required:

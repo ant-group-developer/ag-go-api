@@ -4,6 +4,7 @@ import type { KeyObject } from 'node:crypto';
 import { generateKeyPairSync, randomUUID, sign } from 'node:crypto';
 import type { Repository } from 'typeorm';
 import type { AnalysisFarmJobEntity } from '../../../database/entities/analysis-farm-job.entity';
+import type { AssetPrepFarmJobEntity } from '../../../database/entities/asset-prep-farm-job.entity';
 import { FarmTicketGuard } from './farm-ticket.guard';
 import type { TicketClaims } from './ticket';
 
@@ -38,10 +39,11 @@ function makeTicket(privateK: KeyObject, overrides: Partial<TicketClaims> = {}):
   return `${header}.${payload}.${Buffer.from(sig).toString('base64url')}`;
 }
 
-/** Builds a guard with a mocked repo returning `job` (null = not found). */
+/** Builds a guard with mocked repos returning `job` / `prepJob` (null = not found). */
 function makeGuard(
   job: AnalysisFarmJobEntity | null,
   pubKeyPem: string | null = PUBLIC_KEY_PEM,
+  prepJob: AssetPrepFarmJobEntity | null = null,
 ): FarmTicketGuard {
   // Use null (not undefined) to mean "key not configured"; undefined triggers JS default params
   const config = {
@@ -50,7 +52,10 @@ function makeGuard(
   const repo = {
     findOne: jest.fn().mockResolvedValue(job),
   } as unknown as Repository<AnalysisFarmJobEntity>;
-  return new FarmTicketGuard(config, repo);
+  const prepRepo = {
+    findOne: jest.fn().mockResolvedValue(prepJob),
+  } as unknown as Repository<AssetPrepFarmJobEntity>;
+  return new FarmTicketGuard(config, repo, prepRepo);
 }
 
 /** Wraps an authorization value into a minimal ExecutionContext. */
@@ -87,6 +92,46 @@ describe('FarmTicketGuard', () => {
     await expect(guard.canActivate(ctx)).resolves.toBe(true);
     expect((req as Record<string, unknown>)['farmTicketClaims']).toBeDefined();
     expect((req as Record<string, unknown>)['farmJob']).toBe(job);
+  });
+
+  it('passes a scan.prep ticket of a prep farm job and attaches it as prepFarmJob', async () => {
+    const jobId = randomUUID();
+    const prepJob: AssetPrepFarmJobEntity = {
+      farmJobId: jobId,
+      prepId: randomUUID(),
+      type: 'scan.prep',
+      status: 'submitted',
+      error: null,
+      submittedAt: new Date(),
+      ingestedAt: null,
+      lockedUntil: null,
+    };
+    const token = makeTicket(privateKey, { job_id: jobId, type: 'scan.prep' });
+    const guard = makeGuard(null, PUBLIC_KEY_PEM, prepJob);
+    const req = { headers: { authorization: `Ticket ${token}` } };
+    const ctx = { switchToHttp: () => ({ getRequest: () => req }) } as unknown as ExecutionContext;
+
+    await expect(guard.canActivate(ctx)).resolves.toBe(true);
+    expect((req as Record<string, unknown>)['prepFarmJob']).toBe(prepJob);
+    expect((req as Record<string, unknown>)['farmJob']).toBeUndefined();
+  });
+
+  it('throws 403 for an ingested prep farm job', async () => {
+    const jobId = randomUUID();
+    const token = makeTicket(privateKey, { job_id: jobId, type: 'studio.transcribe' });
+    const guard = makeGuard(null, PUBLIC_KEY_PEM, {
+      farmJobId: jobId,
+      prepId: randomUUID(),
+      type: 'studio.transcribe',
+      status: 'ingested',
+      error: null,
+      submittedAt: new Date(),
+      ingestedAt: new Date(),
+      lockedUntil: null,
+    });
+    await expect(guard.canActivate(makeContext(`Ticket ${token}`))).rejects.toThrow(
+      ForbiddenException,
+    );
   });
 
   it('throws 401 when the Authorization header is absent', async () => {

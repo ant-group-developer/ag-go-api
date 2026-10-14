@@ -286,3 +286,73 @@ export const AiManifestSchema = z.strictObject({
   duration_ms: z.int().nonnegative(),
 });
 export type AiManifest = z.infer<typeof AiManifestSchema>;
+
+// ---------------------------------------------------------------------------------------------
+// scan.prep: đầu vào cho AG Studio, làm một lần mỗi footage. Cảnh theo đúng luật `buildShots` của Studio,
+// khung giữa mỗi cảnh (`frames/NNN.jpg`, rộng `frame_width`), tờ ghép 16 cảnh (`sheets/NN.jpg`) và
+// `audio.wav` 16 kHz mono khi có tiếng. Input: `source`. Manifest: `prep.json`.
+// ---------------------------------------------------------------------------------------------
+
+export const ScanPrepParamsSchema = z.strictObject({
+  scene_threshold: z.number().min(0).max(1).default(0.3),
+  min_shot_s: z.number().positive().default(1),
+  max_shot_s: z.number().positive().default(20),
+  frame_width: z.number().int().min(64).max(1920).default(480),
+  sheet_cols: z.number().int().min(1).max(8).default(4),
+  sheet_shots: z.number().int().min(1).max(64).default(16),
+  /** false: không xuất audio.wav. */
+  audio: z.boolean().default(true),
+});
+export type ScanPrepParams = z.infer<typeof ScanPrepParamsSchema>;
+
+export const ScanPrepPayloadSchema = z.strictObject({
+  asset_id: z.string().uuid(),
+  /** ag-go ký GET của "source" như scan.extract. */
+  source: InputNameSchema,
+  params: ScanPrepParamsSchema.default({
+    scene_threshold: 0.3,
+    min_shot_s: 1,
+    max_shot_s: 20,
+    frame_width: 480,
+    sheet_cols: 4,
+    sheet_shots: 16,
+    audio: true,
+  }),
+});
+export type ScanPrepPayload = z.infer<typeof ScanPrepPayloadSchema>;
+
+export const PREP_MANIFEST_SCHEMA = 'ag.scan.prep/v1';
+export const PREP_MANIFEST_PATH = 'prep.json';
+export const PREP_AUDIO_PATH = 'audio.wav';
+
+export const ScanPrepManifestSchema = z.strictObject({
+  schema: z.literal(PREP_MANIFEST_SCHEMA),
+  asset_id: z.string().uuid(),
+  media: z.strictObject({
+    duration_s: z.number(),
+    width: z.number().int(),
+    height: z.number().int(),
+    fps: z.number().nullable(),
+    has_audio: z.boolean(),
+  }),
+  scene: z.strictObject({
+    threshold: z.number(),
+    min_shot_s: z.number(),
+    max_shot_s: z.number(),
+  }),
+  /** `frame`: "frames/001.jpg" (pad3, 1-based). */
+  shots: z.array(
+    z.strictObject({
+      n: z.number().int().min(1),
+      in: z.number(),
+      out: z.number(),
+      frame: z.string(),
+    }),
+  ),
+  /** `file`: "sheets/01.jpg" (pad2). */
+  sheets: z.array(z.strictObject({ file: z.string(), shots: z.array(z.number().int()) })),
+  /** "audio.wav" (16 kHz mono pcm_s16le), hoặc null khi không có tiếng. */
+  audio: z.string().nullable(),
+  tools: z.record(z.string(), z.string()).optional(),
+});
+export type ScanPrepManifest = z.infer<typeof ScanPrepManifestSchema>;

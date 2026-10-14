@@ -7,6 +7,7 @@ import { MediaProcessingService } from './media-processing.service';
 jest.mock('@nestjs/typeorm', () => ({
   InjectRepository: () => () => undefined,
 }));
+jest.mock('../analysis/prep/prep-pipeline.service', () => ({ PrepPipelineService: class {} }));
 // A new value per call, so a token reused across claims would show.
 jest.mock('uuid', () => {
   let count = 0;

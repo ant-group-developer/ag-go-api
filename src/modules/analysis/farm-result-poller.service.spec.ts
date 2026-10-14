@@ -232,6 +232,20 @@ describe('FarmResultPollerService', () => {
       expect(result).toBe(true);
     });
 
+    it('acks a job of a type it does not run, without failing the poll', async () => {
+      const foreign = {
+        ...makeJobView({ id: randomUUID(), correlation_id: 'studio-render:abc' }),
+        type: 'studio.not_yet_invented',
+      };
+      const { service, farmClient } = makeService({
+        farmJobFindOneValues: [null],
+        analysisCount: 0,
+        farmClientListResult: [foreign as unknown as JobView],
+      });
+      await service.poll();
+      expect(farmClient.ackJob).toHaveBeenCalledWith(foreign.id);
+    });
+
     it('returns true (ack) when the correlation_id matches but the analysis does not exist', async () => {
       const ghostAnalysisId = randomUUID();
       const { service } = makeService({
