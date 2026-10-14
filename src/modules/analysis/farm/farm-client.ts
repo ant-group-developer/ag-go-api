@@ -2,7 +2,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { readApiError, unwrapApiResponse } from './api-envelope';
-import type { JobControlAction, JobView, SubmitJobRequest, SubmitJobResponse } from './protocol';
+import type {
+  JobControlAction,
+  JobView,
+  ListedJob,
+  RaiseJobRequest,
+  SubmitJobRequest,
+  SubmitJobResponse,
+} from './protocol';
 import {
   GetJobResponseSchema,
   JobControlResponseSchema,
@@ -55,8 +62,11 @@ export class FarmClient {
     return parsed.data.job;
   }
 
-  /** Lists unacked completed/failed jobs. */
-  async listUnackedFinished(limit = 100): Promise<JobView[]> {
+  /**
+   * Lists unacked completed/failed jobs. Read leniently (`ListedJob`): a job of a type this copy of
+   * the protocol does not know must not hide the others.
+   */
+  async listUnackedFinished(limit = 100): Promise<ListedJob[]> {
     const data = await this.get<unknown>(
       `/v1/owner/jobs?status=completed,failed&unacked=1&limit=${limit}`,
     );
@@ -70,6 +80,15 @@ export class FarmClient {
   /** Acknowledges a job result. */
   async ackJob(farmJobId: string): Promise<void> {
     await this.post<unknown>(`/v1/owner/jobs/${farmJobId}/ack`, {});
+  }
+
+  /**
+   * Moves a job still `queued` to another lane / priority (`POST /v1/owner/jobs/:id/raise`). The hub
+   * answers 409 when the job is no longer queued and 404 when it does not know the endpoint or job;
+   * both throw.
+   */
+  async raiseJob(farmJobId: string, request: RaiseJobRequest): Promise<void> {
+    await this.post<unknown>(`/v1/owner/jobs/${farmJobId}/raise`, request);
   }
 
   /** Cancels a job (best-effort). */

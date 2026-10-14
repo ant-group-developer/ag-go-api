@@ -20,6 +20,8 @@ import {
 } from '../../database/entities/media-render-job.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { AnalysisEnqueueService } from '../analysis/analysis-enqueue.service';
+import { BATCH_PREP_PRIORITY } from '../analysis/prep/prep-batches';
+import { PrepPipelineService } from '../analysis/prep/prep-pipeline.service';
 import { refreshRenderBatch } from '../render/render-job-lifecycle';
 import {
   normalizeRenderSizes,
@@ -160,6 +162,9 @@ export class MediaProcessingService {
     @Optional()
     @Inject(forwardRef(() => AnalysisEnqueueService))
     private readonly analysisEnqueue?: AnalysisEnqueueService,
+    @Optional()
+    @Inject(forwardRef(() => PrepPipelineService))
+    private readonly prepPipeline?: PrepPipelineService,
   ) {}
 
   async processJobById(jobId: string, assetId: string, queueJobId?: string): Promise<void> {
@@ -399,6 +404,13 @@ export class MediaProcessingService {
         // skips an asset that already has a current or in-flight analysis of the same version.
         if (this.analysisEnqueue?.isAutoEnqueueEnabled()) {
           await this.analysisEnqueue.enqueueInsideTransaction(manager, asset);
+        }
+        // Studio inputs of new video footage, low in the batch lane; skipped once prepared.
+        if (asset.assetType === 'video' && this.prepPipeline?.isAutoEnqueueEnabled()) {
+          await this.prepPipeline.enqueueInsideTransaction(manager, asset, {
+            lane: 'batch',
+            priority: BATCH_PREP_PRIORITY,
+          });
         }
       });
       await refreshRenderBatch(this.jobRepository.manager, job.renderBatchId);

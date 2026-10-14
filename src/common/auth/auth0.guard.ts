@@ -16,6 +16,7 @@ import { SystemLogService } from '../../modules/logs/system-log.service';
 import type { AuthContext } from '../auth-context.service';
 import { SERVICE_KEY_SCOPES_KEY } from './allow-service-key.decorator';
 import { IS_PUBLIC_KEY } from './public.decorator';
+import { SERVICE_ONLY_SCOPE_KEY } from './service-only.decorator';
 
 type JwtHeader = {
   alg?: string;
@@ -80,6 +81,18 @@ export class Auth0Guard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
 
     // ------------------------------------------------------------------
+    // Service-only routes (@ServiceOnly): a service key with the scope, no user at all.
+    // ------------------------------------------------------------------
+    const serviceOnlyScope = this.reflector.getAllAndOverride<string | undefined>(
+      SERVICE_ONLY_SCOPE_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (serviceOnlyScope) {
+      this.activateServiceOnly(request, serviceOnlyScope);
+      return true;
+    }
+
+    // ------------------------------------------------------------------
     // Service-key path: only if the route declares @AllowServiceKey AND
     // the request carries X-Service-Key.
     // ------------------------------------------------------------------
@@ -124,6 +137,31 @@ export class Auth0Guard implements CanActivate {
   // -----------------------------------------------------------------------
   // Service-key authentication
   // -----------------------------------------------------------------------
+
+  /**
+   * A route only services call: `X-Service-Key` with `scope` is required, a user's token is
+   * refused, and no user is loaded (no Account API call, no act-as audit row per request).
+   */
+  private activateServiceOnly(request: Request, scope: string): void {
+    const rawKey = request.header('x-service-key');
+    if (!rawKey) {
+      throw new UnauthorizedException('X-Service-Key is required for this route');
+    }
+    const entry = this.resolveServiceKey(rawKey);
+    if (!entry) {
+      throw new UnauthorizedException('Invalid service key');
+    }
+    if (!entry.scopes.includes(scope)) {
+      throw new ForbiddenException(`Service key does not have required scope: ${scope}`);
+    }
+    const authContext: AuthContext = {
+      userId: `service:${entry.name}`,
+      accessToken: '',
+      actingService: entry.name,
+      serviceOnly: true,
+    };
+    request.authContext = authContext;
+  }
 
   private async activateServiceKey(
     request: Request,

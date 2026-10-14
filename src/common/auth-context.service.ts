@@ -10,6 +10,11 @@ export type AuthContext = {
   permissions?: string[];
   /** Name of the service acting on behalf of this user (set by service-key auth). */
   actingService?: string;
+  /**
+   * Set on `@ServiceOnly` routes: the caller is the service itself, not a user (`userId` is then
+   * `service:<name>` and must not be used as a user).
+   */
+  serviceOnly?: boolean;
 };
 
 @Injectable()

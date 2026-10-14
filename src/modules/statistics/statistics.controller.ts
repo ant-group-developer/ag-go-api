@@ -13,6 +13,7 @@ import { StatisticsCacheService } from './statistics-cache.service';
 import { StatisticsOperationsService } from './statistics-operations.service';
 import { StatisticsProgressService } from './statistics-progress.service';
 import { StatisticsProjectTrendService } from './statistics-project-trend.service';
+import { StatisticsStudioUsageService } from './statistics-studio-usage.service';
 import { StatisticsSummaryService } from './statistics-summary.service';
 import { StatisticsTeamService } from './statistics-team.service';
 import { StatisticsTrendService } from './statistics-trend.service';
@@ -37,6 +38,7 @@ export class StatisticsController {
     private readonly projectTrendService: StatisticsProjectTrendService,
     private readonly breakdownService: StatisticsBreakdownService,
     private readonly cache: StatisticsCacheService,
+    private readonly studioUsageService: StatisticsStudioUsageService,
   ) {}
 
   @Get('summary')
@@ -82,6 +84,15 @@ export class StatisticsController {
   team(@Req() request: Request, @Query() query: StatisticsPeriodQueryDto) {
     const context = this.authContext.getContext(request);
     return this.cache.wrap('team', context, query, () => this.teamService.team(context, query));
+  }
+
+  /** Footage use in AG Studio and downloads: totals, top footage and projects, trend. */
+  @Get('studio-usage')
+  studioUsage(@Req() request: Request, @Query() query: StatisticsPeriodQueryDto) {
+    const context = this.authContext.getContext(request);
+    return this.cache.wrap('studio-usage', context, query, () =>
+      this.studioUsageService.studioUsage(context, query),
+    );
   }
 
   @Get('operations')

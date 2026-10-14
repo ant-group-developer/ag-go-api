@@ -5,9 +5,12 @@ import { AuthContextService } from '../../common/auth-context.service';
 import { AllowServiceKey } from '../../common/auth/allow-service-key.decorator';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
+import { PrepStudioService } from '../analysis/prep/prep-studio.service';
 import { FootageCatalogBodyDto } from './dto/catalog-query.dto';
+import { PrepAssetsDto } from './dto/prep-assets.dto';
 import { ResolveAssetsDto } from './dto/resolve-assets.dto';
 import { FootagePreviewUrlQueryDto, FootageSearchQueryDto } from './dto/search-query.dto';
+import { FootageScopeService } from './footage-scope.service';
 import { FootageService } from './footage.service';
 
 @ApiTags('footage')
@@ -17,6 +20,8 @@ export class FootageController {
   constructor(
     private readonly footageService: FootageService,
     private readonly authContext: AuthContextService,
+    private readonly scopeService: FootageScopeService,
+    private readonly prepStudio: PrepStudioService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -101,6 +106,36 @@ export class FootageController {
       (req as Request & { requestId?: string }).requestId,
       dto.prefer,
     );
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /footage/assets/prep, POST /footage/assets/prep/run
+  // ---------------------------------------------------------------------------
+
+  @Post('assets/prep')
+  @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
+  @AllowServiceKey('footage:read')
+  @ApiSecurity('service-key')
+  @ApiOperation({
+    summary: 'Prepared Studio inputs (shots, frames, sheets, transcript) or how far their prep is',
+  })
+  async readPreps(@Body() dto: PrepAssetsDto, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    await this.scopeService.assertAssetsInScope([...new Set(dto.assetIds)], ctx);
+    return this.prepStudio.read(dto.assetIds);
+  }
+
+  @Post('assets/prep/run')
+  @RequirePermissions(GO_PERMISSIONS.FOOTAGE_PRODUCE)
+  @AllowServiceKey('footage:resolve')
+  @ApiSecurity('service-key')
+  @ApiOperation({
+    summary: 'Run the prep of footage now (missing or failed), or raise one waiting in a backfill',
+  })
+  async runPreps(@Body() dto: PrepAssetsDto, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    await this.scopeService.assertAssetsInScope([...new Set(dto.assetIds)], ctx);
+    return this.prepStudio.run(dto.assetIds, ctx.userId);
   }
 
   // ---------------------------------------------------------------------------

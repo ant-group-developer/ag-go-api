@@ -266,6 +266,57 @@ describe('Auth0Guard', () => {
     ).rejects.toBeInstanceOf(ServiceUnavailableException);
   });
 
+  // -------------------------------------------------------------------------
+  // Service-only routes (@ServiceOnly)
+  // -------------------------------------------------------------------------
+
+  it('lets a service key with the scope call a service-only route without acting as anyone', async () => {
+    const raw = 'my-key';
+    const getUserAccess = jest.fn();
+    const systemLog = { write: jest.fn() };
+    const guard = buildGuard(
+      {
+        ...baseConfig,
+        SERVICE_KEYS: JSON.stringify([
+          {
+            name: 'studio',
+            sha256: createHash('sha256').update(raw).digest('hex'),
+            scopes: ['usage:write'],
+          },
+        ]),
+      },
+      { serviceOnlyScope: 'usage:write' },
+      { accountApi: { getUserAccess }, systemLog },
+    );
+    const request = createRequest({ 'x-service-key': raw });
+
+    await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
+    expect(request.authContext).toMatchObject({
+      userId: 'service:studio',
+      actingService: 'studio',
+      serviceOnly: true,
+    });
+    expect(getUserAccess).not.toHaveBeenCalled();
+    expect(systemLog.write).not.toHaveBeenCalled();
+  });
+
+  it('refuses a service-only route without the scope, without a key, or with a user token', async () => {
+    const raw = 'my-key';
+    const guard = buildGuard(
+      { ...baseConfig, SERVICE_KEYS: SERVICE_KEYS_JSON(raw) },
+      { serviceOnlyScope: 'usage:write' },
+    );
+    await expect(
+      guard.canActivate(createContext(createRequest({ 'x-service-key': raw }))),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      guard.canActivate(createContext(createRequest({ 'x-service-key': 'wrong' }))),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(
+      guard.canActivate(createContext(createRequest({ authorization: 'Bearer a.b.c' }))),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
   it('populates auth context for valid service key + act-as', async () => {
     const raw = 'my-key';
     const getUserAccess = jest

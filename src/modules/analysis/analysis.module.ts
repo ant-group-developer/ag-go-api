@@ -4,6 +4,9 @@ import { AuthContextService } from '../../common/auth-context.service';
 import { AnalysisBatchEntity } from '../../database/entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from '../../database/entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
+import { AssetPrepBatchEntity } from '../../database/entities/asset-prep-batch.entity';
+import { AssetPrepFarmJobEntity } from '../../database/entities/asset-prep-farm-job.entity';
+import { AssetPrepEntity } from '../../database/entities/asset-prep.entity';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
@@ -25,6 +28,12 @@ import { AnalysisService } from './analysis.service';
 import { FarmResultPollerService } from './farm-result-poller.service';
 import { FarmClient } from './farm/farm-client';
 import { FarmTicketGuard } from './farm/farm-ticket.guard';
+import { PrepIngestService } from './prep/prep-ingest.service';
+import { PrepPipelineService } from './prep/prep-pipeline.service';
+import { PrepSignService } from './prep/prep-sign.service';
+import { PrepStudioService } from './prep/prep-studio.service';
+import { PrepController } from './prep/prep.controller';
+import { PrepService } from './prep/prep.service';
 
 @Module({
   imports: [
@@ -36,6 +45,9 @@ import { FarmTicketGuard } from './farm/farm-ticket.guard';
       AssetAnalysisEntity,
       AnalysisBatchEntity,
       AnalysisFarmJobEntity,
+      AssetPrepEntity,
+      AssetPrepBatchEntity,
+      AssetPrepFarmJobEntity,
       AssetEntity,
       AssetVariantEntity,
       ProjectEntity,
@@ -44,7 +56,7 @@ import { FarmTicketGuard } from './farm/farm-ticket.guard';
       SystemLogEntity,
     ]),
   ],
-  controllers: [AnalysisController],
+  controllers: [AnalysisController, PrepController],
   providers: [
     AuthContextService,
     FarmClient,
@@ -57,7 +69,18 @@ import { FarmTicketGuard } from './farm/farm-ticket.guard';
     AnalysisService,
     AnalysisSignService,
     FarmResultPollerService,
+    PrepPipelineService,
+    PrepIngestService,
+    PrepSignService,
+    PrepService,
+    PrepStudioService,
   ],
-  exports: [AnalysisEnqueueService, AnalysisOutboxService, FarmResultPollerService],
+  exports: [
+    AnalysisEnqueueService,
+    AnalysisOutboxService,
+    FarmResultPollerService,
+    PrepPipelineService,
+    PrepStudioService,
+  ],
 })
 export class AnalysisModule {}

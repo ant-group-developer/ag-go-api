@@ -13,6 +13,7 @@ import type { StorageAdapter } from './storage/storage-adapter';
 jest.mock('@nestjs/typeorm', () => ({
   InjectRepository: () => () => undefined,
 }));
+jest.mock('../analysis/prep/prep-pipeline.service', () => ({ PrepPipelineService: class {} }));
 jest.mock('uuid', () => ({ v7: () => 'generated-uuid' }));
 
 type Watermark = { buffer: Buffer; width: number; height: number; top: number; left: number };
