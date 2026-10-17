@@ -6,6 +6,7 @@ import { FarmResultPollerService } from '../modules/analysis/farm-result-poller.
 import { MediaQueueWorkerService } from '../modules/assets/media-queue-worker.service';
 import { DownloadWorkerService } from '../modules/downloads/download-worker.service';
 import { GoogleDriveImportWorkerService } from '../modules/google-drive/google-drive-import-worker.service';
+import { WorkerHeartbeatPublisher } from './worker-heartbeat-publisher';
 
 const WORKER_ROLES = ['media', 'download', 'import', 'outbox'] as const;
 type WorkerRole = (typeof WORKER_ROLES)[number];
@@ -35,23 +36,37 @@ async function bootstrap(): Promise<void> {
     logger: ['log', 'error', 'warn'],
   });
   const config = app.get(ConfigService);
+  const started: WorkerRole[] = [];
   if (roles.has('media') && config.getOrThrow<boolean>('MEDIA_WORKER_ENABLED')) {
     app.get(MediaQueueWorkerService).start();
+    started.push('media');
   }
   if (roles.has('download')) {
     app.get(DownloadWorkerService).start();
+    started.push('download');
   }
   if (roles.has('import')) {
     app.get(GoogleDriveImportWorkerService).start();
+    started.push('import');
   }
   if (roles.has('outbox')) {
     app.get(OutboxDispatcherService).start();
     // Start farm result poller only in outbox role; no-ops automatically if FARM_URL is unset.
     app.get(FarmResultPollerService).start();
+    started.push('outbox');
   }
 
+  // Lists this process on the api's worker page (System > Workers), with the commit it runs.
+  const heartbeat = new WorkerHeartbeatPublisher(config, started);
+  heartbeat.start();
+
   const shutdown = async () => {
-    await app.close();
+    heartbeat.markStopping();
+    try {
+      await app.close();
+    } finally {
+      await heartbeat.stop();
+    }
   };
   process.once('SIGINT', () => void shutdown());
   process.once('SIGTERM', () => void shutdown());

@@ -3633,6 +3633,22 @@ paths:
         - bearer: []
       summary: How AG Studio used a project's footage, and their downloads
       tags: *a37
+  /system/workers:
+    get:
+      operationId: WorkersController_list
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      summary: Worker processes on every host, with the commit they run (admins only)
+      tags:
+        - system
 info:
   title: AG Go API
   description: AG Go backend API

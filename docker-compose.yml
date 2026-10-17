@@ -12,6 +12,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GIT_COMMIT: ${GIT_COMMIT:-}
     env_file:
       - .env
     extra_hosts:
@@ -47,6 +49,9 @@ services:
       - .env
     environment:
       DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-5}
+      # Name and IP of this machine on System > Workers (a container only knows its own).
+      WORKER_HOSTNAME: ${WORKER_HOSTNAME:-}
+      WORKER_HOST_IP: ${WORKER_HOST_IP:-}
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     mem_limit: ${WORKER_MEDIA_MEMORY_LIMIT:-2g}
@@ -70,6 +75,9 @@ services:
       - .env
     environment:
       DATABASE_POOL_MAX: ${WORKER_DATABASE_POOL_MAX:-5}
+      # Name and IP of this machine on System > Workers (a container only knows its own).
+      WORKER_HOSTNAME: ${WORKER_HOSTNAME:-}
+      WORKER_HOST_IP: ${WORKER_HOST_IP:-}
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     mem_limit: ${WORKER_IO_MEMORY_LIMIT:-1g}

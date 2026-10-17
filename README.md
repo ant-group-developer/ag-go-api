@@ -137,6 +137,20 @@ Script:
 - Thay `worker-media` và `worker-io` (worker cũ làm xong job đang chạy mới dừng; chạy trong tmux/screen), kiểm tra từng container sống; lỗi thì hướng dẫn dừng worker của host (host chính vẫn chạy), rollback chỉ khi host chính cũng chạy commit đó.
 - Giữ image hiện tại + image trước đó (để rollback), xóa các image cũ hơn.
 
+### Máy worker chạy Windows (Docker Desktop)
+
+`deploy-worker-host.ps1` làm đúng các bước của `deploy-worker-host.sh` (bản bash cần Linux: `flock`, `sudo`, `ip`...). Chạy trong PowerShell thường, không cần quyền admin:
+
+```powershell
+git pull --ff-only origin main; if ($?) { powershell -ExecutionPolicy Bypass -File .\deploy-worker-host.ps1 }
+```
+
+Lần đầu: cài Docker Desktop (backend WSL 2) và Git for Windows, rồi clone repo và tạo `.env` như trên. Thêm:
+- Docker Desktop → Settings → General: bật **Start Docker Desktop when you sign in**. Worker chỉ chạy lại sau khi máy khởi động lại (Windows Update...) khi Docker Desktop đã chạy, mà Docker Desktop cần một user đăng nhập. Sau mỗi lần khởi động lại, xem trang **Hệ thống → Workers**.
+- `WORKER_MEDIA_MEMORY_LIMIT` + `WORKER_IO_MEMORY_LIMIT` phải nằm trong RAM Docker Desktop được cấp (mặc định một nửa RAM máy; tăng bằng `memory=` trong `%UserProfile%\.wslconfig`). Giới hạn CPU được so với số CPU của Docker Desktop.
+- Giữ cửa sổ PowerShell mở và máy không sleep cho tới khi script chạy xong.
+- GitHub Actions (`deploy-worker-hosts.yml`) chỉ deploy host Linux qua SSH; máy Windows phải deploy tay. Trang **Hệ thống → Workers** đánh dấu **Code cũ** cho máy nào chưa deploy commit mới.
+
 **Quy tắc:**
 - Host bổ sung chỉ chạy worker (`worker-media`, `worker-io`); không chạy `api`, không chạy migration.
 - An toàn khi chạy nhiều host: render job có `claim_token`; mọi lượt quét job treo (render, import) so với giờ DB; outbox giữ event đang publish bằng lease 5 phút (claim từng lượt, publish chạy nền nên purge dài không chặn render); chỉ process API dọn upload session hết hạn.
