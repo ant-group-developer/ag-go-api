@@ -222,12 +222,32 @@ chỉ bị xóa khi project bị xóa.
 
 ## CI/CD
 
-Các workflow trong `.github/workflows` kiểm tra format, typecheck, lint, test,
-build, OpenAPI và Docker image cho nhánh `main` và `dev`. Push vào `dev` kích
-hoạt deploy development; push vào `main` kích hoạt deploy production.
+Các workflow trong `.github/workflows` tự động hóa quy trình kiểm thử (CI), xây dựng và triển khai (CD) cho nhánh `main` và `dev`:
+
+### Pipeline CI (`.github/workflows/ci.yml`)
+
+Kích hoạt tự động khi có **Pull Request** hoặc **Push** tới nhánh `main` và `dev`. Pipeline chạy trên môi trường Ubuntu với Node.js 22 và bộ nhớ đệm Yarn:
+
+1. **Cài đặt dependencies:** Chạy `yarn install --frozen-lockfile`.
+2. **Kiểm tra định dạng:** `yarn format:check` (Prettier).
+3. **Lint mã nguồn:** `yarn lint` (ESLint).
+4. **Kiểm tra kiểu dữ liệu:** `yarn typecheck` (`tsc --noEmit`).
+5. **Chạy Unit Test:** `yarn test` (Jest).
+6. **Kiểm thử Database (Integration Test):** `yarn test:db` chạy với container dịch vụ PostgreSQL 16 (cấu hình tương thích `docker-compose.test.yml`, port 55434).
+7. **Build ứng dụng:** `yarn build` (`tsc --build tsconfig.build.json --force`).
+8. **Phát hiện sai lệch OpenAPI contract:** Sinh tài liệu tĩnh qua `yarn openapi:generate` và kiểm tra `git diff --exit-code openapi.yaml` để đảm bảo file `openapi.yaml` không bị lỗi thời (stale).
+9. **Build Docker image:** Xây dựng image API multi-stage từ `Dockerfile` (`ag-go-api:test`, kèm build arg `GIT_COMMIT`) qua Docker Buildx mà không đẩy lên registry, nhằm đảm bảo mã nguồn đóng gói thành công.
+
+### Pipeline Deploy (`deploy.dev.yml` / `deploy.prod.yml`)
+
+Quy trình deploy development (`deploy.dev.yml`) và deploy production (`deploy.prod.yml`) phụ thuộc chặt chẽ vào kết quả CI thông qua cơ chế `workflow_run`:
+
+- Khi có push tới `dev` hoặc `main`, CI sẽ chạy trước. Chỉ khi toàn bộ bước trong CI kết thúc **thành công** (`conclusion: success`), workflow deploy tương ứng mới được kích hoạt.
+- Nếu CI thất bại, deployment tự động bị chặn và không thực hiện SSH/cập nhật hệ thống.
+- Hỗ trợ kích hoạt thủ công qua `workflow_dispatch`, nhưng vẫn bắt buộc kiểm tra trạng thái CI thành công của commit SHA tương ứng qua GitHub API trước khi thực hiện deploy (deploy thủ công không thể bỏ qua kiểm tra CI).
+- Sau khi host chính deploy thành công, các worker host phụ (`deploy-worker-hosts.yml`) được deploy song song nếu biến cấu hình tương ứng (`WORKER_HOSTS_DEV` / `WORKER_HOSTS`) được thiết lập.
 
 Deploy dùng các secret `VPS_SSH_KEY_DEV`, `VPS_HOST_DEV`, `VPS_USER_DEV`
 (tùy chọn `VPS_PORT_DEV`, `VPS_APP_PATH_DEV`) cho development và
 `VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER` (tùy chọn `VPS_PORT`, `VPS_APP_PATH`)
-cho production. Thông báo Telegram dùng `TELEGRAM_CHAT_ID` và
-`TELEGRAM_TOKEN`.
+cho production. Thông báo Telegram (`notify.yml`) được gửi tự động khi workflow deploy hoàn tất (dùng `TELEGRAM_CHAT_ID` và `TELEGRAM_TOKEN`).
