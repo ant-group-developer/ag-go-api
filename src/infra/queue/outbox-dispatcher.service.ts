@@ -179,8 +179,8 @@ export class OutboxDispatcherService implements OnModuleDestroy {
       } else if (event.eventType === ASSET_ANALYSIS_COMPLETED_EVENT) {
         // No consumer yet: published as is.
       } else {
-        this.logger.warn(
-          `Outbox event ${event.id} has unknown type "${event.eventType}" — marking published`,
+        throw new Error(
+          `Unknown outbox event type "${event.eventType}" — keeping pending for retry after deploy`,
         );
       }
       await this.dataSource.getRepository(OutboxEventEntity).update(event.id, {

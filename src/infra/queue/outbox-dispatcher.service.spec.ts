@@ -277,6 +277,51 @@ describe('OutboxDispatcherService', () => {
     );
   });
 
+  it('keeps an unknown event type pending for retry instead of discarding it', async () => {
+    const unknownEvent: OutboxEventEntity = {
+      ...renderEvent(),
+      eventType: 'asset.something.new_from_future_deploy',
+      payload: { assetId: 'a1' },
+    };
+    const { service, update } = setup([unknownEvent], jest.fn());
+
+    await service.dispatchPending();
+
+    // Must NOT be marked published — that would discard it during a rolling deploy.
+    expect(update).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ status: 'published' }),
+    );
+    // Instead it enters the retry path with exponential backoff.
+    expect(update).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        status: 'failed',
+        lastError: expect.stringContaining('Unknown outbox event type'),
+      }),
+    );
+  });
+
+  it('parks an unknown event type as dead after MAX_ATTEMPTS so it does not retry forever', async () => {
+    const unknownEvent: OutboxEventEntity = {
+      ...renderEvent(),
+      attemptCount: 29, // MAX_ATTEMPTS = 30, claimDue already incremented to 30
+      eventType: 'asset.something.new_from_future_deploy',
+      payload: { assetId: 'a1' },
+    };
+    const { service, update } = setup([unknownEvent], jest.fn());
+
+    await service.dispatchPending();
+
+    expect(update).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        status: 'dead',
+        lastError: expect.stringContaining('Unknown outbox event type'),
+      }),
+    );
+  });
+
   describe('asset.analysis.requested branch', () => {
     const ANALYSIS_ID = randomUUID();
 
