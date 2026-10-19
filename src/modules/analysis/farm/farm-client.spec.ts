@@ -12,7 +12,7 @@
 import type { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { isApiEnvelope, readApiError, unwrapApiResponse } from './api-envelope';
-import { FarmClient } from './farm-client';
+import { FARM_HTTP_TIMEOUT_MS, FarmClient } from './farm-client';
 import type { JobView } from './protocol';
 
 // ---------------------------------------------------------------------------
@@ -559,5 +559,86 @@ describe('FarmClient.raiseJob', () => {
     await expect(
       makeFarmClient().raiseJob(randomUUID(), { lane: 'interactive', priority: 50 }),
     ).rejects.toThrow(/409/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FarmClient: HTTP timeout
+// ---------------------------------------------------------------------------
+
+describe('FarmClient: HTTP timeout', () => {
+  const SUBMIT_REQUEST = {
+    type: 'scan.extract' as const,
+    lane: 'batch' as const,
+    priority: 0,
+    requirements: {},
+    affinity_key: null,
+    payload: { foo: 1 },
+    max_attempts: 3,
+    correlation_id: 'analysis-1:extract',
+    not_before: null,
+  };
+
+  it('attaches AbortSignal.timeout(FARM_HTTP_TIMEOUT_MS) on POST requests', async () => {
+    const timeoutSpy = jest.spyOn(AbortSignal, 'timeout');
+    fetchMock.mockResolvedValueOnce(rawSuccess(makeSubmitRaw(makeJobView())));
+
+    const client = makeFarmClient();
+    await client.submitJob(SUBMIT_REQUEST);
+
+    expect(timeoutSpy).toHaveBeenCalledWith(FARM_HTTP_TIMEOUT_MS);
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://farm.test/v1/owner/jobs',
+      expect.objectContaining({
+        method: 'POST',
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    timeoutSpy.mockRestore();
+  });
+
+  it('attaches AbortSignal.timeout(FARM_HTTP_TIMEOUT_MS) on GET requests', async () => {
+    const timeoutSpy = jest.spyOn(AbortSignal, 'timeout');
+    const job = makeJobView();
+    fetchMock.mockResolvedValueOnce(rawSuccess(makeGetJobRaw(job)));
+
+    const client = makeFarmClient();
+    await client.getJob(job.id);
+
+    expect(timeoutSpy).toHaveBeenCalledWith(FARM_HTTP_TIMEOUT_MS);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://farm.test/v1/owner/jobs/${job.id}`,
+      expect.objectContaining({
+        method: 'GET',
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    timeoutSpy.mockRestore();
+  });
+
+  it('rejects when POST request aborts due to timeout', async () => {
+    const timeoutError = new DOMException(
+      'The operation was aborted due to timeout',
+      'TimeoutError',
+    );
+    fetchMock.mockRejectedValueOnce(timeoutError);
+
+    const client = makeFarmClient();
+    await expect(client.submitJob(SUBMIT_REQUEST)).rejects.toThrow(
+      'The operation was aborted due to timeout',
+    );
+  });
+
+  it('rejects when GET request aborts due to timeout', async () => {
+    const timeoutError = new DOMException(
+      'The operation was aborted due to timeout',
+      'TimeoutError',
+    );
+    fetchMock.mockRejectedValueOnce(timeoutError);
+
+    const client = makeFarmClient();
+    await expect(client.listUnackedFinished()).rejects.toThrow(
+      'The operation was aborted due to timeout',
+    );
   });
 });

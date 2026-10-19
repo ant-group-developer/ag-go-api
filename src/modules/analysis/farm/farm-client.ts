@@ -17,6 +17,8 @@ import {
   SubmitJobResponseSchema,
 } from './protocol';
 
+export const FARM_HTTP_TIMEOUT_MS = 10_000;
+
 /**
  * Minimal HTTP client for ag-farm owner API.
  * Uses `Authorization: Owner <key>` authentication.
@@ -129,6 +131,7 @@ export class FarmClient {
         Authorization: `Owner ${this.ownerKey}`,
       },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(FARM_HTTP_TIMEOUT_MS),
     });
     const rawBody = await this.parseResponseBody(response);
     if (!response.ok) {
@@ -145,6 +148,7 @@ export class FarmClient {
       headers: {
         Authorization: `Owner ${this.ownerKey}`,
       },
+      signal: AbortSignal.timeout(FARM_HTTP_TIMEOUT_MS),
     });
     const rawBody = await this.parseResponseBody(response);
     if (!response.ok) {
