@@ -20,9 +20,36 @@ log() {
   printf '\n[%s] %s\n' "$(date +%H:%M:%S)" "$*"
 }
 
+# This machine's IP on the route to $1 (an IP or a name), else its first IP. On a worker host
+# that is its address on the private network it reaches the main host's Redis through.
+host_ip() {
+  local target ip=''
+  target=$(getent ahostsv4 "$1" 2>/dev/null | awk 'NR == 1 { print $1 }' || true)
+  if [[ -n "$target" && "$target" != 127.* ]]; then
+    ip=$(ip route get "$target" 2>/dev/null | sed -nE 's/.* src ([0-9.]+).*/\1/p' | head -n 1 || true)
+  fi
+  [[ -n "$ip" ]] || ip=$(hostname -I 2>/dev/null | awk '{ print $1 }' || true)
+  printf '%s' "$ip"
+}
+
 if [[ ! -f .env ]]; then
   echo "Missing .env (copy .env.example and fill it in first)." >&2
   exit 1
+fi
+
+# Shown on System > Workers: the commit the image is built from (workers on another commit
+# than the api are flagged there), this machine's name and IP (WORKER_HOSTNAME and
+# WORKER_HOST_IP in .env win).
+if [[ -z "${GIT_COMMIT:-}" ]] && ! GIT_COMMIT=$(git -c safe.directory="$PWD" rev-parse HEAD 2>/dev/null); then
+  GIT_COMMIT=''
+  echo 'Warning: cannot read the checked-out commit; System > Workers will show it as unknown.' >&2
+fi
+export GIT_COMMIT
+if ! grep -qE '^[[:space:]]*WORKER_HOSTNAME=' .env; then
+  export WORKER_HOSTNAME=${WORKER_HOSTNAME:-$(hostname)}
+fi
+if ! grep -qE '^[[:space:]]*WORKER_HOST_IP=' .env; then
+  export WORKER_HOST_IP=${WORKER_HOST_IP:-$(host_ip 1.1.1.1)}
 fi
 
 # An interrupted recreate leaves new containers named "<old id>_<name>" that were never

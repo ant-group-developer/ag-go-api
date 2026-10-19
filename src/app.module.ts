@@ -66,6 +66,7 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
 import { TagsModule } from './modules/tags/tags.module';
 import { UsageModule } from './modules/usage/usage.module';
+import { WorkersModule } from './modules/workers/workers.module';
 
 @Module({
   imports: [
@@ -147,6 +148,7 @@ import { UsageModule } from './modules/usage/usage.module';
     AnalysisModule,
     FootageModule,
     UsageModule,
+    WorkersModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
