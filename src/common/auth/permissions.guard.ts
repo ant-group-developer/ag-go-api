@@ -10,7 +10,11 @@ import type { Request } from 'express';
 import { AccountApiService } from '../../modules/account/account-api.service';
 import { AuthContextService } from '../auth-context.service';
 import type { GoPermission } from './permissions.constants';
-import { ANY_PERMISSIONS_KEY, REQUIRED_PERMISSIONS_KEY } from './permissions.decorator';
+import {
+  ADMIN_ONLY_KEY,
+  ANY_PERMISSIONS_KEY,
+  REQUIRED_PERMISSIONS_KEY,
+} from './permissions.decorator';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { isAdminUserType } from './user-type';
 
@@ -38,7 +42,11 @@ export class PermissionsGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
-    if (!required?.length && !anyRequired?.length) {
+    const adminOnly = this.reflector.getAllAndOverride<boolean>(ADMIN_ONLY_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!required?.length && !anyRequired?.length && !adminOnly) {
       return true;
     }
 
@@ -58,6 +66,9 @@ export class PermissionsGuard implements CanActivate {
 
     if (isAdminUserType(currentUser.user_type)) {
       return true;
+    }
+    if (adminOnly) {
+      throw new ForbiddenException('Only administrators can use this route');
     }
 
     if (!currentUser.permissions) {

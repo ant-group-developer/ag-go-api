@@ -42,6 +42,12 @@ COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY package.json ./
 COPY --from=build /app/dist ./dist
 
+# The commit this image is built from (full hash, passed by deploy.sh / deploy-worker-host.sh).
+# Workers report it, so System > Workers flags those still running an older commit. Last, so a
+# new commit only rebuilds this layer.
+ARG GIT_COMMIT=
+ENV GIT_COMMIT=${GIT_COMMIT}
+
 USER node
 EXPOSE 3000
 
