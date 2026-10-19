@@ -88,6 +88,7 @@ const EXTRACT_JOB: AnalysisFarmJobEntity = {
   submittedAt: new Date(),
   ingestedAt: null,
   lockedUntil: null,
+  attemptCount: 0,
 };
 
 const AI_JOB: AnalysisFarmJobEntity = {

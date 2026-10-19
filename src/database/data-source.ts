@@ -80,6 +80,7 @@ import { CategoryCreatedBy2100000000000 } from './migrations/2100000000000-categ
 import { TagTimestamps2110000000000 } from './migrations/2110000000000-tag-timestamps';
 import { AssetPreps2120000000000 } from './migrations/2120000000000-asset-preps';
 import { StudioUsage2130000000000 } from './migrations/2130000000000-studio-usage';
+import { FarmJobRetryAttempts2140000000000 } from './migrations/2140000000000-farm-job-retry-attempts';
 
 loadEnv();
 
@@ -179,6 +180,7 @@ export const AppDataSource = new DataSource({
     TagTimestamps2110000000000,
     AssetPreps2120000000000,
     StudioUsage2130000000000,
+    FarmJobRetryAttempts2140000000000,
   ],
   synchronize: false,
 });

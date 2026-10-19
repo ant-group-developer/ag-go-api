@@ -20,6 +20,7 @@ import type { AnalysisPipelineService } from './analysis-pipeline.service';
 import { FarmResultPollerService } from './farm-result-poller.service';
 import type { FarmClient } from './farm/farm-client';
 import type { JobView } from './farm/protocol';
+import type { PrepIngestService } from './prep/prep-ingest.service';
 
 // uuid v14 is pure-ESM; mock it so Jest (CommonJS) can load the service under test.
 jest.mock('uuid', () => {
@@ -57,6 +58,7 @@ const EXTRACT_FARM_JOB: AnalysisFarmJobEntity = {
   submittedAt: new Date(),
   ingestedAt: null,
   lockedUntil: null,
+  attemptCount: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -104,6 +106,8 @@ function makeService(
     lockAffected?: number;
     analysisCount?: number;
     farmClientListResult?: JobView[];
+    prepIngest?: PrepIngestService;
+    configValues?: Record<string, unknown>;
   } = {},
 ) {
   const {
@@ -111,6 +115,8 @@ function makeService(
     lockAffected = 1,
     analysisCount = 1,
     farmClientListResult = [],
+    prepIngest,
+    configValues = {},
   } = options;
 
   let findOneCallIdx = 0;
@@ -183,7 +189,7 @@ function makeService(
   };
 
   const config = {
-    get: jest.fn().mockReturnValue(undefined),
+    get: jest.fn().mockImplementation((key: string) => configValues[key]),
   };
 
   const analysisLog = { write: jest.fn().mockResolvedValue(undefined) };
@@ -198,6 +204,7 @@ function makeService(
     pipeline as unknown as AnalysisPipelineService,
     analysisLog as unknown as AnalysisLogService,
     config as unknown as ConfigService,
+    prepIngest,
   );
 
   return {
@@ -461,6 +468,91 @@ describe('FarmResultPollerService', () => {
       await expect(service.poll()).resolves.toBeUndefined();
       // After the failed poll the flag must be reset so the next poll can run
       expect((service as unknown as { polling: boolean }).polling).toBe(false);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // poll: retry limit and poison job handling
+  // -------------------------------------------------------------------------
+
+  describe('poll: retry limit and poison job handling', () => {
+    it('does not ack a failing job when attempts < maxAttempts', async () => {
+      const job = makeJobView();
+      const farmJobRow: AnalysisFarmJobEntity = {
+        ...EXTRACT_FARM_JOB,
+        farmJobId: job.id,
+        attemptCount: 1,
+      };
+      const { service, farmClient } = makeService({
+        farmJobFindOneValues: [farmJobRow],
+        farmClientListResult: [job],
+        configValues: { FARM_INGEST_MAX_ATTEMPTS: 3 },
+      });
+      jest.spyOn(service, 'processJob').mockRejectedValue(new Error('transient boom'));
+
+      await service.poll();
+
+      expect(farmClient.ackJob).not.toHaveBeenCalled();
+    });
+
+    it('marks analysis failed and acks when an analysis farm job reaches maxAttempts', async () => {
+      const job = makeJobView();
+      const farmJobRow: AnalysisFarmJobEntity = {
+        ...EXTRACT_FARM_JOB,
+        farmJobId: job.id,
+        attemptCount: 2, // will become 3 with maxAttempts = 3
+      };
+      const { service, farmClient, farmJobRepo } = makeService({
+        farmJobFindOneValues: [farmJobRow],
+        farmClientListResult: [job],
+        configValues: { FARM_INGEST_MAX_ATTEMPTS: 3 },
+      });
+      jest.spyOn(service, 'processJob').mockRejectedValue(new Error('poison error'));
+
+      await service.poll();
+
+      expect(farmClient.ackJob).toHaveBeenCalledWith(job.id);
+      expect(farmJobRepo.find).toHaveBeenCalled();
+    });
+
+    it('delegates to prepIngest.handleJobFailure and acks when prep reaches maxAttempts', async () => {
+      const job = makeJobView({ correlation_id: `${randomUUID()}:prep`, type: 'scan.prep' });
+      const mockPrepIngest = {
+        processJob: jest.fn().mockRejectedValue(new Error('prep poison error')),
+        handleJobFailure: jest.fn().mockResolvedValue(true),
+      } as unknown as PrepIngestService;
+
+      const { service, farmClient } = makeService({
+        farmJobFindOneValues: [null],
+        farmClientListResult: [job],
+        prepIngest: mockPrepIngest,
+        configValues: { FARM_INGEST_MAX_ATTEMPTS: 3 },
+      });
+
+      await service.poll();
+
+      expect(mockPrepIngest.handleJobFailure).toHaveBeenCalledWith(job, expect.any(Error), 3);
+      expect(farmClient.ackJob).toHaveBeenCalledWith(job.id);
+    });
+
+    it('does not ack prep job when prepIngest.handleJobFailure returns false (retries left)', async () => {
+      const job = makeJobView({ correlation_id: `${randomUUID()}:prep`, type: 'scan.prep' });
+      const mockPrepIngest = {
+        processJob: jest.fn().mockRejectedValue(new Error('transient prep error')),
+        handleJobFailure: jest.fn().mockResolvedValue(false),
+      } as unknown as PrepIngestService;
+
+      const { service, farmClient } = makeService({
+        farmJobFindOneValues: [null],
+        farmClientListResult: [job],
+        prepIngest: mockPrepIngest,
+        configValues: { FARM_INGEST_MAX_ATTEMPTS: 3 },
+      });
+
+      await service.poll();
+
+      expect(mockPrepIngest.handleJobFailure).toHaveBeenCalled();
+      expect(farmClient.ackJob).not.toHaveBeenCalled();
     });
   });
 });

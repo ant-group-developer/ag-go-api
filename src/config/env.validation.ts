@@ -123,6 +123,7 @@ export const envValidationSchema = Joi.object({
   FARM_TICKET_PUBLIC_KEY: Joi.string().trim().allow('').optional(),
   FARM_URL_TTL_SECONDS: Joi.number().integer().min(1).default(3600),
   FARM_POLL_INTERVAL_MS: Joi.number().integer().min(100).default(5000),
+  FARM_INGEST_MAX_ATTEMPTS: Joi.number().integer().min(1).max(100).default(5),
 
   // Content analysis
   ANALYSIS_AUTO_ENQUEUE: Joi.boolean().truthy('true').falsy('false').default(false),

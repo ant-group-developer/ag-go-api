@@ -37,7 +37,7 @@ import type {
   SubmitJobRequest,
   SubmitJobResponse,
 } from './farm/protocol';
-import type { AiManifest, ExtractManifest } from './farm/scan';
+import { EXTRACT_MANIFEST_PATH, type AiManifest, type ExtractManifest } from './farm/scan';
 
 // uuid v14 is pure-ESM; @nestjs/typeorm is also ESM-only — mock both so Jest (CommonJS) can
 // load the service under test and its dependencies.
@@ -66,6 +66,8 @@ const TEST_DB_URL =
 class FakeFarmClient {
   public submissions: Array<SubmitJobRequest & { submittedJobId: string }> = [];
   public cancelledIds: string[] = [];
+  public ackedIds: string[] = [];
+  public unackedJobs: JobView[] = [];
   public controlActions: Array<{
     action: JobControlAction;
     selector: { ids?: string[]; group_key?: string };
@@ -91,6 +93,8 @@ class FakeFarmClient {
   reset(): void {
     this.submissions = [];
     this.cancelledIds = [];
+    this.ackedIds = [];
+    this.unackedJobs = [];
     this.controlActions = [];
     this.failOnCallIndex = null;
     this.callCount = 0;
@@ -138,9 +142,12 @@ class FakeFarmClient {
   }
 
   async listUnackedFinished(): Promise<JobView[]> {
-    return [];
+    return this.unackedJobs;
   }
-  async ackJob(): Promise<void> {}
+  async ackJob(farmJobId: string): Promise<void> {
+    this.ackedIds.push(farmJobId);
+    this.unackedJobs = this.unackedJobs.filter((j) => j.id !== farmJobId);
+  }
   async cancelJob(farmJobId: string): Promise<void> {
     this.cancelledIds.push(farmJobId);
   }
@@ -1185,5 +1192,89 @@ describe('extract: submit failure and retry', () => {
       [analysisId],
     );
     expect(aiJobs).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 11. Poison jobs: max attempt limit and dead-lettering
+// ---------------------------------------------------------------------------
+
+describe('poison jobs: max attempt limit and dead-lettering', () => {
+  let assetId: string;
+  let analysisId: string;
+  let extractJobId: string;
+
+  beforeEach(async () => {
+    assetId = await insertAsset();
+    analysisId = await insertAnalysis(assetId);
+    extractJobId = randomUUID();
+    await insertFarmJobRow(extractJobId, analysisId, 'scan.extract');
+
+    const manifest = makeExtractManifest(assetId, 3);
+    const prefix = computePrefix(storageKey(assetId), assetId, analysisId);
+    fakeStorage.register(`${prefix}${EXTRACT_MANIFEST_PATH}`, JSON.stringify(manifest));
+  });
+
+  afterEach(async () => {
+    await cleanupAsset(assetId);
+  });
+
+  it('increments attempt_count on each poll failure and does not ack while under max attempts', async () => {
+    const job = makeJobView(extractJobId, 'completed', `${analysisId}:extract`);
+    fakeClient.unackedJobs = [job];
+    // Force processJob to fail by making submitJob throw (AI submission fails)
+    fakeClient.setFailOnCall(0);
+
+    await poller.poll();
+
+    expect(fakeClient.ackedIds).not.toContain(extractJobId);
+    const [row] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT attempt_count, ingested_at, status FROM analysis_farm_jobs WHERE farm_job_id=$1`,
+      [extractJobId],
+    );
+    expect(row['attempt_count']).toBe(1);
+    expect(row['ingested_at']).toBeNull();
+    expect(row['status']).toBe('submitted');
+  });
+
+  it('marks analysis failed and acks the farm job when attempts reach max', async () => {
+    // Set existing attempt_count to 4 (default max is 5)
+    await ds.query(`UPDATE analysis_farm_jobs SET attempt_count = 4 WHERE farm_job_id=$1`, [
+      extractJobId,
+    ]);
+
+    const job = makeJobView(extractJobId, 'completed', `${analysisId}:extract`);
+    fakeClient.unackedJobs = [job];
+    fakeClient.setFailOnCall(0); // AI submission will fail
+
+    await poller.poll();
+
+    // 1. Farm job is acked so it frees the unacked slot
+    expect(fakeClient.ackedIds).toContain(extractJobId);
+
+    // 2. Farm job row is marked failed and ingested
+    const [farmJobRow] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT attempt_count, status, ingested_at, error FROM analysis_farm_jobs WHERE farm_job_id=$1`,
+      [extractJobId],
+    );
+    expect(farmJobRow['attempt_count']).toBe(5);
+    expect(farmJobRow['status']).toBe('failed');
+    expect(farmJobRow['ingested_at']).not.toBeNull();
+    expect(JSON.stringify(farmJobRow['error'])).toContain('Exceeded max ingest attempts');
+
+    // 3. Analysis is marked failed
+    const [analysisRow] = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT status, reason FROM asset_analyses WHERE id=$1`,
+      [analysisId],
+    );
+    expect(analysisRow['status']).toBe('failed');
+    expect(analysisRow['reason']).toContain('Exceeded max ingest attempts');
+
+    // 4. Logged to analysis logs
+    const logs = await ds.query<Array<Record<string, unknown>>>(
+      `SELECT action, message FROM system_logs WHERE action='analysis.failed' AND metadata->>'analysisId'=$1`,
+      [analysisId],
+    );
+    expect(logs.length).toBeGreaterThan(0);
   });
 });

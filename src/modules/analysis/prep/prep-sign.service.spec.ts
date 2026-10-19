@@ -31,6 +31,7 @@ function job(type: string): AssetPrepFarmJobEntity {
     submittedAt: new Date(),
     ingestedAt: null,
     lockedUntil: null,
+    attemptCount: 0,
   };
 }
 
