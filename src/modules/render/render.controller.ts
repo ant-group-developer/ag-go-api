@@ -106,16 +106,29 @@ export class RenderController {
 
   @Get('render-batches')
   @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
-  listAllBatches(@Req() request: Request) {
+  listAllBatches(@Query() query: Record<string, string | undefined>, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.renderService.listAllBatches(context.userId, context.userType);
+    return this.renderService.listAllBatches(
+      context.userId,
+      context.userType,
+      parseJobPageQuery(query),
+    );
   }
 
   @Get('projects/:projectId/render-batches')
   @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
-  listBatches(@Param('projectId') projectId: string, @Req() request: Request) {
+  listBatches(
+    @Param('projectId') projectId: string,
+    @Query() query: Record<string, string | undefined>,
+    @Req() request: Request,
+  ) {
     const context = this.authContext.getContext(request);
-    return this.renderService.listBatches(projectId, context.userId, context.userType);
+    return this.renderService.listBatches(
+      projectId,
+      context.userId,
+      context.userType,
+      parseJobPageQuery(query),
+    );
   }
 
   /** One page of the batch's jobs; takes the same paging query as `render-jobs/auto`. */

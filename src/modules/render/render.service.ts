@@ -457,45 +457,91 @@ export class RenderService {
     return enrichedBatch as unknown as RenderBatchEntity;
   }
 
-  async listBatches(projectId: string, userId: string, userType?: 'ADMIN' | 'USER') {
+  async listBatches(
+    projectId: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    options: RenderJobPageOptions = {},
+  ) {
     const project = await this.projectRepository.findOne({ where: { id: projectId } });
     if (!project || !(await this.folderAccess.canViewProject(project, userId, userType))) {
       throw new ForbiddenException('Insufficient project permission');
     }
-    return this.enrichBatches(
-      await this.batchRepository.find({
-        where: { projectId },
-        order: { createdAt: 'DESC' },
-        take: 50,
-      }),
-    );
+    const query = this.batchRepository
+      .createQueryBuilder('batch')
+      .where('batch.project_id = :projectId', { projectId });
+    return this.pageBatches(query, options);
   }
 
-  async listAllBatches(userId: string, userType?: 'ADMIN' | 'USER') {
-    const batches = await this.batchRepository.find({
-      order: { createdAt: 'DESC' },
-    });
-    if (isAdminUserType(userType)) {
-      return this.enrichBatches(batches);
+  async listAllBatches(
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    options: RenderJobPageOptions = {},
+  ) {
+    const query = this.batchRepository.createQueryBuilder('batch');
+    if (!isAdminUserType(userType)) {
+      query.leftJoin(ProjectEntity, 'project', 'project.id = batch.project_id').where(
+        `EXISTS (
+            SELECT 1 FROM folder_closure c
+            JOIN folder_access_grants g ON g.folder_id = c.ancestor_id
+            WHERE (c.descendant_id = batch.folder_id OR c.descendant_id = project.folder_id)
+              AND g.principal_type = 'user'
+              AND g.principal_id = :userId
+              AND (c.depth = 0 OR g.inherit_children = true)
+          )`,
+        { userId },
+      );
     }
-    const visible: RenderBatchEntity[] = [];
-    for (const batch of batches) {
-      if (batch.projectId) {
-        const project = await this.projectRepository.findOne({ where: { id: batch.projectId } });
-        if (
-          project &&
-          (await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))
-        ) {
-          visible.push(batch);
-        }
-      } else if (
-        batch.folderId &&
-        (await this.folderAccess.canAccess(batch.folderId, userId, 'viewer', userType))
-      ) {
-        visible.push(batch);
-      }
+    return this.pageBatches(query, options);
+  }
+
+  /** One page of render batches, filtered, counted and sorted. */
+  private async pageBatches(
+    query: SelectQueryBuilder<RenderBatchEntity>,
+    options: RenderJobPageOptions,
+  ) {
+    const { page, pageSize } = pageBounds(options);
+    const status = options.status ?? 'all';
+
+    const search = options.search?.trim();
+    if (search) {
+      query.andWhere('(batch.id::text ILIKE :search OR batch.error_message ILIKE :search)', {
+        search: `%${search}%`,
+      });
     }
-    return this.enrichBatches(visible);
+
+    const countRow = await query
+      .clone()
+      .select('COUNT(*)::int', 'all')
+      .addSelect(`COUNT(*) FILTER (WHERE batch.status IN (:...activeStatuses))::int`, 'active')
+      .addSelect(`COUNT(*) FILTER (WHERE batch.status = 'completed')::int`, 'completed')
+      .addSelect(`COUNT(*) FILTER (WHERE batch.status = 'failed')::int`, 'failed')
+      .addSelect(`COUNT(*) FILTER (WHERE batch.status = 'cancelled')::int`, 'cancelled')
+      .setParameter('activeStatuses', ACTIVE_JOB_STATUSES)
+      .getRawOne<AutoJobCounts>();
+    const counts = countRow ?? { ...EMPTY_JOB_COUNTS };
+
+    if (status === 'active') {
+      query.andWhere('batch.status IN (:...activeStatuses)', {
+        activeStatuses: ACTIVE_JOB_STATUSES,
+      });
+    } else if (status !== 'all') {
+      query.andWhere('batch.status = :status', { status });
+    }
+
+    const sortOrder = options.sortOrder === 'ASC' ? 'ASC' : 'DESC';
+    query
+      .orderBy('batch.created_at', sortOrder)
+      .addOrderBy('batch.id', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize);
+
+    const [batches, total] = await Promise.all([
+      query.getMany(),
+      status === 'all' ? counts.all : counts[status],
+    ]);
+    const items = await this.enrichBatches(batches);
+    return { items, total, page, pageSize, counts };
   }
 
   /**
