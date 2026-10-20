@@ -1,4 +1,5 @@
 import { SetMetadata } from '@nestjs/common';
+import type { AllowedServiceScope } from './service-key.constants';
 
 export const SERVICE_ONLY_SCOPE_KEY = 'serviceOnlyScope';
 
@@ -10,4 +11,5 @@ export const SERVICE_ONLY_SCOPE_KEY = 'serviceOnlyScope';
  *
  * Do not combine with `@RequirePermissions`: there is no user to hold permissions.
  */
-export const ServiceOnly = (scope: string) => SetMetadata(SERVICE_ONLY_SCOPE_KEY, scope);
+export const ServiceOnly = (scope: AllowedServiceScope | string) =>
+  SetMetadata(SERVICE_ONLY_SCOPE_KEY, scope);

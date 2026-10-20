@@ -1,4 +1,5 @@
 import Joi from 'joi';
+import { ALLOWED_SERVICE_SCOPES } from '../common/auth/service-key.constants';
 
 /**
  * How long a query waits to connect or for a free pool slot before it fails. Without it a pool
@@ -6,7 +7,22 @@ import Joi from 'joi';
  */
 export const DATABASE_CONNECT_TIMEOUT_MS = 10_000;
 
+const SHA256_HEX_REGEX = /^[a-fA-F0-9]{64}$/;
+
+const serviceKeyEntrySchema = Joi.object({
+  name: Joi.string().trim().min(1).required(),
+  sha256: Joi.string().trim().pattern(SHA256_HEX_REGEX).required(),
+  scopes: Joi.array()
+    .items(Joi.string().valid(...ALLOWED_SERVICE_SCOPES))
+    .min(1)
+    .required(),
+  canActAsAdmin: Joi.boolean().optional().default(false),
+});
+
+const serviceKeysArraySchema = Joi.array().items(serviceKeyEntrySchema);
+
 const requiredString = Joi.string().trim().min(1).required();
+
 const httpUrl = Joi.string()
   .trim()
   .uri({ scheme: ['http', 'https'] })
@@ -86,8 +102,31 @@ export const envValidationSchema = Joi.object({
   AUTH0_ALLOWED_CLIENT_IDS: Joi.string().trim().allow('').optional(),
 
   // Service-key authentication for backend-to-backend calls (e.g. ag-studio acting as user)
-  // JSON array: [{"name":"studio","sha256":"<hex-of-sha256(key)>","scopes":["footage:read","footage:resolve"]}]
-  SERVICE_KEYS: Joi.string().trim().allow('').optional(),
+  // JSON array: [{"name":"studio","sha256":"<hex-of-sha256(key)>","scopes":["footage:read","footage:resolve"],"canActAsAdmin":false}]
+  SERVICE_KEYS: Joi.string()
+    .trim()
+    .allow('')
+    .optional()
+    .custom((value, helpers) => {
+      if (!value || value.trim() === '') {
+        return value;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        return helpers.error('serviceKeys.invalidJson');
+      }
+      const { error } = serviceKeysArraySchema.validate(parsed, { abortEarly: false });
+      if (error) {
+        return helpers.error('serviceKeys.invalidSchema', { message: error.message });
+      }
+      return value;
+    })
+    .messages({
+      'serviceKeys.invalidJson': 'SERVICE_KEYS must be a valid JSON array',
+      'serviceKeys.invalidSchema': 'SERVICE_KEYS invalid: {{#message}}',
+    }),
 
   // Account API path template for looking up user_type + permissions by userId.
   // {userId} is replaced with the encoded userId.
