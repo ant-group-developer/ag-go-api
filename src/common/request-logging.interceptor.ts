@@ -45,6 +45,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
     durationMs: number,
     error?: unknown,
   ): void {
+    const stack = statusCode >= 500 && error instanceof Error ? error.stack : undefined;
     const payload = {
       event: 'http_request',
       requestId: request.requestId,
@@ -52,7 +53,12 @@ export class RequestLoggingInterceptor implements NestInterceptor {
       path: request.originalUrl.split('?')[0],
       statusCode,
       durationMs,
-      ...(error ? { error: error instanceof Error ? error.message : 'request_failed' } : {}),
+      ...(error
+        ? {
+            error: error instanceof Error ? error.message : 'request_failed',
+            ...(stack ? { stack } : {}),
+          }
+        : {}),
     };
     const message = JSON.stringify(payload);
     void this.systemLogs
@@ -72,7 +78,7 @@ export class RequestLoggingInterceptor implements NestInterceptor {
         );
       });
     if (statusCode >= 500) {
-      this.logger.error(message);
+      this.logger.error(message, stack);
     } else {
       this.logger.log(message);
     }

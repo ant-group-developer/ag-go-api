@@ -79,7 +79,7 @@ docker compose up -d --no-deps api
 log "Waiting for api to become healthy (up to ${HEALTH_TIMEOUT_SECONDS}s)"
 deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
 until docker compose exec -T api node -e "
-  fetch('http://127.0.0.1:' + process.env.PORT + '/' + process.env.API_PREFIX + '/health')
+  fetch('http://127.0.0.1:' + process.env.PORT + '/' + process.env.API_PREFIX + '/health/ready')
     .then((res) => process.exit(res.ok ? 0 : 1))
     .catch(() => process.exit(1));
 " >/dev/null 2>&1; do

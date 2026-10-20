@@ -3,6 +3,7 @@ import {
   Catch,
   HttpException,
   HttpStatus,
+  Logger,
   type ExceptionFilter,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
@@ -13,6 +14,8 @@ type ErrorPayload = Record<string, unknown>;
 
 @Catch()
 export class ApiExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(ApiExceptionFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const http = host.switchToHttp();
     const request = http.getRequest<Request>();
@@ -20,6 +23,15 @@ export class ApiExceptionFilter implements ExceptionFilter {
     const status = this.getStatus(exception);
     const error = this.toApiError(exception, status);
     const requestId = request.requestId ?? String(response.getHeader('x-request-id') ?? '');
+
+    if (status >= 500) {
+      const stack = exception instanceof Error ? exception.stack : undefined;
+      const message = exception instanceof Error ? exception.message : String(exception);
+      this.logger.error(
+        `[${requestId || 'no-request-id'}] ${request.method} ${request.originalUrl ?? request.url} ${status} - ${message}`,
+        stack,
+      );
+    }
 
     response.status(status).json(new ApiResponseDto(null, requestId, false, error));
   }

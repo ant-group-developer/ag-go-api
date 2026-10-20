@@ -1,4 +1,4 @@
-import { ValidationPipe } from '@nestjs/common';
+import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -11,6 +11,7 @@ import { createOpenApiDocument } from './openapi';
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.enableShutdownHooks();
   const config = app.get(ConfigService);
   const prefix = config.getOrThrow<string>('API_PREFIX');
   const isProduction = config.get<string>('NODE_ENV') === 'production';
@@ -64,4 +65,8 @@ async function bootstrap(): Promise<void> {
   await app.listen(port);
 }
 
-void bootstrap();
+bootstrap().catch((err: unknown) => {
+  const logger = new Logger('bootstrap');
+  logger.error('Failed to start application', err instanceof Error ? err.stack : String(err));
+  process.exit(1);
+});
