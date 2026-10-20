@@ -127,7 +127,7 @@ Cấu hình (GitHub → Settings → Secrets and variables → Actions):
 Deploy tay (vd. host mới, sau khi host chính đã deploy cùng commit):
 
 ```bash
-git pull --ff-only origin main && sudo bash ./deploy-worker-host.sh
+git fetch origin && git checkout --detach <commit> && sudo bash ./deploy-worker-host.sh
 ```
 
 Script:
@@ -247,7 +247,7 @@ Quy trình deploy development (`deploy.dev.yml`) và deploy production (`deploy.
 - Hỗ trợ kích hoạt thủ công qua `workflow_dispatch`, nhưng vẫn bắt buộc kiểm tra trạng thái CI thành công của commit SHA tương ứng qua GitHub API trước khi thực hiện deploy (deploy thủ công không thể bỏ qua kiểm tra CI).
 - Sau khi host chính deploy thành công, các worker host phụ (`deploy-worker-hosts.yml`) được deploy song song nếu biến cấu hình tương ứng (`WORKER_HOSTS_DEV` / `WORKER_HOSTS`) được thiết lập.
 
-Deploy dùng các secret `VPS_SSH_KEY_DEV`, `VPS_HOST_DEV`, `VPS_USER_DEV`
+Deploy dùng các secret `VPS_SSH_KEY_DEV`, `VPS_HOST_DEV`, `VPS_USER_DEV`, `SSH_KNOWN_HOSTS_DEV` (hoặc `SSH_KNOWN_HOSTS`)
 (tùy chọn `VPS_PORT_DEV`, `VPS_APP_PATH_DEV`) cho development và
-`VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER` (tùy chọn `VPS_PORT`, `VPS_APP_PATH`)
+`VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER`, `SSH_KNOWN_HOSTS_PROD` (hoặc `SSH_KNOWN_HOSTS`) (tùy chọn `VPS_PORT`, `VPS_APP_PATH`)
 cho production. Thông báo Telegram (`notify.yml`) được gửi tự động khi workflow deploy hoàn tất (dùng `TELEGRAM_CHAT_ID` và `TELEGRAM_TOKEN`).
