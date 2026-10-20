@@ -657,13 +657,13 @@ describe('dead video extract', () => {
     expect(analysis['usable']).toBe(false);
   });
 
-  it('emits an asset.analysis.completed outbox event', async () => {
+  it('does not emit an unused asset.analysis.completed outbox event', async () => {
     await poller.processJob(makeJobView(extractJobId, 'completed', `${analysisId}:extract`));
     const events = await ds.query<Array<Record<string, unknown>>>(
       `SELECT * FROM outbox_events WHERE event_type='asset.analysis.completed' AND aggregate_id=$1`,
       [analysisId],
     );
-    expect(events).toHaveLength(1);
+    expect(events).toHaveLength(0);
   });
 
   it('sets is_current=true after finalize', async () => {
@@ -756,16 +756,13 @@ describe('AI completed → finalize', () => {
     expect(analysis['is_current']).toBe(true);
   });
 
-  it('emits exactly one asset.analysis.completed outbox event', async () => {
+  it('does not emit an unused asset.analysis.completed outbox event', async () => {
     await poller.processJob(makeJobView(aiJobId, 'completed', `${analysisId}:ai`));
     const events = await ds.query<Array<Record<string, unknown>>>(
       `SELECT * FROM outbox_events WHERE event_type='asset.analysis.completed' AND aggregate_id=$1`,
       [analysisId],
     );
-    expect(events).toHaveLength(1);
-    const payload = events[0]['payload'] as { analysisId: string; assetId: string };
-    expect(payload.analysisId).toBe(analysisId);
-    expect(payload.assetId).toBe(assetId);
+    expect(events).toHaveLength(0);
   });
 
   it('writes analysis.ai_ingested and analysis.completed log entries', async () => {

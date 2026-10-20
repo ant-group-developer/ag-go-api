@@ -4,6 +4,7 @@ import { OutboxService } from '../../common/outbox.service';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
 import { AnalysisModule } from '../../modules/analysis/analysis.module';
 import { StorageModule } from '../../modules/assets/storage/storage.module';
+import { DataRetentionService } from './data-retention.service';
 import { DownloadQueueService } from './download-queue.service';
 import { ImportQueueService } from './import-queue.service';
 import { MediaQueueService } from './media-queue.service';
@@ -21,6 +22,7 @@ import { OutboxDispatcherService } from './outbox-dispatcher.service';
     ImportQueueService,
     OutboxDispatcherService,
     OutboxService,
+    DataRetentionService,
   ],
   exports: [
     MediaQueueService,
@@ -28,6 +30,7 @@ import { OutboxDispatcherService } from './outbox-dispatcher.service';
     ImportQueueService,
     OutboxDispatcherService,
     OutboxService,
+    DataRetentionService,
   ],
 })
 export class QueueModule {}

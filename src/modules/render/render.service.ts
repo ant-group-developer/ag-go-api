@@ -788,7 +788,7 @@ export class RenderService {
       startedAt: null,
       finishedAt: null,
     });
-    // Failed BullMQ jobs are kept (removeOnFail: false), so re-adding with the same id is a no-op.
+    // Failed BullMQ jobs are retained within limits (removeOnFail), so re-adding with the same id is a no-op.
     await this.mediaQueue.addProcessingJob({
       eventId: `${job.id}-retry-${uuidv7()}`,
       assetId: job.assetId,
@@ -859,7 +859,7 @@ export class RenderService {
       return rows;
     });
     // After the commit, so the workers see the jobs queued when they claim them. Failed BullMQ
-    // jobs are kept (removeOnFail: false), so each retry needs a new BullMQ job id.
+    // jobs are retained within limits (removeOnFail), so each retry needs a new BullMQ job id.
     await Promise.all(
       jobs.map((job) =>
         this.mediaQueue.addProcessingJob({

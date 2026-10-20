@@ -4,6 +4,7 @@ import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { v7 as uuidv7 } from 'uuid';
 import {
+  DEFAULT_FAILED_JOB_RETENTION,
   IMPORT_DISCOVERY_JOB,
   IMPORT_DISCOVERY_QUEUE,
   IMPORT_JOB,
@@ -30,7 +31,7 @@ export class ImportQueueService implements OnModuleDestroy {
       attempts: 3,
       backoff: { type: 'exponential', delay: 5_000 },
       removeOnComplete: 1000,
-      removeOnFail: false,
+      removeOnFail: DEFAULT_FAILED_JOB_RETENTION,
     });
     return jobId;
   }
