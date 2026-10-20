@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseArrayPipe,
+  ParseUUIDPipe,
   Patch,
   Post,
   Put,
@@ -55,7 +56,11 @@ export class FoldersController {
 
   @Patch(':id')
   @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
-  update(@Param('id') id: string, @Body() dto: UpdateFolderDto, @Req() request: Request) {
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateFolderDto,
+    @Req() request: Request,
+  ) {
     const context = this.authContext.getContext(request);
     return this.foldersService.update(
       id,
@@ -68,7 +73,7 @@ export class FoldersController {
 
   @Delete(':id')
   @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
-  async remove(@Param('id') id: string, @Req() request: Request) {
+  async remove(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     await this.foldersService.remove(id, context.userId, context.userType);
     return { success: true };
@@ -76,7 +81,7 @@ export class FoldersController {
 
   @Get(':id/access-grants')
   @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
-  grants(@Param('id') id: string, @Req() request: Request) {
+  grants(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.foldersService.grants(id, context.userId, context.userType);
   }
@@ -84,7 +89,7 @@ export class FoldersController {
   @Put(':id/access-grants')
   @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
   replaceGrants(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body(new ParseArrayPipe({ items: UpsertFolderGrantDto })) entries: UpsertFolderGrantDto[],
     @Req() request: Request,
   ) {
@@ -95,7 +100,7 @@ export class FoldersController {
   @Put(':id/access-grants/:principalId')
   @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
   setGrant(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Param('principalId') principalId: string,
     @Body() dto: SetFolderGrantDto,
     @Req() request: Request,
@@ -107,7 +112,7 @@ export class FoldersController {
   @Delete(':id/access-grants/:principalId')
   @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
   async removeGrant(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Param('principalId') principalId: string,
     @Req() request: Request,
   ) {

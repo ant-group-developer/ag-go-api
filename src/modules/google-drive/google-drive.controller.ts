@@ -1,17 +1,17 @@
 import {
-  applyDecorators,
   Body,
   Controller,
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
   Req,
   Res,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
@@ -19,41 +19,12 @@ import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { Public } from '../../common/auth/public.decorator';
 import { CreateImportDto } from './dto/create-import.dto';
+import {
+  ListDriveImportItemsQueryDto,
+  ListDriveImportsQueryDto,
+} from './dto/list-drive-imports-query.dto';
 import { SummarizeSourcesDto } from './dto/summarize-sources.dto';
 import { GoogleDriveService } from './google-drive.service';
-import {
-  IMPORT_HISTORY_SORT_FIELDS,
-  IMPORT_HISTORY_STATUS_FILTERS,
-  IMPORT_ITEM_SORT_FIELDS,
-  IMPORT_ITEM_STATUS_FILTERS,
-  isImportHistorySortField,
-  isImportHistoryStatusFilter,
-  isImportItemSortField,
-  isImportItemStatusFilter,
-  parseListQuery,
-} from './import-history-query';
-
-/** Query params shared by the paged import lists. */
-function PagedListQuery(
-  statuses: readonly string[],
-  sortFields: readonly string[],
-  searchDescription: string,
-) {
-  return applyDecorators(
-    ApiQuery({ name: 'page', required: false, type: Number, example: 1 }),
-    ApiQuery({
-      name: 'pageSize',
-      required: false,
-      type: Number,
-      example: 20,
-      description: 'Max 100',
-    }),
-    ApiQuery({ name: 'status', required: false, enum: statuses }),
-    ApiQuery({ name: 'search', required: false, type: String, description: searchDescription }),
-    ApiQuery({ name: 'sortBy', required: false, enum: sortFields }),
-    ApiQuery({ name: 'sortOrder', required: false, enum: ['asc', 'desc'] }),
-  );
-}
 
 @ApiTags('google-drive')
 @ApiBearerAuth()
@@ -136,7 +107,7 @@ export class GoogleDriveController {
 
   @Get('imports/:batchId')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
-  getImport(@Param('batchId') batchId: string, @Req() request: Request) {
+  getImport(@Param('batchId', ParseUUIDPipe) batchId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.googleDrive.getImport(batchId, context.userId, context.userType);
   }
@@ -147,56 +118,32 @@ export class GoogleDriveController {
    */
   @Get('imports')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
-  @ApiQuery({
-    name: 'projectId',
-    required: false,
-    type: String,
-    description: 'Limit to one project (latest 50, not paged; the other params are ignored)',
-  })
-  @PagedListQuery(
-    IMPORT_HISTORY_STATUS_FILTERS,
-    IMPORT_HISTORY_SORT_FIELDS,
-    'Matches the project name or a source folder name',
-  )
-  listImports(
-    @Req() request: Request,
-    @Query('projectId') projectId?: string,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-    @Query('status') status?: string,
-    @Query('search') search?: string,
-    @Query('sortBy') sortBy?: string,
-    @Query('sortOrder') sortOrder?: string,
-  ) {
+  listImports(@Req() request: Request, @Query() query: ListDriveImportsQueryDto) {
     const context = this.authContext.getContext(request);
-    if (projectId) {
-      return this.googleDrive.listImports(projectId, context.userId, context.userType);
+    if (query.projectId) {
+      return this.googleDrive.listImports(query.projectId, context.userId, context.userType);
     }
     // Without a project: the paged history of every import the user can see.
-    return this.googleDrive.listAllImports(context.userId, context.userType, {
-      ...parseListQuery({ page, pageSize, search, sortOrder }),
-      ...(isImportHistoryStatusFilter(status) ? { status } : {}),
-      ...(isImportHistorySortField(sortBy) ? { sortBy } : {}),
-    });
+    return this.googleDrive.listAllImports(context.userId, context.userType, query);
   }
 
   @Post('imports/:batchId/cancel')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
-  cancel(@Param('batchId') batchId: string, @Req() request: Request) {
+  cancel(@Param('batchId', ParseUUIDPipe) batchId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.googleDrive.cancelImport(batchId, context.userId, context.userType);
   }
 
   @Post('imports/:batchId/pause')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
-  pause(@Param('batchId') batchId: string, @Req() request: Request) {
+  pause(@Param('batchId', ParseUUIDPipe) batchId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.googleDrive.pauseImport(batchId, context.userId, context.userType);
   }
 
   @Post('imports/:batchId/resume')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
-  resume(@Param('batchId') batchId: string, @Req() request: Request) {
+  resume(@Param('batchId', ParseUUIDPipe) batchId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.googleDrive.resumeImport(batchId, context.userId, context.userType);
   }
@@ -204,30 +151,20 @@ export class GoogleDriveController {
   /** One page of the batch's files, as `{ items, total, page, pageSize, counts }`. */
   @Get('imports/:batchId/items')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
-  @PagedListQuery(IMPORT_ITEM_STATUS_FILTERS, IMPORT_ITEM_SORT_FIELDS, 'Matches the file name')
   items(
-    @Param('batchId') batchId: string,
+    @Param('batchId', ParseUUIDPipe) batchId: string,
     @Req() request: Request,
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-    @Query('status') status?: string,
-    @Query('search') search?: string,
-    @Query('sortBy') sortBy?: string,
-    @Query('sortOrder') sortOrder?: string,
+    @Query() query: ListDriveImportItemsQueryDto,
   ) {
     const context = this.authContext.getContext(request);
-    return this.googleDrive.listItems(batchId, context.userId, context.userType, {
-      ...parseListQuery({ page, pageSize, search, sortOrder }),
-      ...(isImportItemStatusFilter(status) ? { status } : {}),
-      ...(isImportItemSortField(sortBy) ? { sortBy } : {}),
-    });
+    return this.googleDrive.listItems(batchId, context.userId, context.userType, query);
   }
 
   @Post('imports/:batchId/items/:itemId/retry')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
   retry(
-    @Param('batchId') batchId: string,
-    @Param('itemId') itemId: string,
+    @Param('batchId', ParseUUIDPipe) batchId: string,
+    @Param('itemId', ParseUUIDPipe) itemId: string,
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);

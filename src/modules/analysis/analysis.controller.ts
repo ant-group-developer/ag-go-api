@@ -161,7 +161,7 @@ export class AnalysisController {
   @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
   @ApiOperation({ summary: 'Enqueue analysis for a single asset' })
   enqueueForAsset(
-    @Param('assetId') assetId: string,
+    @Param('assetId', ParseUUIDPipe) assetId: string,
     @Body() dto: EnqueueAnalysisDto,
     @Req() req: Request,
   ) {
@@ -174,7 +174,7 @@ export class AnalysisController {
   @Get('assets/:assetId/analysis')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Latest analysis run of an asset with the whole-video description' })
-  getAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
+  getAnalysis(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() req: Request) {
     const context = this.authContext.getContext(req);
     return this.analysisService.getAnalysisForAsset(assetId, context.userId, context.userType);
   }
@@ -183,7 +183,7 @@ export class AnalysisController {
   @ApiBearerAuth()
   @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
   @ApiOperation({ summary: 'Pause the in-flight analysis of an asset' })
-  pauseAssetAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
+  pauseAssetAnalysis(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() req: Request) {
     const context = this.authContext.getContext(req);
     return this.analysisService.controlAssetAnalysis(
       assetId,
@@ -197,7 +197,7 @@ export class AnalysisController {
   @ApiBearerAuth()
   @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
   @ApiOperation({ summary: 'Resume the paused analysis of an asset' })
-  resumeAssetAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
+  resumeAssetAnalysis(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() req: Request) {
     const context = this.authContext.getContext(req);
     return this.analysisService.controlAssetAnalysis(
       assetId,
@@ -211,7 +211,7 @@ export class AnalysisController {
   @ApiBearerAuth()
   @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
   @ApiOperation({ summary: 'Cancel the in-flight analysis of an asset' })
-  cancelAssetAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
+  cancelAssetAnalysis(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() req: Request) {
     const context = this.authContext.getContext(req);
     return this.analysisService.controlAssetAnalysis(
       assetId,
@@ -228,7 +228,10 @@ export class AnalysisController {
   @Get('projects/:projectId/analysis-status')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get analysis status for all media in a project' })
-  getProjectAnalysisStatus(@Param('projectId') projectId: string, @Req() req: Request) {
+  getProjectAnalysisStatus(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Req() req: Request,
+  ) {
     const context = this.authContext.getContext(req);
     return this.analysisService.getProjectAnalysisStatus(
       projectId,
