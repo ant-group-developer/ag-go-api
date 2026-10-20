@@ -1,6 +1,7 @@
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
@@ -9,15 +10,14 @@ import { AssetsService } from './modules/assets/assets.service';
 import { createOpenApiDocument } from './openapi';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
   const prefix = config.getOrThrow<string>('API_PREFIX');
   const isProduction = config.get<string>('NODE_ENV') === 'production';
 
-  const expressApp = app.getHttpAdapter().getInstance();
-  if (typeof expressApp?.set === 'function') {
-    expressApp.set('trust proxy', 1);
-  }
+  app.set('trust proxy', 1);
+  app.useBodyParser('json', { limit: '2mb' });
+  app.useBodyParser('urlencoded', { extended: true, limit: '2mb' });
 
   app.use(
     helmet({
