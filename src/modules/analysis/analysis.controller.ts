@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
@@ -50,6 +51,7 @@ export class AnalysisController {
   // Workers read the ag-farm sign contract ({ results }), not the API envelope
   @RawResponse()
   @UseGuards(FarmTicketGuard)
+  @Throttle({ default: { limit: 120, ttl: 60000 } })
   @ApiOperation({ summary: 'Sign storage URLs for a farm worker (Ticket auth)' })
   async farmSign(@Body() body: unknown, @Req() req: Request) {
     const parsed = SignRequestSchema.safeParse(body);

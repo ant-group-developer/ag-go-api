@@ -19,7 +19,7 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     ports:
-      - '${PORT:-3000}:${PORT:-3000}'
+      - '127.0.0.1:${PORT:-3000}:${PORT:-3000}'
     mem_limit: ${API_MEMORY_LIMIT:-2g}
     cpus: ${API_CPUS:-2}
     deploy:

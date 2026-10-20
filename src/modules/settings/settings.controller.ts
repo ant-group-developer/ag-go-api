@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Patch, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
@@ -18,6 +19,7 @@ export class SettingsController {
 
   @Get('public')
   @Public()
+  @Throttle({ default: { limit: 30, ttl: 60000 } })
   getPublic() {
     return this.settings.getPublic();
   }

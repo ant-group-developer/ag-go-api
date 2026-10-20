@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
@@ -87,6 +88,7 @@ export class GoogleDriveController {
   @Get('connection/callback')
   @Public()
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
   async callback(
     @Query('code') code: string,
     @Query('state') state: string,

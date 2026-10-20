@@ -26,6 +26,7 @@ export const envValidationSchema = Joi.object({
     .required(),
   FRONTEND_ORIGIN: httpUrl,
   CORS_EXTRA_ORIGINS: Joi.string().trim().allow('').optional(),
+  SWAGGER_ENABLED: Joi.boolean().truthy('true').falsy('false').optional(),
   // Set by the image build (Dockerfile GIT_COMMIT) and the deploy scripts; the worker list
   // (System > Workers) shows them and flags workers running another commit than the api.
   GIT_COMMIT: Joi.string().trim().allow('').optional(),
