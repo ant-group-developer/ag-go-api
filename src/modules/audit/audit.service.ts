@@ -37,11 +37,15 @@ export class AuditService {
       throw new ForbiddenException('Insufficient audit permission');
     }
 
+    // Clamp once — use everywhere.
+    const clampedPage = Math.max(1, Math.trunc(page) || 1);
+    const clampedPageSize = Math.min(Math.max(Math.trunc(pageSize) || 1, 1), 100);
+
     const [rows, total] = await this.auditRepository.findAndCount({
       where: { projectId },
       order: { createdAt: 'DESC' },
-      skip: Math.max(0, page - 1) * pageSize,
-      take: Math.min(Math.max(pageSize, 1), 100),
+      skip: (clampedPage - 1) * clampedPageSize,
+      take: clampedPageSize,
     });
     const fileNames = await this.findMediaFileNames(
       rows.map((row) => row.projectMediaId).filter((id): id is string => Boolean(id)),
@@ -56,10 +60,10 @@ export class AuditService {
     );
     return {
       items: enriched,
-      page,
-      pageSize,
+      page: clampedPage,
+      pageSize: clampedPageSize,
       total,
-      totalPages: Math.ceil(total / pageSize),
+      totalPages: Math.ceil(total / clampedPageSize),
     };
   }
 
