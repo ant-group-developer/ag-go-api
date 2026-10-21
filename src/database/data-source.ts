@@ -80,6 +80,7 @@ import { TagTimestamps2110000000000 } from './migrations/2110000000000-tag-times
 import { AssetPreps2120000000000 } from './migrations/2120000000000-asset-preps';
 import { StudioUsage2130000000000 } from './migrations/2130000000000-studio-usage';
 import { AccessGrants2140000000000 } from './migrations/2140000000000-access-grants';
+import { UploadMetrics2150000000000 } from './migrations/2150000000000-upload-metrics';
 
 loadEnv();
 
@@ -179,6 +180,7 @@ export const AppDataSource = new DataSource({
     AssetPreps2120000000000,
     StudioUsage2130000000000,
     AccessGrants2140000000000,
+    UploadMetrics2150000000000,
   ],
   synchronize: false,
 });

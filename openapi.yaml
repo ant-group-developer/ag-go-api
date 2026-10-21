@@ -3885,6 +3885,44 @@ components:
       required:
         - uploadSessionId
         - partNumbers
+    UploadClientMetricsDto:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+            - single
+            - multipart
+        transferMs:
+          type: number
+          description: Time spent sending the file content to storage, in ms
+        partUrlWaitMs:
+          type: number
+          description: Time spent waiting for part URLs from the API, in ms
+        partSize:
+          type: number
+        partCount:
+          type: number
+        parallelParts:
+          type: number
+        retries:
+          type: number
+          description: Failed part attempts that were retried
+        concurrentUploads:
+          type: number
+          description: Files uploading at the same time in the browser
+        networkType:
+          type: string
+          description: navigator.connection.effectiveType (Chromium only)
+        downlinkMbps:
+          type: number
+          description: navigator.connection.downlink in Mbps (Chromium only)
+        rttMs:
+          type: number
+          description: navigator.connection.rtt in ms (Chromium only)
+      required:
+        - mode
+        - transferMs
     CompleteUploadDto:
       type: object
       properties:
@@ -3894,6 +3932,8 @@ components:
         checksumSha256:
           type: string
           pattern: ^[a-fA-F0-9]{64}$
+        metrics:
+          $ref: "#/components/schemas/UploadClientMetricsDto"
       required:
         - uploadSessionId
     AbortUploadDto:

@@ -15,7 +15,10 @@ import { DataSource, In, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { isAdminUserType } from '../../common/auth/user-type';
 import { OutboxService } from '../../common/outbox.service';
-import { AssetUploadSessionEntity } from '../../database/entities/asset-upload-session.entity';
+import {
+  AssetUploadSessionEntity,
+  type UploadMetrics,
+} from '../../database/entities/asset-upload-session.entity';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
@@ -260,12 +263,16 @@ export class AssetsService implements OnModuleDestroy {
       };
     }
     this.ensureSessionOpen(session);
+    const startedAt = Date.now();
 
     let head = await this.storage.headObject(session.storageKey);
     // No object yet: assemble it from the parts. When it exists, a previous complete call
     // already did that and only failed afterwards.
+    let assembleMs: number | undefined;
     if (!head && session.multipartUploadId) {
+      const assembleStartedAt = Date.now();
       await this.completeMultipartUpload(session, session.multipartUploadId);
+      assembleMs = Date.now() - assembleStartedAt;
       head = await this.storage.headObject(session.storageKey);
     }
     if (!head) {
@@ -365,6 +372,14 @@ export class AssetsService implements OnModuleDestroy {
     if (mediaCreated && session.targetProjectId) {
       await this.recordUploadAudit(session.targetProjectId, userId, asset, session.id);
     }
+    await this.recordUploadMetrics(session, {
+      client: dto.metrics ? { ...dto.metrics } : null,
+      server: {
+        assembleMs,
+        completeMs: Date.now() - startedAt,
+        sinceSessionMs: Date.now() - session.createdAt.getTime(),
+      },
+    });
     return {
       ...(await this.getAsset(session.assetId)),
       uploadSessionId: session.id,
@@ -400,6 +415,30 @@ export class AssetsService implements OnModuleDestroy {
     } catch (error) {
       this.logger.warn(
         `Could not record upload audit for asset ${asset.id}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  /**
+   * Keeps the upload timings on the session (see the `upload_speed_log` view) and logs them.
+   * Best effort: the upload already succeeded, so a failed write is only logged.
+   */
+  private async recordUploadMetrics(session: AssetUploadSessionEntity, metrics: UploadMetrics) {
+    const sizeBytes = Number(session.expectedSizeBytes) || 0;
+    const transferMs = Number(metrics.client?.transferMs) || 0;
+    const mbps = transferMs > 0 ? ((sizeBytes * 8) / 1000 / transferMs).toFixed(2) : '?';
+    this.logger.log(
+      `Upload ${session.id} (asset ${session.assetId}): ${sizeBytes} bytes, ` +
+        `transfer ${transferMs || '?'} ms (${mbps} Mbps), ` +
+        `complete ${metrics.server.completeMs} ms, total ${metrics.server.sinceSessionMs} ms`,
+    );
+    try {
+      await this.sessionRepository.update(session.id, { uploadMetrics: metrics });
+    } catch (error) {
+      this.logger.warn(
+        `Could not record upload metrics for session ${session.id}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
