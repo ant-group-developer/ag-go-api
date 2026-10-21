@@ -4,7 +4,6 @@ import {
   Get,
   Headers,
   Param,
-  ParseIntPipe,
   ParseUUIDPipe,
   Post,
   Query,
@@ -21,6 +20,7 @@ import { AssetsService } from './assets.service';
 import { AbortUploadDto } from './dto/abort-upload.dto';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { CreateUploadSessionDto } from './dto/create-upload-session.dto';
+import { AssetPreviewQueryDto, AssetPreviewUrlQueryDto } from './dto/preview-query.dto';
 import { UploadPartsDto } from './dto/upload-parts.dto';
 
 @ApiTags('assets')
@@ -123,7 +123,7 @@ export class AssetsController {
   preview(
     @Param('assetId', ParseUUIDPipe) assetId: string,
     @Param('variantCode') variantCode: string,
-    @Query('width', new ParseIntPipe({ optional: true })) width: number | undefined,
+    @Query() query: AssetPreviewQueryDto,
     @Req() request: Request,
     @Res() response: Response,
   ) {
@@ -134,7 +134,7 @@ export class AssetsController {
       context.userId,
       context.userType,
       response,
-      width,
+      query.width,
       canViewUnwatermarked(context.permissions, context.userType),
     );
   }
@@ -147,17 +147,16 @@ export class AssetsController {
   })
   previewUrl(
     @Param('assetId', ParseUUIDPipe) assetId: string,
-    @Query('variantCode') variantCode = 'thumbnail',
-    @Query('width', new ParseIntPipe({ optional: true })) width: number | undefined,
+    @Query() query: AssetPreviewUrlQueryDto,
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
     return this.assetsService.getPreviewUrl(
       assetId,
-      variantCode,
+      query.variantCode,
       context.userId,
       context.userType,
-      width,
+      query.width,
       canViewUnwatermarked(context.permissions, context.userType),
     );
   }

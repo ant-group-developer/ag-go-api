@@ -11,13 +11,18 @@ import {
   Res,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiCreatedResponse, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { Public } from '../../common/auth/public.decorator';
+import {
+  DriveOAuthCallbackQueryDto,
+  StartDriveConnectionQueryDto,
+  StartDriveConnectionResponseDto,
+} from './dto/connection-query.dto';
 import { CreateImportDto } from './dto/create-import.dto';
 import {
   ListDriveImportItemsQueryDto,
@@ -44,28 +49,28 @@ export class GoogleDriveController {
 
   @Post('connection/start')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
-  start(
-    @Req() request: Request,
-    @Query('projectId') projectId?: string,
-    @Query('returnUrl') returnUrl?: string,
-  ) {
+  @ApiCreatedResponse({ type: StartDriveConnectionResponseDto })
+  start(@Req() request: Request, @Query() query: StartDriveConnectionQueryDto) {
     return this.googleDrive.startConnection(
       this.authContext.getContext(request).userId,
-      projectId,
-      returnUrl,
+      query.projectId,
+      query.returnUrl,
     );
   }
 
+  /**
+   * Public: Google redirects here with no Bearer token. Access is the one-time `state`
+   * issued by connection/start and consumed in completeConnection.
+   */
   @Get('connection/callback')
   @Public()
-  @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
   @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @ApiResponse({ status: 302, description: 'Redirects to FRONTEND_ORIGIN with status=connected' })
   async callback(
-    @Query('code') code: string,
-    @Query('state') state: string,
+    @Query() query: DriveOAuthCallbackQueryDto,
     @Res() response: Response,
   ): Promise<void> {
-    const result = await this.googleDrive.completeConnection(code, state);
+    const result = await this.googleDrive.completeConnection(query.code, query.state);
     const frontendOrigin =
       this.config.get<string>('FRONTEND_ORIGIN')?.trim() || 'http://localhost:5173';
     const redirectUrl = new URL(result.returnUrl || '/google-drive/callback', frontendOrigin);

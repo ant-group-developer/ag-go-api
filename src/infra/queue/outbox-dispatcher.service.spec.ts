@@ -6,7 +6,7 @@ import type { AnalysisOutboxService } from '../../modules/analysis/analysis-outb
 import type { PrepPipelineService } from '../../modules/analysis/prep/prep-pipeline.service';
 import type { StorageAdapter } from '../../modules/assets/storage/storage-adapter';
 import type { MediaQueueService } from './media-queue.service';
-import { OutboxDispatcherService } from './outbox-dispatcher.service';
+import { OUTBOX_LEASE_RENEW_MS, OutboxDispatcherService } from './outbox-dispatcher.service';
 
 jest.mock('@nestjs/typeorm', () => ({
   InjectDataSource: () => () => undefined,
@@ -158,6 +158,26 @@ describe('OutboxDispatcherService', () => {
     ];
     expect(id).toBe(purgeEvent(0).id);
     expect(values).toMatchObject({ attemptCount: 1, lastError: null });
+    expect(values.availableAt()).toBe("NOW() + interval '5 minutes'");
+  });
+
+  it('renews the claim lease while a long purge is still publishing', async () => {
+    jest.useFakeTimers();
+    const deletePrefix = jest.fn(() => new Promise(() => undefined));
+    const { service, update } = setup([purgeEvent(0)], deletePrefix);
+
+    void service.dispatchPending();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(update).not.toHaveBeenCalled();
+
+    await jest.advanceTimersByTimeAsync(OUTBOX_LEASE_RENEW_MS);
+
+    expect(update).toHaveBeenCalledWith(purgeEvent(0).id, {
+      availableAt: expect.any(Function),
+    });
+    const [, values] = update.mock.calls[0] as [string, { availableAt: () => string }];
     expect(values.availableAt()).toBe("NOW() + interval '5 minutes'");
   });
 

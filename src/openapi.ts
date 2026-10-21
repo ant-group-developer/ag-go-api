@@ -135,18 +135,44 @@ export function createOpenApiDocument(app: INestApplication): OpenAPIObject {
       }
       const responses = operation.responses as Record<
         string,
-        { content?: Record<string, unknown> }
+        { content?: Record<string, { schema?: Record<string, unknown> }> }
       >;
       for (const [status, response] of Object.entries(responses)) {
         if (!status.startsWith('2') || path.includes('/preview/')) {
           continue;
         }
         response.content ??= {};
-        response.content['application/json'] ??= {
+        const json = (response.content['application/json'] ??= {
           schema: { $ref: '#/components/schemas/ApiResponse' },
-        };
+        });
+        const schema = json.schema;
+        if (!schema || isApiResponseSchema(schema)) {
+          json.schema = { $ref: '#/components/schemas/ApiResponse' };
+          continue;
+        }
+        // Runtime wraps every JSON body in ApiResponseDto; keep that envelope so
+        // openapi-typescript emits `data` as the handler's typed payload.
+        json.schema = wrapAsApiResponseData(schema);
       }
     }
   }
   return document;
+}
+
+function isApiResponseSchema(schema: Record<string, unknown>): boolean {
+  return schema.$ref === '#/components/schemas/ApiResponse';
+}
+
+function wrapAsApiResponseData(dataSchema: Record<string, unknown>): Record<string, unknown> {
+  return {
+    type: 'object',
+    required: ['data', 'requestId', 'timestamp', 'success', 'error'],
+    properties: {
+      data: dataSchema,
+      requestId: { type: 'string' },
+      timestamp: { type: 'string', format: 'date-time' },
+      success: { type: 'boolean' },
+      error: { allOf: [{ $ref: '#/components/schemas/ApiError' }], nullable: true },
+    },
+  };
 }

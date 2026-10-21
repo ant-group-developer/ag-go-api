@@ -24,6 +24,7 @@ import { AnalysisSignService } from './analysis-sign.service';
 import { AnalysisService } from './analysis.service';
 import { AnalysisBatchesQueryDto } from './dto/analysis-batches-query.dto';
 import { AnalysisLogsQueryDto } from './dto/analysis-logs-query.dto';
+import { AnalysisStatsQueryDto } from './dto/analysis-stats-query.dto';
 import { BackfillAnalysisDto } from './dto/backfill-analysis.dto';
 import { EnqueueAnalysisDto } from './dto/enqueue-analysis.dto';
 import { FarmTicketGuard } from './farm/farm-ticket.guard';
@@ -73,14 +74,8 @@ export class AnalysisController {
   @ApiBearerAuth()
   @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
   @ApiOperation({ summary: 'Analysis counts by status for assets in the given folders' })
-  getStats(@Query('folderIds') folderIds?: string) {
-    const ids = folderIds
-      ? folderIds
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : undefined;
-    return this.analysisService.getStats(ids);
+  getStats(@Query() query: AnalysisStatsQueryDto) {
+    return this.analysisService.getStats(query.folderIds);
   }
 
   // ---------------------------------------------------------------------------

@@ -11,12 +11,19 @@ import {
   Put,
   Req,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiCreatedResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { CreateFolderDto } from './dto/create-folder.dto';
+import { FolderDto, FolderOptionDto } from './dto/folder-response.dto';
 import { SetFolderGrantDto } from './dto/set-folder-grant.dto';
 import { UpdateFolderDto } from './dto/update-folder.dto';
 import { UpsertFolderGrantDto } from './dto/upsert-folder-grant.dto';
@@ -33,6 +40,7 @@ export class FoldersController {
 
   @Get('tree')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
+  @ApiOkResponse({ type: FolderDto, isArray: true })
   tree(@Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.foldersService.tree(context.userId, context.userType);
@@ -43,12 +51,14 @@ export class FoldersController {
   @ApiOperation({
     summary: 'Every active folder, to filter the "Projects" page (listed by category grants)',
   })
+  @ApiOkResponse({ type: FolderOptionDto, isArray: true })
   options() {
     return this.foldersService.options();
   }
 
   @Post()
   @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
+  @ApiCreatedResponse({ type: FolderDto })
   create(@Body() dto: CreateFolderDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.foldersService.create(dto, context.userId, context.userType, context.permissions);
@@ -56,6 +66,7 @@ export class FoldersController {
 
   @Patch(':id')
   @RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
+  @ApiOkResponse({ type: FolderDto })
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateFolderDto,
