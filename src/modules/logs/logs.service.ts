@@ -2,7 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
-import { FolderAccessService } from '../folders/folder-access.service';
+import { isAdminUserType } from '../../common/auth/user-type';
+import { FolderAccessService, grantReachesProjectSql } from '../folders/folder-access.service';
 import { LogsQueryDto } from './dto/logs-query.dto';
 
 @Injectable()
@@ -19,7 +20,18 @@ export class LogsService {
       return { items: [], page: query.page, pageSize: query.pageSize, total: 0, totalPages: 0 };
     }
     const values: unknown[] = [folderIds];
-    const filters = [`(a.project_id IS NULL OR p.folder_id = ANY($1::uuid[]))`];
+    let projectScope = 'TRUE';
+    if (!isAdminUserType(userType)) {
+      values.push(userId);
+      projectScope = grantReachesProjectSql(
+        { folderId: 'p.folder_id', categoryId: 'p.category_id', evaluationStatus: 'p.evaluation_status' },
+        `$${values.length}::varchar`,
+        'viewer',
+      );
+    }
+    const filters = [
+      `(a.project_id IS NULL OR (p.folder_id = ANY($1::uuid[]) AND ${projectScope}))`,
+    ];
     if (query.category) {
       values.push(query.category);
       filters.push(`a.category = $${values.length}`);

@@ -2,25 +2,25 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
-export const FOLDER_ACCESS_USER_SORT_FIELDS = [
+export const ACCESS_GRANT_USER_SORT_FIELDS = [
   'user',
-  'folderCount',
+  'grantCount',
   'highestLevel',
   'updatedAt',
 ] as const;
-export type FolderAccessUserSortField = (typeof FOLDER_ACCESS_USER_SORT_FIELDS)[number];
+export type AccessGrantUserSortField = (typeof ACCESS_GRANT_USER_SORT_FIELDS)[number];
 
-export class FolderAccessUsersQueryDto {
+export class AccessGrantUsersQueryDto {
   @ApiPropertyOptional({ description: 'Tìm theo tên, email hoặc user ID' })
   @IsOptional()
   @IsString()
   @MaxLength(200)
   keyword?: string;
 
-  @ApiPropertyOptional({ enum: FOLDER_ACCESS_USER_SORT_FIELDS })
+  @ApiPropertyOptional({ enum: ACCESS_GRANT_USER_SORT_FIELDS })
   @IsOptional()
-  @IsIn(FOLDER_ACCESS_USER_SORT_FIELDS)
-  sortBy?: FolderAccessUserSortField;
+  @IsIn(ACCESS_GRANT_USER_SORT_FIELDS)
+  sortBy?: AccessGrantUserSortField;
 
   @ApiPropertyOptional({ enum: ['asc', 'desc'] })
   @IsOptional()

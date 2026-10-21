@@ -486,12 +486,12 @@ export class AssetsService implements OnModuleDestroy {
     width?: number,
     viewerMaySeeUnwatermarked = false,
   ) {
-    await this.requireAssetAccess(assetId, userId, 'viewer', userType);
+    const asset = await this.requireAssetAccess(assetId, userId, 'viewer', userType);
     const variant = await this.findReadyVariant(
       assetId,
       variantCode,
       width,
-      viewerMaySeeUnwatermarked,
+      viewerMaySeeUnwatermarked && (await this.seesOriginals(asset, userId, userType)),
     );
     response.setHeader('Content-Type', variant.mimeType);
     response.setHeader('Content-Length', variant.fileSizeBytes);
@@ -506,12 +506,12 @@ export class AssetsService implements OnModuleDestroy {
     width?: number,
     viewerMaySeeUnwatermarked = false,
   ) {
-    await this.requireAssetAccess(assetId, userId, 'viewer', userType);
+    const asset = await this.requireAssetAccess(assetId, userId, 'viewer', userType);
     const variant = await this.findReadyVariant(
       assetId,
       variantCode,
       width,
-      viewerMaySeeUnwatermarked,
+      viewerMaySeeUnwatermarked && (await this.seesOriginals(asset, userId, userType)),
     );
     const expiresInSeconds = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
     const url = await this.storage.getPresignedGetUrl(
@@ -533,10 +533,14 @@ export class AssetsService implements OnModuleDestroy {
 
   /**
    * Presigned URL of the original, un-watermarked file, for evaluating media at full quality.
-   * Only for users allowed to evaluate or download originals (enforced by the controller).
+   * Only for users allowed to evaluate or download originals (enforced by the controller) who
+   * may see the originals of this asset.
    */
   async getOriginalUrl(assetId: string, userId: string, userType?: 'ADMIN' | 'USER') {
     const asset = await this.requireAssetAccess(assetId, userId, 'viewer', userType);
+    if (!(await this.seesOriginals(asset, userId, userType))) {
+      throw new ForbiddenException('Insufficient permission for the original file');
+    }
     const expiresInSeconds = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
     return {
       url: await this.storage.getPresignedGetUrl(
@@ -558,7 +562,10 @@ export class AssetsService implements OnModuleDestroy {
     viewerMaySeeUnwatermarked = false,
   ) {
     const asset = await this.requireAssetAccess(assetId, userId, 'viewer', userType);
-    const previews = await this.findServablePreviews(assetId, viewerMaySeeUnwatermarked);
+    const previews = await this.findServablePreviews(
+      assetId,
+      viewerMaySeeUnwatermarked && (await this.seesOriginals(asset, userId, userType)),
+    );
     const duration = asset.sourceMetadata?.durationSeconds;
     return previews
       .sort(comparePreviews)
@@ -646,21 +653,44 @@ export class AssetsService implements OnModuleDestroy {
     if (isAdminUserType(userType) || asset.createdBy === userId) {
       return asset;
     }
-    const projects = await this.projectRepository
-      .createQueryBuilder('project')
-      .innerJoin(ProjectMediaEntity, 'media', 'media.project_id = project.id')
-      .where('media.asset_id = :assetId', { assetId })
-      .getMany();
-    for (const project of projects) {
+    for (const project of await this.projectsOf(assetId)) {
       const allowed =
         minimum === 'viewer'
           ? await this.folderAccessService.canViewProject(project, userId, userType)
-          : await this.folderAccessService.canAccess(project.folderId, userId, minimum, userType);
+          : await this.folderAccessService.canAccessProject(project, userId, minimum, userType);
       if (allowed) {
         return asset;
       }
     }
     throw new ForbiddenException('Insufficient asset permission');
+  }
+
+  /**
+   * Un-watermarked media and the original file: admins, the uploader, and whoever may see the
+   * originals of a project holding the asset (its owner or an `original` grant).
+   */
+  private async seesOriginals(
+    asset: AssetEntity,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<boolean> {
+    if (isAdminUserType(userType) || asset.createdBy === userId) {
+      return true;
+    }
+    for (const project of await this.projectsOf(asset.id)) {
+      if (await this.folderAccessService.canSeeOriginals(project, userId, userType)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private projectsOf(assetId: string): Promise<ProjectEntity[]> {
+    return this.projectRepository
+      .createQueryBuilder('project')
+      .innerJoin(ProjectMediaEntity, 'media', 'media.project_id = project.id')
+      .where('media.asset_id = :assetId', { assetId })
+      .getMany();
   }
 
   /**
@@ -752,8 +782,8 @@ export class AssetsService implements OnModuleDestroy {
     minimum: FolderAccessLevel,
     userType?: 'ADMIN' | 'USER',
   ) {
-    const allowed = await this.folderAccessService.canAccess(
-      project.folderId,
+    const allowed = await this.folderAccessService.canAccessProject(
+      project,
       userId,
       minimum,
       userType,

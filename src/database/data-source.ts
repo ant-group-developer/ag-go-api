@@ -2,6 +2,7 @@ import { config as loadEnv } from 'dotenv';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from '../config/env.validation';
+import { AccessGrantEntity } from './entities/access-grant.entity';
 import { AnalysisBatchEntity } from './entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from './entities/asset-analysis.entity';
@@ -12,13 +13,11 @@ import { AssetPrepEntity } from './entities/asset-prep.entity';
 import { AssetUploadSessionEntity } from './entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './entities/asset-variant.entity';
 import { AssetEntity } from './entities/asset.entity';
-import { CategoryAccessGrantEntity } from './entities/category-access-grant.entity';
 import { CategoryEntity } from './entities/category.entity';
 import { CountryEntity } from './entities/country.entity';
 import { DownloadJobItemEntity } from './entities/download-job-item.entity';
 import { DownloadJobEntity } from './entities/download-job.entity';
 import { DownloadLogEntity } from './entities/download-log.entity';
-import { FolderAccessGrantEntity } from './entities/folder-access-grant.entity';
 import { FolderClosureEntity } from './entities/folder-closure.entity';
 import { FolderEntity } from './entities/folder.entity';
 import { GoogleDriveConnectionEntity } from './entities/google-drive-connection.entity';
@@ -80,6 +79,7 @@ import { CategoryCreatedBy2100000000000 } from './migrations/2100000000000-categ
 import { TagTimestamps2110000000000 } from './migrations/2110000000000-tag-timestamps';
 import { AssetPreps2120000000000 } from './migrations/2120000000000-asset-preps';
 import { StudioUsage2130000000000 } from './migrations/2130000000000-studio-usage';
+import { AccessGrants2140000000000 } from './migrations/2140000000000-access-grants';
 
 loadEnv();
 
@@ -104,8 +104,7 @@ export const AppDataSource = new DataSource({
     AssetVariantEntity,
     FolderEntity,
     FolderClosureEntity,
-    FolderAccessGrantEntity,
-    CategoryAccessGrantEntity,
+    AccessGrantEntity,
     CategoryEntity,
     CountryEntity,
     ProvinceEntity,
@@ -179,6 +178,7 @@ export const AppDataSource = new DataSource({
     TagTimestamps2110000000000,
     AssetPreps2120000000000,
     StudioUsage2130000000000,
+    AccessGrants2140000000000,
   ],
   synchronize: false,
 });

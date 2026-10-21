@@ -6,11 +6,9 @@ import { randomUUID } from 'node:crypto';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { AppDataSource } from '../../database/data-source';
-import { CategoryAccessGrantEntity } from '../../database/entities/category-access-grant.entity';
+import { AccessGrantEntity } from '../../database/entities/access-grant.entity';
 import { CategoryEntity } from '../../database/entities/category.entity';
 import { CountryEntity } from '../../database/entities/country.entity';
-import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
-import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { ProvinceEntity } from '../../database/entities/province.entity';
@@ -40,10 +38,8 @@ beforeAll(async () => {
   await AppDataSource.initialize();
   ds = AppDataSource;
   const folderAccess = new FolderAccessService(
-    ds.getRepository(FolderAccessGrantEntity),
-    ds.getRepository(FolderClosureEntity),
+    ds.getRepository(AccessGrantEntity),
     ds.getRepository(FolderEntity),
-    ds.getRepository(CategoryAccessGrantEntity),
   );
   // Users the account service knows: their id with an "@test" email.
   const actorEnrichment = {
@@ -85,16 +81,17 @@ afterEach(async () => {
     createdProjectIds.length = 0;
   }
   if (createdFolderIds.length) {
-    await ds.query(`DELETE FROM folder_access_grants WHERE folder_id = ANY($1)`, [
-      createdFolderIds,
-    ]);
+    await ds.query(`DELETE FROM access_grants WHERE folder_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folder_closure WHERE descendant_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folders WHERE id = ANY($1)`, [createdFolderIds]);
     createdFolderIds.length = 0;
   }
 });
 
-async function insertGrantedFolder(userId: string): Promise<string> {
+async function insertGrantedFolder(
+  userId: string,
+  options: { categoryId?: string; level?: string } = {},
+): Promise<string> {
   const id = randomUUID();
   await ds.query(
     `INSERT INTO folders (id, parent_id, name, path_key, path_ids, path_text, depth, sort_order, is_active, created_by)
@@ -106,9 +103,9 @@ async function insertGrantedFolder(userId: string): Promise<string> {
     [id],
   );
   await ds.query(
-    `INSERT INTO folder_access_grants (id, folder_id, principal_type, principal_id, access_level, inherit_children)
-     VALUES ($1,$2,'user',$3,'viewer',true)`,
-    [randomUUID(), id, userId],
+    `INSERT INTO access_grants (id, folder_id, category_id, principal_type, principal_id, access_level, inherit_children)
+     VALUES ($1,$2,$3,'user',$4,$5,true)`,
+    [randomUUID(), id, options.categoryId ?? null, userId, options.level ?? 'viewer'],
   );
   createdFolderIds.push(id);
   return id;
@@ -175,6 +172,7 @@ describe('ProjectsService — page scopes', () => {
 
   afterEach(async () => {
     if (createdCategoryIds.length) {
+      await ds.query(`DELETE FROM access_grants WHERE category_id = ANY($1)`, [createdCategoryIds]);
       await ds.query(`DELETE FROM projects WHERE category_id = ANY($1)`, [createdCategoryIds]);
       await ds.query(`DELETE FROM categories WHERE id = ANY($1)`, [createdCategoryIds]);
       createdCategoryIds.length = 0;
@@ -188,9 +186,10 @@ describe('ProjectsService — page scopes', () => {
       [id, `Category ${id.slice(0, 8)}`, `category-${id}`],
     );
     if (grantedTo) {
+      // Originals of the category in every folder.
       await ds.query(
-        `INSERT INTO category_access_grants (id, category_id, principal_type, principal_id)
-         VALUES ($1, $2, 'user', $3)`,
+        `INSERT INTO access_grants (id, folder_id, category_id, principal_type, principal_id, access_level)
+         VALUES ($1, NULL, $2, 'user', $3, 'original')`,
         [randomUUID(), id, grantedTo],
       );
     }
@@ -210,31 +209,57 @@ describe('ProjectsService — page scopes', () => {
       .sort();
   }
 
-  it('lists the evaluated projects of granted categories on "Projects", whatever the folder', async () => {
+  it('lists every evaluated project on "Projects", even without any grant', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
-    // A folder the user has no grant on.
     const folderId = await insertGrantedFolder(`other-${randomUUID().slice(0, 8)}`);
-    const granted = await insertCategory(userId);
-    const other = await insertCategory();
-    const completed = await categorizedProject(folderId, granted, 'completed');
-    const partial = await categorizedProject(folderId, granted, 'partially_completed');
-    await categorizedProject(folderId, granted, 'pending');
-    await categorizedProject(folderId, other, 'completed');
+    const categoryId = await insertCategory();
+    const completed = await categorizedProject(folderId, categoryId, 'completed');
+    const partial = await categorizedProject(folderId, categoryId, 'partially_completed');
+    await categorizedProject(folderId, categoryId, 'pending');
 
     expect(await listIds('evaluated', userId)).toEqual([completed, partial].sort());
   });
 
-  it('also lists the evaluated projects of granted folders on "Projects", whatever the category', async () => {
+  it('marks the projects whose originals the user may see', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
-    const folderId = await insertGrantedFolder(userId);
-    const hiddenFolderId = await insertGrantedFolder(`other-${randomUUID().slice(0, 8)}`);
-    // Created by a collaborator in the folder, granted to nobody yet.
-    const ungranted = await insertCategory();
-    const completed = await categorizedProject(folderId, ungranted, 'completed');
-    await categorizedProject(folderId, ungranted, 'pending');
-    await categorizedProject(hiddenFolderId, ungranted, 'completed');
+    const grantedCategory = await insertCategory(userId);
+    const otherCategory = await insertCategory();
+    const otherFolder = await insertGrantedFolder(`other-${randomUUID().slice(0, 8)}`);
+    // An original grant on one category of this folder only.
+    const limitedFolder = await insertGrantedFolder(userId, {
+      categoryId: otherCategory,
+      level: 'original',
+    });
+    const byCategory = await categorizedProject(otherFolder, grantedCategory, 'completed');
+    const byFolderAndCategory = await categorizedProject(limitedFolder, otherCategory, 'completed');
+    const outside = await categorizedProject(otherFolder, otherCategory, 'completed');
 
-    expect(await listIds('evaluated', userId)).toEqual([completed]);
+    const items = (await service.list(listQuery({ scope: 'evaluated' }), userId, 'USER'))
+      .items as unknown as Array<{ id: string; canSeeOriginals: boolean }>;
+    const originals = Object.fromEntries(items.map((item) => [item.id, item.canSeeOriginals]));
+
+    expect(originals[byCategory]).toBe(true);
+    expect(originals[byFolderAndCategory]).toBe(true);
+    expect(originals[outside]).toBe(false);
+  });
+
+  it('limits "Project evaluations" to the categories a folder grant is limited to', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const granted = await insertCategory();
+    const other = await insertCategory();
+    const folderId = await insertGrantedFolder(userId, { categoryId: granted });
+    const pending = await categorizedProject(folderId, granted, 'pending');
+    await categorizedProject(folderId, other, 'pending');
+
+    expect(await listIds('evaluation', userId)).toEqual([pending]);
+  });
+
+  it('does not open "Project evaluations" to an original grant', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertGrantedFolder(userId, { level: 'original' });
+    await insertProject(folderId, 'author-a', 'pending');
+
+    expect(await listIds('evaluation', userId)).toEqual([]);
   });
 
   it('lists projects to evaluate of granted folders only on "Project evaluations"', async () => {

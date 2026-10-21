@@ -27,12 +27,10 @@ import { randomUUID } from 'node:crypto';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { AppDataSource } from '../../database/data-source';
+import { AccessGrantEntity } from '../../database/entities/access-grant.entity';
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
-import { CategoryAccessGrantEntity } from '../../database/entities/category-access-grant.entity';
-import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
-import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { FolderAccessService } from '../folders/folder-access.service';
@@ -65,10 +63,8 @@ beforeAll(async () => {
   ds = AppDataSource;
 
   folderAccess = new FolderAccessService(
-    ds.getRepository(FolderAccessGrantEntity),
-    ds.getRepository(FolderClosureEntity),
+    ds.getRepository(AccessGrantEntity),
     ds.getRepository(FolderEntity),
-    ds.getRepository(CategoryAccessGrantEntity),
   );
   scopeService = new FootageScopeService(folderAccess, ds);
 
@@ -129,9 +125,7 @@ afterEach(async () => {
     createdAssetIds.length = 0;
   }
   if (createdFolderIds.length) {
-    await ds.query(`DELETE FROM folder_access_grants WHERE folder_id = ANY($1)`, [
-      createdFolderIds,
-    ]);
+    await ds.query(`DELETE FROM access_grants WHERE folder_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folder_closure WHERE descendant_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folder_closure WHERE ancestor_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folders WHERE id = ANY($1)`, [createdFolderIds]);
@@ -183,7 +177,7 @@ async function grantFolder(
   inheritChildren = true,
 ): Promise<void> {
   await ds.query(
-    `INSERT INTO folder_access_grants (id, folder_id, principal_type, principal_id, access_level, inherit_children)
+    `INSERT INTO access_grants (id, folder_id, principal_type, principal_id, access_level, inherit_children)
      VALUES ($1,$2,'user',$3,'viewer',$4)`,
     [randomUUID(), folderId, userId, inheritChildren],
   );

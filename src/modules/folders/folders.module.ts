@@ -1,16 +1,13 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthContextService } from '../../common/auth-context.service';
-import { CategoryAccessGrantEntity } from '../../database/entities/category-access-grant.entity';
+import { AccessGrantEntity } from '../../database/entities/access-grant.entity';
 import { CategoryEntity } from '../../database/entities/category.entity';
-import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
 import { AccountModule } from '../account/account.module';
-import { CategoryAccessController } from './category-access.controller';
-import { CategoryAccessService } from './category-access.service';
-import { FolderAccessOverviewService } from './folder-access-overview.service';
-import { FolderAccessController } from './folder-access.controller';
+import { AccessGrantsController } from './access-grants.controller';
+import { AccessGrantsService } from './access-grants.service';
 import { FolderAccessService } from './folder-access.service';
 import { FoldersController } from './folders.controller';
 import { FoldersService } from './folders.service';
@@ -21,19 +18,12 @@ import { FoldersService } from './folders.service';
     TypeOrmModule.forFeature([
       FolderEntity,
       FolderClosureEntity,
-      FolderAccessGrantEntity,
-      CategoryAccessGrantEntity,
+      AccessGrantEntity,
       CategoryEntity,
     ]),
   ],
-  controllers: [FoldersController, FolderAccessController, CategoryAccessController],
-  providers: [
-    AuthContextService,
-    FolderAccessService,
-    FolderAccessOverviewService,
-    FoldersService,
-    CategoryAccessService,
-  ],
+  controllers: [FoldersController, AccessGrantsController],
+  providers: [AuthContextService, FolderAccessService, FoldersService, AccessGrantsService],
   exports: [FolderAccessService],
 })
 export class FoldersModule {}

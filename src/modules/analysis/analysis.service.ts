@@ -19,6 +19,7 @@ import { FolderClosureEntity } from '../../database/entities/folder-closure.enti
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
+import { grantReachesProjectSql } from '../folders/folder-access.service';
 import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
 import { AnalysisBatchService } from './analysis-batch.service';
 import { AnalysisEnqueueService } from './analysis-enqueue.service';
@@ -523,7 +524,7 @@ export class AnalysisService {
       .where('pm.asset_id = :assetId', { assetId })
       .getMany();
     for (const project of projects) {
-      if (await this.hasFolderAccess(project.folderId, userId)) return asset;
+      if (await this.hasProjectAccess(project.id, userId)) return asset;
     }
     throw new ForbiddenException('Insufficient access to this asset');
   }
@@ -537,22 +538,29 @@ export class AnalysisService {
     const project = await this.projectRepo.findOne({ where: { id: projectId } });
     if (!project) throw new NotFoundException('Project not found');
     if (isAdminUserType(userType as UserType | undefined)) return project;
-    if (!(await this.hasFolderAccess(project.folderId, userId))) {
+    if (!(await this.hasProjectAccess(project.id, userId))) {
       throw new ForbiddenException('Insufficient access to this project');
     }
     return project;
   }
 
-  private async hasFolderAccess(folderId: string, userId: string): Promise<boolean> {
+  /** A `viewer` grant reaching the project (folder, and category when limited). */
+  private async hasProjectAccess(projectId: string, userId: string): Promise<boolean> {
     const rows = await this.dataSource.query<{ ok: boolean }[]>(
       `SELECT EXISTS (
-        SELECT 1 FROM folder_access_grants g
-        JOIN folder_closure c ON c.ancestor_id = g.folder_id
-        WHERE c.descendant_id = $1
-          AND g.principal_type = 'user' AND g.principal_id = $2
-          AND (c.depth = 0 OR g.inherit_children = true)
+        SELECT 1 FROM projects p
+        WHERE p.id = $1
+          AND ${grantReachesProjectSql(
+            {
+              folderId: 'p.folder_id',
+              categoryId: 'p.category_id',
+              evaluationStatus: 'p.evaluation_status',
+            },
+            '$2::varchar',
+            'viewer',
+          )}
        ) AS ok`,
-      [folderId, userId],
+      [projectId, userId],
     );
     return Boolean(rows[0]?.ok);
   }
