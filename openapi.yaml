@@ -4315,7 +4315,7 @@ info:
   contact: {}
 tags: []
 servers:
-  - url: http://localhost:37377/api
+  - url: http://localhost:3738/api
 components:
   securitySchemes:
     bearer:
