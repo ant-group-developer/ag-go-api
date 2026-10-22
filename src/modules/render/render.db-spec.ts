@@ -139,7 +139,12 @@ afterEach(async () => {
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function insertFolder(userId?: string, parentId?: string, inherit = true): Promise<string> {
+async function insertFolder(
+  userId?: string,
+  parentId?: string,
+  inherit = true,
+  accessLevel: 'viewer' | 'editor' | 'manager' = 'viewer',
+): Promise<string> {
   const id = randomUUID();
   await ds.query(
     `INSERT INTO folders (id, parent_id, name, path_key, path_ids, path_text, depth, sort_order, is_active, created_by)
@@ -160,8 +165,8 @@ async function insertFolder(userId?: string, parentId?: string, inherit = true):
   if (userId) {
     await ds.query(
       `INSERT INTO folder_access_grants (id, folder_id, principal_type, principal_id, access_level, inherit_children)
-       VALUES ($1, $2, 'user', $3, 'viewer', $4)`,
-      [randomUUID(), id, userId, inherit],
+       VALUES ($1, $2, 'user', $3, $4, $5)`,
+      [randomUUID(), id, userId, accessLevel, inherit],
     );
   }
   createdFolderIds.push(id);
@@ -182,8 +187,8 @@ async function insertProject(folderId: string, ownerUserId = 'owner-1'): Promise
 async function insertAsset(filename = 'photo.jpg'): Promise<string> {
   const id = randomUUID();
   await ds.query(
-    `INSERT INTO assets (id, storage_key, original_filename, file_size_bytes, mime_type, asset_type, created_by)
-     VALUES ($1, $2, $3, 1024, 'image/jpeg', 'image', 'test')`,
+    `INSERT INTO assets (id, original_storage_key, original_bucket, original_filename, file_size_bytes, mime_type, asset_type, created_by)
+     VALUES ($1, $2, 'test-bucket', $3, 1024, 'image/jpeg', 'image', 'test')`,
     [id, `assets/${id}.jpg`, filename],
   );
   createdAssetIds.push(id);
@@ -193,8 +198,8 @@ async function insertAsset(filename = 'photo.jpg'): Promise<string> {
 async function insertProjectMedia(projectId: string, assetId: string): Promise<string> {
   const id = randomUUID();
   await ds.query(
-    `INSERT INTO project_media (id, project_id, asset_id, sort_order)
-     VALUES ($1, $2, $3, 0)`,
+    `INSERT INTO project_media (id, project_id, asset_id, sort_order, created_by)
+     VALUES ($1, $2, $3, 0, 'test')`,
     [id, projectId, assetId],
   );
   return id;
@@ -403,7 +408,7 @@ describe('RenderService DB specs', () => {
 
   describe('listJobs (batch render jobs)', () => {
     it('returns paged jobs of a batch with status filtering and counts', async () => {
-      const folder = await insertFolder('user-1');
+      const folder = await insertFolder('user-1', undefined, true, 'manager');
       const proj = await insertProject(folder);
       const batchId = await insertBatch({ projectId: proj });
 
@@ -433,7 +438,7 @@ describe('RenderService DB specs', () => {
     });
 
     it('searches batch jobs by asset original filename', async () => {
-      const folder = await insertFolder('user-1');
+      const folder = await insertFolder('user-1', undefined, true, 'manager');
       const proj = await insertProject(folder);
       const batchId = await insertBatch({ projectId: proj });
 
