@@ -5,6 +5,8 @@
 import { randomUUID } from 'node:crypto';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
+import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
+import { runInRequestContext } from '../../common/request-context';
 import { AppDataSource } from '../../database/data-source';
 import { AccessGrantEntity } from '../../database/entities/access-grant.entity';
 import { CategoryEntity } from '../../database/entities/category.entity';
@@ -169,8 +171,13 @@ describe('ProjectsService — author filter', () => {
 
 describe('ProjectsService — page scopes', () => {
   const createdCategoryIds: string[] = [];
+  const createdBundleIds: string[] = [];
 
   afterEach(async () => {
+    if (createdBundleIds.length) {
+      await ds.query(`DELETE FROM original_access_bundles WHERE id = ANY($1)`, [createdBundleIds]);
+      createdBundleIds.length = 0;
+    }
     if (createdCategoryIds.length) {
       await ds.query(`DELETE FROM access_grants WHERE category_id = ANY($1)`, [createdCategoryIds]);
       await ds.query(`DELETE FROM projects WHERE category_id = ANY($1)`, [createdCategoryIds]);
@@ -179,22 +186,33 @@ describe('ProjectsService — page scopes', () => {
     }
   });
 
-  async function insertCategory(grantedTo?: string): Promise<string> {
+  async function insertCategory(): Promise<string> {
     const id = randomUUID();
     await ds.query(
       `INSERT INTO categories (id, name, slug, sort_order, is_active) VALUES ($1, $2, $3, 0, true)`,
       [id, `Category ${id.slice(0, 8)}`, `category-${id}`],
     );
-    if (grantedTo) {
-      // Originals of the category in every folder.
-      await ds.query(
-        `INSERT INTO access_grants (id, folder_id, category_id, principal_type, principal_id, access_level)
-         VALUES ($1, NULL, $2, 'user', $3, 'original')`,
-        [randomUUID(), id, grantedTo],
-      );
-    }
     createdCategoryIds.push(id);
     return id;
+  }
+
+  /** A bundle of originals: the folders × the categories. */
+  async function insertBundle(userId: string, folderIds: string[], categoryIds: string[]) {
+    const id = randomUUID();
+    await ds.query(
+      `INSERT INTO original_access_bundles (id, principal_type, principal_id) VALUES ($1, 'user', $2)`,
+      [id, userId],
+    );
+    await ds.query(
+      `INSERT INTO original_access_bundle_folders (bundle_id, folder_id) SELECT $1, unnest($2::uuid[])`,
+      [id, folderIds],
+    );
+    await ds.query(
+      `INSERT INTO original_access_bundle_categories (bundle_id, category_id)
+       SELECT $1, unnest($2::uuid[])`,
+      [id, categoryIds],
+    );
+    createdBundleIds.push(id);
   }
 
   async function categorizedProject(folderId: string, categoryId: string, status: string) {
@@ -203,13 +221,28 @@ describe('ProjectsService — page scopes', () => {
     return id;
   }
 
-  async function listIds(scope: ListProjectsQueryDto['scope'], userId: string) {
-    return (await service.list(listQuery({ scope }), userId, 'USER')).items
-      .map((p) => (p as unknown as { id: string }).id)
-      .sort();
+  /** Runs `work` as a request of a user holding `permissions`. */
+  function withPermissions<T>(permissions: string[], work: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) =>
+      runInRequestContext({ authContext: { permissions } } as never, () => {
+        work().then(resolve, reject);
+      }),
+    );
   }
 
-  it('lists every evaluated project on "Projects", even without any grant', async () => {
+  async function listIds(
+    scope: ListProjectsQueryDto['scope'],
+    userId: string,
+    permissions: string[] = [],
+  ) {
+    return withPermissions(permissions, async () =>
+      (await service.list(listQuery({ scope }), userId, 'USER')).items
+        .map((p) => (p as unknown as { id: string }).id)
+        .sort(),
+    );
+  }
+
+  it('lists every evaluated project on "Projects" with go.project.read_all', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
     const folderId = await insertGrantedFolder(`other-${randomUUID().slice(0, 8)}`);
     const categoryId = await insertCategory();
@@ -217,29 +250,48 @@ describe('ProjectsService — page scopes', () => {
     const partial = await categorizedProject(folderId, categoryId, 'partially_completed');
     await categorizedProject(folderId, categoryId, 'pending');
 
-    expect(await listIds('evaluated', userId)).toEqual([completed, partial].sort());
+    expect(await listIds('evaluated', userId, [GO_PERMISSIONS.PROJECT_READ_ALL])).toEqual(
+      [completed, partial].sort(),
+    );
+  });
+
+  it('lists only bundles, work grants and own projects on "Projects" without it', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const bundled = await insertGrantedFolder(`other-${randomUUID().slice(0, 8)}`);
+    const worked = await insertGrantedFolder(userId);
+    const elsewhere = await insertGrantedFolder(`other-${randomUUID().slice(0, 8)}`);
+    const amThuc = await insertCategory();
+    const bienDao = await insertCategory();
+    await insertBundle(userId, [bundled], [amThuc]);
+    const inBundle = await categorizedProject(bundled, amThuc, 'completed');
+    await categorizedProject(bundled, bienDao, 'completed');
+    await categorizedProject(elsewhere, amThuc, 'completed');
+    const inWorkFolder = await categorizedProject(worked, bienDao, 'completed');
+    const own = await insertProject(elsewhere, userId, 'completed');
+
+    expect(await listIds('evaluated', userId)).toEqual([inBundle, inWorkFolder, own].sort());
   });
 
   it('marks the projects whose originals the user may see', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
-    const grantedCategory = await insertCategory(userId);
-    const otherCategory = await insertCategory();
-    const otherFolder = await insertGrantedFolder(`other-${randomUUID().slice(0, 8)}`);
-    // An original grant on one category of this folder only.
-    const limitedFolder = await insertGrantedFolder(userId, {
-      categoryId: otherCategory,
-      level: 'original',
-    });
-    const byCategory = await categorizedProject(otherFolder, grantedCategory, 'completed');
-    const byFolderAndCategory = await categorizedProject(limitedFolder, otherCategory, 'completed');
-    const outside = await categorizedProject(otherFolder, otherCategory, 'completed');
+    const bundled = await insertGrantedFolder(`other-${randomUUID().slice(0, 8)}`);
+    const worked = await insertGrantedFolder(userId);
+    const amThuc = await insertCategory();
+    const bienDao = await insertCategory();
+    await insertBundle(userId, [bundled], [amThuc]);
+    const inBundle = await categorizedProject(bundled, amThuc, 'completed');
+    const inWorkFolder = await categorizedProject(worked, bienDao, 'completed');
+    const outside = await categorizedProject(bundled, bienDao, 'completed');
 
-    const items = (await service.list(listQuery({ scope: 'evaluated' }), userId, 'USER'))
-      .items as unknown as Array<{ id: string; canSeeOriginals: boolean }>;
+    const items = (
+      await withPermissions([GO_PERMISSIONS.PROJECT_READ_ALL], () =>
+        service.list(listQuery({ scope: 'evaluated' }), userId, 'USER'),
+      )
+    ).items as unknown as Array<{ id: string; canSeeOriginals: boolean }>;
     const originals = Object.fromEntries(items.map((item) => [item.id, item.canSeeOriginals]));
 
-    expect(originals[byCategory]).toBe(true);
-    expect(originals[byFolderAndCategory]).toBe(true);
+    expect(originals[inBundle]).toBe(true);
+    expect(originals[inWorkFolder]).toBe(true);
     expect(originals[outside]).toBe(false);
   });
 
@@ -254,10 +306,12 @@ describe('ProjectsService — page scopes', () => {
     expect(await listIds('evaluation', userId)).toEqual([pending]);
   });
 
-  it('does not open "Project evaluations" to an original grant', async () => {
+  it('does not open "Project evaluations" to a bundle', async () => {
     const userId = `u-${randomUUID().slice(0, 8)}`;
-    const folderId = await insertGrantedFolder(userId, { level: 'original' });
-    await insertProject(folderId, 'author-a', 'pending');
+    const folderId = await insertGrantedFolder(`other-${randomUUID().slice(0, 8)}`);
+    const categoryId = await insertCategory();
+    await insertBundle(userId, [folderId], [categoryId]);
+    await categorizedProject(folderId, categoryId, 'pending');
 
     expect(await listIds('evaluation', userId)).toEqual([]);
   });

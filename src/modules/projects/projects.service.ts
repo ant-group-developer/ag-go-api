@@ -25,6 +25,7 @@ import {
   EVALUATED_PROJECT_STATUSES,
   FolderAccessService,
   grantReachesProjectSql,
+  originalsReachProjectSql,
   type AccessLevel,
 } from '../folders/folder-access.service';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -222,10 +223,9 @@ export class ProjectsService {
       tagsByProjectId.set(tag.projectId, projectTags);
     }
 
-    const withOriginals = await this.folderAccessService.projectIdsWithAccess(
+    const withOriginals = await this.folderAccessService.projectIdsWithOriginals(
       projectIds,
       userId,
-      'original',
       userType,
     );
     const items = projects.map((project) => {
@@ -245,7 +245,7 @@ export class ProjectsService {
         thumbnailSource: thumbnails.get(project.id)?.source ?? null,
         tags: (tagsByProjectId.get(project.id) ?? []).map((tag) => tag.name),
         tagIds: (tagsByProjectId.get(project.id) ?? []).map((tag) => tag.id),
-        canSeeOriginals: project.ownerUserId === userId || withOriginals.has(project.id),
+        canSeeOriginals: withOriginals.has(project.id),
       });
     });
 
@@ -300,11 +300,27 @@ export class ProjectsService {
         return query;
       case 'mine':
         return query.where('project.ownerUserId = :currentUserId', { currentUserId: userId });
-      case 'evaluated':
-        // Listed for everyone who may read projects; grants only decide who sees originals.
-        return query.where('project.evaluationStatus IN (:...scopeStatuses)', {
+      case 'evaluated': {
+        query.where('project.evaluationStatus IN (:...scopeStatuses)', {
           scopeStatuses: EVALUATED_PROJECT_STATUSES,
         });
+        // Every one with `go.project.read_all` (watermarked unless the originals are open);
+        // otherwise those of the user's bundles, work grants and own projects.
+        if (this.folderAccessService.canReadAllProjects(userType)) {
+          return query;
+        }
+        return query.andWhere(
+          `(project.owner_user_id = :evaluatedUserId OR ${originalsReachProjectSql(
+            {
+              folderId: 'project.folder_id',
+              categoryId: 'project.category_id',
+              evaluationStatus: 'project.evaluation_status',
+            },
+            ':evaluatedUserId',
+          )})`,
+          { evaluatedUserId: userId },
+        );
+      }
       case 'evaluation':
         query.where('project.evaluationStatus IN (:...scopeStatuses)', {
           scopeStatuses: EVALUATION_SCOPE_STATUSES,
@@ -398,11 +414,13 @@ export class ProjectsService {
           tagIds: tags.map((tag) => tag.id),
           tags: tags.map((tag) => tag.name),
           myAccessLevel,
-          canSeeOriginals: project.ownerUserId === userId || myAccessLevel !== null,
+          canSeeOriginals: await this.folderAccessService.canSeeOriginals(
+            project,
+            userId,
+            userType,
+          ),
           // Same rule as its audit log (AuditService.listProject).
-          canViewHistory:
-            project.ownerUserId === userId ||
-            (myAccessLevel !== null && myAccessLevel !== 'original'),
+          canViewHistory: project.ownerUserId === userId || myAccessLevel !== null,
         }) as unknown as Record<string, unknown>,
       ],
       [{ id: 'ownerUserId', target: 'ownerUser' }],

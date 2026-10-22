@@ -1,5 +1,7 @@
 export const GO_PERMISSIONS = {
   PROJECT_READ: 'go.project.read',
+  /** Every evaluated project on "Projects" (watermarked unless the grants open its originals). */
+  PROJECT_READ_ALL: 'go.project.read_all',
   PROJECT_EDIT: 'go.project.edit',
   PROJECT_EVALUATE: 'go.project.evaluate',
   PROJECT_DOWNLOAD_ORIGINAL: 'go.project.download_original',

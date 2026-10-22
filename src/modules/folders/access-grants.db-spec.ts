@@ -1,6 +1,7 @@
 /**
- * DB-level tests of `access_grants`: who reaches which project (folder × category) and how grants
- * are managed. Runs against real Postgres (see footage.db-spec.ts for the setup).
+ * DB-level tests of who reaches which project: work grants (`access_grants`, folder × category)
+ * and originals bundles (`original_access_bundles`, folders × categories), and how both are
+ * managed. Runs against real Postgres (see footage.db-spec.ts for the setup).
  */
 import { randomUUID } from 'node:crypto';
 import 'reflect-metadata';
@@ -11,8 +12,10 @@ import { AccessGrantEntity } from '../../database/entities/access-grant.entity';
 import { CategoryEntity } from '../../database/entities/category.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
-import { AccessGrantsService } from './access-grants.service';
+import { OriginalAccessBundleEntity } from '../../database/entities/original-access-bundle.entity';
+import { AccessGrantsService, type GrantRequester } from './access-grants.service';
 import { FolderAccessService } from './folder-access.service';
+import { OriginalAccessService } from './original-access.service';
 
 jest.mock('@nestjs/typeorm', () => ({
   InjectRepository: () => () => undefined,
@@ -27,14 +30,17 @@ const TEST_DB_URL =
 let ds: DataSource;
 let access: FolderAccessService;
 let grants: AccessGrantsService;
+let originals: OriginalAccessService;
 const folderIds: string[] = [];
 const categoryIds: string[] = [];
+const userIds: string[] = [];
 
 beforeAll(async () => {
   if (AppDataSource.isInitialized) await AppDataSource.destroy();
   Object.assign(AppDataSource.options, { url: TEST_DB_URL, schema: 'public' });
   await AppDataSource.initialize();
   ds = AppDataSource;
+  const enrichment = { enrich: async <T>(rows: T[]) => rows } as never;
   access = new FolderAccessService(
     ds.getRepository(AccessGrantEntity),
     ds.getRepository(FolderEntity),
@@ -46,7 +52,15 @@ beforeAll(async () => {
     ds.getRepository(CategoryEntity),
     ds.getRepository(FolderClosureEntity),
     access,
-    { enrich: async <T>(rows: T[]) => rows } as never,
+    enrichment,
+  );
+  originals = new OriginalAccessService(
+    ds,
+    ds.getRepository(OriginalAccessBundleEntity),
+    ds.getRepository(FolderEntity),
+    ds.getRepository(CategoryEntity),
+    enrichment,
+    access,
   );
 });
 
@@ -55,6 +69,7 @@ afterAll(async () => {
 });
 
 afterEach(async () => {
+  await ds.query(`DELETE FROM original_access_bundles WHERE principal_id = ANY($1)`, [userIds]);
   await ds.query(`DELETE FROM access_grants WHERE folder_id = ANY($1) OR category_id = ANY($2)`, [
     folderIds,
     categoryIds,
@@ -64,6 +79,7 @@ afterEach(async () => {
   await ds.query(`DELETE FROM categories WHERE id = ANY($1)`, [categoryIds]);
   folderIds.length = 0;
   categoryIds.length = 0;
+  userIds.length = 0;
 });
 
 /** A folder under `parentId` (closure rows included). */
@@ -96,7 +112,7 @@ async function insertCategory(): Promise<string> {
 
 async function grant(
   userId: string,
-  folderId: string | null,
+  folderId: string,
   categoryId: string | null,
   level: string,
   inheritChildren = true,
@@ -108,12 +124,22 @@ async function grant(
   );
 }
 
-const user = () => `u-${randomUUID().slice(0, 8)}`;
+const user = () => {
+  const id = `u-${randomUUID().slice(0, 8)}`;
+  userIds.push(id);
+  return id;
+};
 const project = (
   folderId: string,
   categoryId: string | null,
-  evaluationStatus: 'pending' | 'completed' = 'pending',
+  evaluationStatus: 'pending' | 'completed' = 'completed',
 ) => ({ folderId, categoryId, evaluationStatus, ownerUserId: 'someone-else' });
+const admin: GrantRequester = { userId: 'admin', userType: 'ADMIN' };
+const asUser = (userId: string): GrantRequester => ({
+  userId,
+  userType: 'USER',
+  permissions: [GO_PERMISSIONS.CATEGORY_ACCESS_MANAGE],
+});
 
 describe('FolderAccessService', () => {
   it('limits a folder grant to its category, through inherited subfolders', async () => {
@@ -158,35 +184,36 @@ describe('FolderAccessService', () => {
     await expect(access.projectLevel(project(folder, null), userId)).resolves.toBe('viewer');
   });
 
-  it('lets an original grant reach evaluated projects only, in every folder', async () => {
+  it('lists evaluated projects for read_all, bundles and work grants only', async () => {
     const userId = user();
     const folder = await insertFolder();
     const category = await insertCategory();
-    await grant(userId, null, category, 'original');
+    const evaluated = project(folder, category);
 
+    // No grant, no read_all: not even watermarked.
+    await expect(access.canViewProject(evaluated, userId, 'USER', undefined, [])).resolves.toBe(
+      false,
+    );
     await expect(
-      access.canSeeOriginals(project(folder, category, 'completed'), userId),
+      access.canViewProject(evaluated, userId, 'USER', undefined, [
+        GO_PERMISSIONS.PROJECT_READ_ALL,
+      ]),
     ).resolves.toBe(true);
     await expect(
-      access.canSeeOriginals(project(folder, category, 'pending'), userId),
+      access.canViewProject({ ...evaluated, ownerUserId: userId }, userId, 'USER', undefined, []),
+    ).resolves.toBe(true);
+
+    await originals.create(
+      { principalId: userId, folderIds: [folder], categoryIds: [category] },
+      admin,
+    );
+    await expect(access.canViewProject(evaluated, userId, 'USER', undefined, [])).resolves.toBe(
+      true,
+    );
+    // Bundles only reach evaluated projects.
+    await expect(
+      access.canViewProject(project(folder, category, 'pending'), userId, 'USER', undefined, []),
     ).resolves.toBe(false);
-    await expect(
-      access.canAccessProject(project(folder, category, 'completed'), userId, 'viewer'),
-    ).resolves.toBe(false);
-  });
-
-  it('opens evaluated projects to everyone and the others to viewer grants', async () => {
-    const userId = user();
-    const folder = await insertFolder();
-    const category = await insertCategory();
-
-    await expect(
-      access.canViewProject(project(folder, category, 'completed'), userId),
-    ).resolves.toBe(true);
-    await expect(access.canViewProject(project(folder, category), userId)).resolves.toBe(false);
-    await expect(
-      access.canViewProject({ ...project(folder, category), ownerUserId: userId }, userId),
-    ).resolves.toBe(true);
   });
 
   it('describes the folders reached, telling category-limited ones apart', async () => {
@@ -203,6 +230,140 @@ describe('FolderAccessService', () => {
     expect(levels.get(limited)).toEqual({ level: null, projectLevel: 'editor' });
     expect((await access.accessibleFolderIds(userId)).sort()).toEqual([full, limited].sort());
     expect(await access.managedFolderIds(userId)).toEqual([full]);
+  });
+});
+
+describe('OriginalAccessService', () => {
+  it('lets a team lead hand on part of their reach, and nothing beyond it', async () => {
+    const lan = user();
+    const minh = user();
+    const hanoi = await insertFolder();
+    const hoanKiem = await insertFolder(hanoi);
+    const hue = await insertFolder();
+    const amThuc = await insertCategory();
+    const bienDao = await insertCategory();
+    // The footage manager (an admin here) gives Lan Ẩm thực in Hà Nội and Huế.
+    await originals.create(
+      { principalId: lan, folderIds: [hanoi, hue], categoryIds: [amThuc] },
+      admin,
+    );
+
+    await originals.create(
+      { principalId: minh, folderIds: [hanoi], categoryIds: [amThuc] },
+      asUser(lan),
+    );
+    await expect(access.canSeeOriginals(project(hoanKiem, amThuc), minh)).resolves.toBe(true);
+    await expect(access.canSeeOriginals(project(hue, amThuc), minh)).resolves.toBe(false);
+
+    const preview = await originals.preview(
+      { folderIds: [hanoi], categoryIds: [amThuc, bienDao] },
+      asUser(lan),
+    );
+    expect(preview.invalidCount).toBe(1);
+    expect(preview.invalidPairs[0]).toMatchObject({
+      folder: { id: hanoi },
+      category: { id: bienDao },
+    });
+    await expect(
+      originals.create(
+        { principalId: minh, folderIds: [hanoi], categoryIds: [bienDao] },
+        asUser(lan),
+      ),
+    ).rejects.toThrow('out of your reach');
+  });
+
+  it('adds bundles from several granters up without mixing them', async () => {
+    const minh = user();
+    const hanoi = await insertFolder();
+    const hue = await insertFolder();
+    const amThuc = await insertCategory();
+    const vanHoa = await insertCategory();
+    await originals.create({ principalId: minh, folderIds: [hanoi], categoryIds: [amThuc] }, admin);
+    await originals.create({ principalId: minh, folderIds: [hue], categoryIds: [vanHoa] }, admin);
+
+    await expect(access.canSeeOriginals(project(hanoi, amThuc), minh)).resolves.toBe(true);
+    await expect(access.canSeeOriginals(project(hue, vanHoa), minh)).resolves.toBe(true);
+    await expect(access.canSeeOriginals(project(hanoi, vanHoa), minh)).resolves.toBe(false);
+    await expect(access.canSeeOriginals(project(hue, amThuc), minh)).resolves.toBe(false);
+  });
+
+  it('keeps a bundle when its granter loses their reach', async () => {
+    const lan = user();
+    const minh = user();
+    const folder = await insertFolder();
+    const category = await insertCategory();
+    const lansBundle = await originals.create(
+      { principalId: lan, folderIds: [folder], categoryIds: [category] },
+      admin,
+    );
+    await originals.create(
+      { principalId: minh, folderIds: [folder], categoryIds: [category] },
+      asUser(lan),
+    );
+
+    await originals.remove(lansBundle.id, admin);
+
+    await expect(access.canSeeOriginals(project(folder, category), minh)).resolves.toBe(true);
+    await expect(access.canSeeOriginals(project(folder, category), lan)).resolves.toBe(false);
+  });
+
+  it('lets only its granter or an admin change a bundle', async () => {
+    const lan = user();
+    const hung = user();
+    const folder = await insertFolder();
+    const category = await insertCategory();
+    for (const lead of [lan, hung]) {
+      await originals.create(
+        { principalId: lead, folderIds: [folder], categoryIds: [category] },
+        admin,
+      );
+    }
+    const minhs = await originals.create(
+      { principalId: user(), folderIds: [folder], categoryIds: [category] },
+      asUser(lan),
+    );
+
+    await expect(originals.remove(minhs.id, asUser(hung))).rejects.toThrow(
+      'Only its granter or an admin can change this bundle',
+    );
+    const [seenByHung] = await originals.userBundles(minhs.principalId, asUser(hung));
+    expect(seenByHung.canEdit).toBe(false);
+    await originals.remove(minhs.id, asUser(lan));
+  });
+
+  it('needs both lists, keeps the top folders and covers subfolders made later', async () => {
+    const minh = user();
+    const hanoi = await insertFolder();
+    const hoanKiem = await insertFolder(hanoi);
+    const category = await insertCategory();
+
+    await expect(
+      originals.create({ principalId: minh, folderIds: [hanoi], categoryIds: [] }, admin),
+    ).rejects.toThrow('Pick at least one folder and one category');
+    const bundle = await originals.create(
+      { principalId: minh, folderIds: [hanoi, hoanKiem], categoryIds: [category] },
+      admin,
+    );
+    expect(bundle.folders.map((folder) => folder.id)).toEqual([hanoi]);
+
+    const tayHo = await insertFolder(hanoi);
+    await expect(access.canSeeOriginals(project(tayHo, category), minh)).resolves.toBe(true);
+  });
+
+  it('counts inherited work grants in the reach of a folder manager', async () => {
+    const manager = user();
+    const folder = await insertFolder();
+    const child = await insertFolder(folder);
+    const category = await insertCategory();
+    await grant(manager, folder, null, 'manager');
+
+    const reach = await originals.reach(asUser(manager));
+    expect(reach.folderIds?.sort()).toEqual([folder, child].sort());
+    expect(reach.categoryIds).toContain(category);
+    await originals.create(
+      { principalId: user(), folderIds: [child], categoryIds: [category] },
+      asUser(manager),
+    );
   });
 });
 
@@ -242,7 +403,7 @@ describe('AccessGrantsService', () => {
     expect(userGrants).toHaveLength(2);
   });
 
-  it('keeps manager grants on every category and every-folder grants at original', async () => {
+  it('keeps manager grants on every category', async () => {
     const managerId = user();
     const folder = await insertFolder();
     const category = await insertCategory();
@@ -254,34 +415,6 @@ describe('AccessGrantsService', () => {
         folderManager(managerId),
       ),
     ).rejects.toThrow('Manager access covers every category');
-    await expect(
-      grants.create(
-        { principalId: user(), folderId: null, categoryIds: [category], accessLevel: 'viewer' },
-        { userId: 'admin', userType: 'ADMIN' },
-      ),
-    ).rejects.toThrow('Only the original level can cover every folder');
-  });
-
-  it('leaves grants on every folder to category access managers', async () => {
-    const managerId = user();
-    const category = await insertCategory();
-    await grant(managerId, await insertFolder(), null, 'manager');
-    const dto = {
-      principalId: user(),
-      folderId: null,
-      categoryIds: [category],
-      accessLevel: 'original' as const,
-    };
-
-    await expect(grants.create(dto, folderManager(managerId))).rejects.toThrow(
-      'Grants on every folder need category access management',
-    );
-    const created = await grants.create(dto, {
-      userId: managerId,
-      userType: 'USER',
-      permissions: [GO_PERMISSIONS.CATEGORY_ACCESS_MANAGE],
-    });
-    expect(created[0]).toMatchObject({ folderId: null, categoryId: category });
   });
 
   it('does not let a folder manager drop their own manager access', async () => {

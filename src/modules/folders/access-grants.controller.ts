@@ -14,20 +14,20 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
-import { RequireAnyPermissions } from '../../common/auth/permissions.decorator';
+import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { AccessGrantsService, type GrantRequester } from './access-grants.service';
 import { AccessGrantUsersQueryDto } from './dto/access-grant-users-query.dto';
 import { CreateAccessGrantsDto } from './dto/create-access-grants.dto';
 import { UpdateAccessGrantDto } from './dto/update-access-grant.dto';
 
 /**
- * Grants on folders (folder managers) and on every folder (category access managers). Each route
- * only shows and changes the grants the requester manages.
+ * Work grants on folders, for their managers. Each route only shows and changes the grants the
+ * requester manages.
  */
 @ApiTags('access-grants')
 @ApiBearerAuth()
 @Controller('access-grants')
-@RequireAnyPermissions(GO_PERMISSIONS.FOLDER_MANAGE, GO_PERMISSIONS.CATEGORY_ACCESS_MANAGE)
+@RequirePermissions(GO_PERMISSIONS.FOLDER_MANAGE)
 export class AccessGrantsController {
   constructor(
     private readonly grantsService: AccessGrantsService,
@@ -60,8 +60,7 @@ export class AccessGrantsController {
 
   @Post()
   @ApiOperation({
-    summary:
-      'Cấp quyền cho một user trên thư mục (hoặc mọi thư mục) × từng danh mục (hoặc mọi danh mục)',
+    summary: 'Cấp quyền làm việc cho một user trên thư mục × từng danh mục (hoặc mọi danh mục)',
   })
   create(@Body() dto: CreateAccessGrantsDto, @Req() request: Request) {
     return this.grantsService.create(dto, this.requester(request));

@@ -23,6 +23,11 @@ import { FolderEntity } from './entities/folder.entity';
 import { GoogleDriveConnectionEntity } from './entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './entities/import-batch.entity';
 import { MediaRenderJobEntity } from './entities/media-render-job.entity';
+import {
+  OriginalAccessBundleCategoryEntity,
+  OriginalAccessBundleEntity,
+  OriginalAccessBundleFolderEntity,
+} from './entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './entities/outbox-event.entity';
 import { ProjectAuditLogEntity } from './entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './entities/project-evaluation-summary.entity';
@@ -81,6 +86,7 @@ import { AssetPreps2120000000000 } from './migrations/2120000000000-asset-preps'
 import { StudioUsage2130000000000 } from './migrations/2130000000000-studio-usage';
 import { AccessGrants2140000000000 } from './migrations/2140000000000-access-grants';
 import { UploadMetrics2150000000000 } from './migrations/2150000000000-upload-metrics';
+import { OriginalAccessBundles2160000000000 } from './migrations/2160000000000-original-access-bundles';
 
 loadEnv();
 
@@ -106,6 +112,9 @@ export const AppDataSource = new DataSource({
     FolderEntity,
     FolderClosureEntity,
     AccessGrantEntity,
+    OriginalAccessBundleEntity,
+    OriginalAccessBundleFolderEntity,
+    OriginalAccessBundleCategoryEntity,
     CategoryEntity,
     CountryEntity,
     ProvinceEntity,
@@ -181,6 +190,7 @@ export const AppDataSource = new DataSource({
     StudioUsage2130000000000,
     AccessGrants2140000000000,
     UploadMetrics2150000000000,
+    OriginalAccessBundles2160000000000,
   ],
   synchronize: false,
 });

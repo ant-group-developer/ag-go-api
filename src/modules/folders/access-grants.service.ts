@@ -23,7 +23,7 @@ import { accessLevelRank, FolderAccessService, maxAccessLevel } from './folder-a
 /** Grants listed per user in the overview; the rest are counted, and loaded on demand. */
 const GRANT_PREVIEW_LIMIT = 3;
 
-/** Who is asking: grants are managed per folder (folder managers) or for every folder. */
+/** Who is asking: work grants are managed per folder, by its managers. */
 export type GrantRequester = {
   userId: string;
   userType?: 'ADMIN' | 'USER';
@@ -31,7 +31,7 @@ export type GrantRequester = {
 };
 
 export type AccessGrantView = AccessGrantEntity & {
-  /** Null: every folder. */
+  /** Null only if the folder row is gone. */
   folder: {
     id: string;
     name: string;
@@ -69,9 +69,9 @@ export type AccessGrantUsersPage = {
 };
 
 /**
- * Managing `access_grants`. Grants on a folder are managed by its managers (with
- * `go.folder.manage`); grants on every folder (`original` on some categories) by holders of
- * `go.category.access_manage`. Admins manage everything.
+ * Managing the work grants (`access_grants`): those on a folder by its managers (with
+ * `go.folder.manage`), every one by admins. Originals are granted in bundles, see
+ * `OriginalAccessService`.
  */
 @Injectable()
 export class AccessGrantsService {
@@ -167,13 +167,13 @@ export class AccessGrantsService {
       order: { createdAt: 'ASC' },
     });
     const views = await this.view(
-      grants.filter((grant) => depthByFolder.get(grant.folderId!) === 0 || grant.inheritChildren),
+      grants.filter((grant) => depthByFolder.get(grant.folderId) === 0 || grant.inheritChildren),
     );
     return {
       direct: views.filter((grant) => grant.folderId === folderId),
       inherited: views
         .filter((grant) => grant.folderId !== folderId)
-        .sort((a, b) => depthByFolder.get(a.folderId!)! - depthByFolder.get(b.folderId!)!),
+        .sort((a, b) => depthByFolder.get(a.folderId)! - depthByFolder.get(b.folderId)!),
     };
   }
 
@@ -189,26 +189,17 @@ export class AccessGrantsService {
   }
 
   /**
-   * Grants one user a level on a folder (or every folder) for each category (or every category).
-   * A grant already on the same folder and category takes the new level.
+   * Grants one user a level on a folder for each category (or every category). A grant already
+   * on the same folder and category takes the new level.
    */
   async create(dto: CreateAccessGrantsDto, requester: GrantRequester): Promise<AccessGrantView[]> {
-    const folderId = dto.folderId ?? null;
+    const folderId = dto.folderId;
     const categoryIds = [...new Set(dto.categoryIds ?? [])];
-    if (!folderId && dto.accessLevel !== 'original') {
-      throw new BadRequestException('Only the original level can cover every folder');
-    }
-    if (!folderId && categoryIds.length === 0) {
-      throw new BadRequestException('Pick a folder, categories, or both');
-    }
     if (dto.accessLevel === 'manager' && categoryIds.length > 0) {
       throw new BadRequestException('Manager access covers every category');
     }
     await this.requireCanManage(folderId, requester);
-    if (
-      folderId &&
-      !(await this.folderRepository.exists({ where: { id: folderId, isActive: true } }))
-    ) {
+    if (!(await this.folderRepository.exists({ where: { id: folderId, isActive: true } }))) {
       throw new NotFoundException('Folder not found');
     }
     if (categoryIds.length > 0) {
@@ -264,9 +255,6 @@ export class AccessGrantsService {
   ): Promise<AccessGrantView> {
     const grant = await this.findManageable(id, requester);
     const accessLevel = dto.accessLevel ?? grant.accessLevel;
-    if (!grant.folderId && accessLevel !== 'original') {
-      throw new BadRequestException('Only the original level can cover every folder');
-    }
     if (accessLevel === 'manager' && grant.categoryId) {
       throw new BadRequestException('Manager access covers every category');
     }
@@ -307,37 +295,24 @@ export class AccessGrantsService {
     if (isAdminUserType(requester.userType)) {
       return this.grantRepository.find({ where });
     }
-    const permissions = requester.permissions ?? [];
-    const managedFolderIds = permissions.includes(GO_PERMISSIONS.FOLDER_MANAGE)
+    const managedFolderIds = (requester.permissions ?? []).includes(GO_PERMISSIONS.FOLDER_MANAGE)
       ? await this.accessService.managedFolderIds(requester.userId, requester.userType)
       : [];
-    const everyFolder = permissions.includes(GO_PERMISSIONS.CATEGORY_ACCESS_MANAGE);
-    if (managedFolderIds.length === 0 && !everyFolder) {
+    if (managedFolderIds.length === 0) {
       return [];
     }
-    const query = this.grantRepository
+    return this.grantRepository
       .createQueryBuilder('grant')
       .where(principalId ? 'grant.principal_id = :principalId' : 'TRUE', { principalId })
-      .andWhere(
-        `(${managedFolderIds.length ? 'grant.folder_id IN (:...managedFolderIds)' : 'FALSE'}
-          OR ${everyFolder ? 'grant.folder_id IS NULL' : 'FALSE'})`,
-        { managedFolderIds },
-      );
-    return query.getMany();
+      .andWhere('grant.folder_id IN (:...managedFolderIds)', { managedFolderIds })
+      .getMany();
   }
 
-  private async requireCanManage(folderId: string | null, requester: GrantRequester) {
+  private async requireCanManage(folderId: string, requester: GrantRequester) {
     if (isAdminUserType(requester.userType)) {
       return;
     }
-    const permissions = requester.permissions ?? [];
-    if (!folderId) {
-      if (!permissions.includes(GO_PERMISSIONS.CATEGORY_ACCESS_MANAGE)) {
-        throw new ForbiddenException('Grants on every folder need category access management');
-      }
-      return;
-    }
-    if (!permissions.includes(GO_PERMISSIONS.FOLDER_MANAGE)) {
+    if (!(requester.permissions ?? []).includes(GO_PERMISSIONS.FOLDER_MANAGE)) {
       throw new ForbiddenException('Folder grants need folder management');
     }
     await this.requireFolderManager(folderId, requester);
@@ -359,11 +334,11 @@ export class AccessGrantsService {
   /** A folder manager changing their own grants must not lose manager access to the folder. */
   private async ensureStillManager(
     manager: EntityManager,
-    folderId: string | null,
+    folderId: string,
     principalId: string,
     requester: GrantRequester,
   ): Promise<void> {
-    if (!folderId || principalId !== requester.userId || isAdminUserType(requester.userType)) {
+    if (principalId !== requester.userId || isAdminUserType(requester.userType)) {
       return;
     }
     const stillManager = await this.accessService.canAccess(
@@ -383,7 +358,7 @@ export class AccessGrantsService {
     if (grants.length === 0) {
       return [];
     }
-    const folderIds = [...new Set(grants.flatMap((grant) => grant.folderId ?? []))];
+    const folderIds = [...new Set(grants.map((grant) => grant.folderId))];
     const categoryIds = [...new Set(grants.flatMap((grant) => grant.categoryId ?? []))];
     const [folders, categories] = await Promise.all([
       folderIds.length
@@ -402,7 +377,7 @@ export class AccessGrantsService {
     const folderById = new Map(folders.map((folder) => [folder.id, folder]));
     const categoryById = new Map(categories.map((category) => [category.id, category]));
     const rows: AccessGrantView[] = grants.map((grant) => {
-      const folder = grant.folderId ? folderById.get(grant.folderId) : undefined;
+      const folder = folderById.get(grant.folderId);
       const category = grant.categoryId ? categoryById.get(grant.categoryId) : undefined;
       return {
         ...grant,
@@ -430,7 +405,7 @@ export class AccessGrantsService {
   }
 }
 
-/** Every folder first, then by folder path and category name. */
+/** By folder path, then category name (every category first). */
 function compareGrants(a: AccessGrantView, b: AccessGrantView): number {
   const folderA = a.folder?.pathText ?? '';
   const folderB = b.folder?.pathText ?? '';

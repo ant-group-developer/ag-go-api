@@ -31,6 +31,11 @@ import { FolderEntity } from './database/entities/folder.entity';
 import { GoogleDriveConnectionEntity } from './database/entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from './database/entities/media-render-job.entity';
+import {
+  OriginalAccessBundleCategoryEntity,
+  OriginalAccessBundleEntity,
+  OriginalAccessBundleFolderEntity,
+} from './database/entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './database/entities/outbox-event.entity';
 import { ProjectAuditLogEntity } from './database/entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
@@ -90,6 +95,9 @@ import { WorkersModule } from './modules/workers/workers.module';
           FolderEntity,
           FolderClosureEntity,
           AccessGrantEntity,
+          OriginalAccessBundleEntity,
+          OriginalAccessBundleFolderEntity,
+          OriginalAccessBundleCategoryEntity,
           CategoryEntity,
           CountryEntity,
           ProvinceEntity,

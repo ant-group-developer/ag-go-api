@@ -44,7 +44,8 @@ VALUES
   ('9a000016-dbef-11f0-ab89-18c04dc47bd5', '[GO] Footage Search', 'go.footage.search', 'Search and browse footage segments', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000017-dbef-11f0-ab89-18c04dc47bd5', '[GO] Footage Produce', 'go.footage.produce', 'Resolve footage segments for production rendering', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000018-dbef-11f0-ab89-18c04dc47bd5', '[GO] Folder Create Root', 'go.folder.create_root', 'Create root folders and move folders to the root', @app_id, 1, NOW(), NOW(), NULL, NULL),
-  ('9a000019-dbef-11f0-ab89-18c04dc47bd5', '[GO] Category Access Manage', 'go.category.access_manage', 'Grant users access to projects by category (Projects menu)', @app_id, 1, NOW(), NOW(), NULL, NULL)
+  ('9a000019-dbef-11f0-ab89-18c04dc47bd5', '[GO] Category Access Manage', 'go.category.access_manage', 'Open the Permissions menu and grant originals by folder and category, within one''s own reach', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a00001a-dbef-11f0-ab89-18c04dc47bd5', '[GO] Project Read All', 'go.project.read_all', 'See every evaluated project on Projects (watermarked unless granted the originals)', @app_id, 1, NOW(), NOW(), NULL, NULL)
 ON DUPLICATE KEY UPDATE
   name = VALUES(name),
   description = VALUES(description),
@@ -77,6 +78,7 @@ SELECT UUID(), r.id, p.id, NOW(), NOW(), NULL, NULL
 FROM (
   -- AG Go Admin: toàn quyền
   SELECT '[GO] Admin' AS role_name, 'go.project.read' AS perm_code
+  UNION ALL SELECT '[GO] Admin', 'go.project.read_all'
   UNION ALL SELECT '[GO] Admin', 'go.project.edit'
   UNION ALL SELECT '[GO] Admin', 'go.project.evaluate'
   UNION ALL SELECT '[GO] Admin', 'go.project.download_original'
@@ -104,6 +106,7 @@ FROM (
 
   -- AG Go Manager: tất cả trừ settings
   UNION ALL SELECT '[GO] Manager', 'go.project.read'
+  UNION ALL SELECT '[GO] Manager', 'go.project.read_all'
   UNION ALL SELECT '[GO] Manager', 'go.project.edit'
   UNION ALL SELECT '[GO] Manager', 'go.project.evaluate'
   UNION ALL SELECT '[GO] Manager', 'go.project.download_original'

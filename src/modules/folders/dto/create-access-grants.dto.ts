@@ -17,14 +17,9 @@ export class CreateAccessGrantsDto {
   @MaxLength(128)
   principalId!: string;
 
-  @ApiPropertyOptional({
-    format: 'uuid',
-    nullable: true,
-    description: 'Thư mục; bỏ trống là mọi thư mục (chỉ cho cấp original)',
-  })
-  @IsOptional()
+  @ApiProperty({ format: 'uuid' })
   @IsUUID()
-  folderId?: string | null;
+  folderId!: string;
 
   @ApiPropertyOptional({
     type: [String],
