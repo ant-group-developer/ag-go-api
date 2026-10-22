@@ -455,8 +455,9 @@ export class RenderService {
       query.leftJoin(ProjectEntity, 'project', 'project.id = batch.project_id').where(
         `EXISTS (
             SELECT 1 FROM folder_closure c
-            JOIN folder_access_grants g ON g.folder_id = c.ancestor_id
+            JOIN access_grants g ON g.folder_id = c.ancestor_id
             WHERE (c.descendant_id = batch.folder_id OR c.descendant_id = project.folder_id)
+              AND (g.category_id IS NULL OR g.category_id = project.category_id)
               AND g.principal_type = 'user'
               AND g.principal_id = :userId
               AND (c.depth = 0 OR g.inherit_children = true)
