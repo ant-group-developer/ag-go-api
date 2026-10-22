@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { Brackets, DataSource, In, Repository, type SelectQueryBuilder } from 'typeorm';
+import { DataSource, In, Repository, type SelectQueryBuilder } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService, type ActorUser } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
@@ -22,8 +22,11 @@ import { TagEntity } from '../../database/entities/tag.entity';
 import { diffAuditSnapshots, type AuditValue } from '../audit/audit-changes';
 import { AuditService } from '../audit/audit.service';
 import {
-  CATEGORY_GRANT_PROJECT_STATUSES,
+  EVALUATED_PROJECT_STATUSES,
   FolderAccessService,
+  grantReachesProjectSql,
+  originalsReachProjectSql,
+  type AccessLevel,
 } from '../folders/folder-access.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ListProjectsQueryDto, type ProjectListScope } from './dto/list-projects-query.dto';
@@ -220,6 +223,11 @@ export class ProjectsService {
       tagsByProjectId.set(tag.projectId, projectTags);
     }
 
+    const withOriginals = await this.folderAccessService.projectIdsWithOriginals(
+      projectIds,
+      userId,
+      userType,
+    );
     const items = projects.map((project) => {
       const country = project.countryId ? countryById.get(project.countryId) : undefined;
       const province = project.provinceId ? provinceById.get(project.provinceId) : undefined;
@@ -237,6 +245,7 @@ export class ProjectsService {
         thumbnailSource: thumbnails.get(project.id)?.source ?? null,
         tags: (tagsByProjectId.get(project.id) ?? []).map((tag) => tag.name),
         tagIds: (tagsByProjectId.get(project.id) ?? []).map((tag) => tag.id),
+        canSeeOriginals: withOriginals.has(project.id),
       });
     });
 
@@ -293,40 +302,30 @@ export class ProjectsService {
         return query.where('project.ownerUserId = :currentUserId', { currentUserId: userId });
       case 'evaluated': {
         query.where('project.evaluationStatus IN (:...scopeStatuses)', {
-          scopeStatuses: CATEGORY_GRANT_PROJECT_STATUSES,
+          scopeStatuses: EVALUATED_PROJECT_STATUSES,
         });
-        if (isAdmin) {
+        // Every one with `go.project.read_all` (watermarked unless the originals are open);
+        // otherwise those of the user's bundles, work grants and own projects.
+        if (this.folderAccessService.canReadAllProjects(userType)) {
           return query;
         }
-        // Category grants reach every folder; folder grants keep their projects once evaluated,
-        // even in a category nobody granted yet (one a collaborator just created).
-        const [categoryIds, folderIds] = await Promise.all([
-          this.folderAccessService.grantedCategoryIds(userId),
-          this.folderAccessService.accessibleFolderIds(userId, userType),
-        ]);
-        if (categoryIds.length === 0 && folderIds.length === 0) {
-          return null;
-        }
         return query.andWhere(
-          new Brackets((access) => {
-            if (categoryIds.length) {
-              access.orWhere('project.categoryId IN (:...grantedCategoryIds)', {
-                grantedCategoryIds: categoryIds,
-              });
-            }
-            if (folderIds.length) {
-              access.orWhere('project.folderId IN (:...accessibleFolderIds)', {
-                accessibleFolderIds: folderIds,
-              });
-            }
-          }),
+          `(project.owner_user_id = :evaluatedUserId OR ${originalsReachProjectSql(
+            {
+              folderId: 'project.folder_id',
+              categoryId: 'project.category_id',
+              evaluationStatus: 'project.evaluation_status',
+            },
+            ':evaluatedUserId',
+          )})`,
+          { evaluatedUserId: userId },
         );
       }
       case 'evaluation':
         query.where('project.evaluationStatus IN (:...scopeStatuses)', {
           scopeStatuses: EVALUATION_SCOPE_STATUSES,
         });
-        return isAdmin ? query : this.withinAccessibleFolders(query, userId, userType);
+        return isAdmin ? query : this.withinGrants(query, userId);
       default:
         if (isAdmin) {
           return query;
@@ -336,22 +335,35 @@ export class ProjectsService {
           "(project.evaluationStatus <> 'draft' OR project.ownerUserId = :currentUserId)",
           { currentUserId: userId },
         );
-        return this.withinAccessibleFolders(query, userId, userType);
+        return this.withinGrants(query, userId);
     }
   }
 
-  private async withinAccessibleFolders(
+  /** Keeps the projects a `viewer` grant reaches (its folder, and category when limited). */
+  private async withinGrants(
     query: SelectQueryBuilder<ProjectEntity>,
     userId: string,
-    userType?: 'ADMIN' | 'USER',
   ): Promise<SelectQueryBuilder<ProjectEntity> | null> {
-    const folderIds = await this.folderAccessService.accessibleFolderIds(userId, userType);
+    const folderIds = await this.folderAccessService.accessibleFolderIds(userId);
     if (folderIds.length === 0) {
       return null;
     }
-    return query.andWhere('project.folderId IN (:...accessibleFolderIds)', {
-      accessibleFolderIds: folderIds,
-    });
+    return query
+      .andWhere('project.folderId IN (:...accessibleFolderIds)', {
+        accessibleFolderIds: folderIds,
+      })
+      .andWhere(
+        grantReachesProjectSql(
+          {
+            folderId: 'project.folder_id',
+            categoryId: 'project.category_id',
+            evaluationStatus: 'project.evaluation_status',
+          },
+          ':grantUserId',
+          'viewer',
+        ),
+        { grantUserId: userId },
+      );
   }
 
   async findOne(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
@@ -362,6 +374,9 @@ export class ProjectsService {
     if (!(await this.folderAccessService.canViewProject(project, userId, userType))) {
       throw new ForbiddenException('Insufficient folder permission');
     }
+    const myAccessLevel: AccessLevel | null = isAdminUserType(userType)
+      ? 'manager'
+      : await this.folderAccessService.projectLevel(project, userId);
     const [folder, country, province, category, tags, renderedBytes] = await Promise.all([
       this.folderRepository.findOne({ where: { id: project.folderId } }),
       project.countryId
@@ -398,6 +413,14 @@ export class ProjectsService {
           thumbnailSource: thumbnail?.source ?? null,
           tagIds: tags.map((tag) => tag.id),
           tags: tags.map((tag) => tag.name),
+          myAccessLevel,
+          canSeeOriginals: await this.folderAccessService.canSeeOriginals(
+            project,
+            userId,
+            userType,
+          ),
+          // Same rule as its audit log (AuditService.listProject).
+          canViewHistory: project.ownerUserId === userId || myAccessLevel !== null,
         }) as unknown as Record<string, unknown>,
       ],
       [{ id: 'ownerUserId', target: 'ownerUser' }],
@@ -406,7 +429,11 @@ export class ProjectsService {
   }
 
   async create(dto: CreateProjectDto, userId: string, userType?: 'ADMIN' | 'USER') {
-    await this.requireFolderAccess(dto.folderId, userId, 'editor', userType);
+    await this.requireEditor(
+      { folderId: dto.folderId, categoryId: dto.categoryId, evaluationStatus: 'draft' },
+      userId,
+      userType,
+    );
     await this.validateCatalogs(dto.countryId, dto.provinceId, dto.categoryId);
     const requestedTagIds = [...new Set(dto.tagIds ?? [])];
     if (requestedTagIds.length > 0) {
@@ -475,11 +502,8 @@ export class ProjectsService {
 
   async update(id: string, dto: UpdateProjectDto, userId: string, userType?: 'ADMIN' | 'USER') {
     const project = await this.findOne(id, userId, userType);
-    await this.requireFolderAccess(project.folderId, userId, 'editor', userType);
+    await this.requireEditor(project, userId, userType);
     const folderId = dto.folderId ?? project.folderId;
-    if (folderId !== project.folderId) {
-      await this.requireFolderAccess(folderId, userId, 'editor', userType);
-    }
 
     const countryChanged = dto.countryId !== undefined && dto.countryId !== project.countryId;
     const countryId = dto.countryId === undefined ? project.countryId : dto.countryId;
@@ -491,6 +515,14 @@ export class ProjectsService {
       throw new BadRequestException('Category is required');
     }
     await this.validateCatalogs(countryId ?? undefined, provinceId ?? undefined, categoryId);
+    // Moving it or changing its category must keep it within the editor's grants.
+    if (folderId !== project.folderId || categoryId !== project.categoryId) {
+      await this.requireEditor(
+        { folderId, categoryId, evaluationStatus: project.evaluationStatus },
+        userId,
+        userType,
+      );
+    }
 
     const updatePayload = {
       folderId,
@@ -534,7 +566,7 @@ export class ProjectsService {
 
   async remove(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
     const project = await this.findOne(id, userId, userType);
-    await this.requireFolderAccess(project.folderId, userId, 'editor', userType);
+    await this.requireEditor(project, userId, userType);
     const storagePrefix = `projects/${id}/`;
     await this.dataSource.transaction(async (manager) => {
       // Planned before the delete, while this project's media rows still exist.
@@ -705,14 +737,13 @@ export class ProjectsService {
     return tagIds;
   }
 
-  private async requireFolderAccess(
-    folderId: string,
+  /** An editor grant reaching the project's folder and category. */
+  private async requireEditor(
+    project: Pick<ProjectEntity, 'folderId' | 'categoryId' | 'evaluationStatus'>,
     userId: string,
-    level: 'editor',
     userType?: 'ADMIN' | 'USER',
   ) {
-    const allowed = await this.folderAccessService.canAccess(folderId, userId, level, userType);
-    if (!allowed) {
+    if (!(await this.folderAccessService.canAccessProject(project, userId, 'editor', userType))) {
       throw new ForbiddenException('Insufficient folder permission');
     }
   }

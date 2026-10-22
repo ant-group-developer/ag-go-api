@@ -40,7 +40,7 @@ describe('MediaService.update', () => {
       {} as never,
       {} as never,
       {} as never,
-      { canAccess } as unknown as FolderAccessService,
+      { canAccessProject: canAccess } as unknown as FolderAccessService,
       {} as never,
       { record: jest.fn().mockResolvedValue(undefined) } as unknown as AuditService,
       {} as never,
@@ -55,7 +55,13 @@ describe('MediaService.update', () => {
     await service.update('media', { caption: 'New caption' }, 'alice', ['go.project.edit'], 'USER');
 
     expect(mediaQuery.setLock).toHaveBeenCalledWith('pessimistic_write', undefined, ['media']);
-    expect(canAccess).toHaveBeenCalledWith('folder', 'alice', 'editor', 'USER', manager);
+    expect(canAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ folderId: 'folder' }),
+      'alice',
+      'editor',
+      'USER',
+      manager,
+    );
     expect(manager.save).toHaveBeenCalled();
   });
 
@@ -65,7 +71,13 @@ describe('MediaService.update', () => {
     await expect(
       service.update('media', { caption: 'New caption' }, 'alice', ['go.project.edit'], 'USER'),
     ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(canAccess).toHaveBeenCalledWith('folder', 'alice', 'editor', 'USER', manager);
+    expect(canAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ folderId: 'folder' }),
+      'alice',
+      'editor',
+      'USER',
+      manager,
+    );
     expect(manager.save).not.toHaveBeenCalled();
   });
 });

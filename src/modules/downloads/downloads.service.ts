@@ -95,7 +95,7 @@ export class DownloadsService {
     }
 
     try {
-      await this.assertAccess(media, userId, userType);
+      await this.assertAccess(media, dto.downloadType, userId, userType);
     } catch (error) {
       await this.recordLog({
         userId,
@@ -305,8 +305,13 @@ export class DownloadsService {
     return this.mediaRepository.findBy({ projectId: dto.projectId });
   }
 
+  /**
+   * Watermarked files: every project the user can view (evaluated ones are open to everyone).
+   * Originals: projects whose originals they may see (owner or an `original` grant).
+   */
   private async assertAccess(
     media: ProjectMediaEntity[],
+    downloadType: CreateDownloadDto['downloadType'],
     userId: string,
     userType?: 'ADMIN' | 'USER',
   ): Promise<void> {
@@ -316,7 +321,12 @@ export class DownloadsService {
     const projectsById = new Map(projects.map((project) => [project.id, project]));
     for (const item of media) {
       const project = projectsById.get(item.projectId);
-      if (!project || !(await this.folderAccess.canViewProject(project, userId, userType))) {
+      const allowed =
+        project &&
+        (downloadType === 'original'
+          ? await this.folderAccess.canSeeOriginals(project, userId, userType)
+          : await this.folderAccess.canViewProject(project, userId, userType));
+      if (!allowed) {
         throw new ForbiddenException('Insufficient download folder permission');
       }
     }

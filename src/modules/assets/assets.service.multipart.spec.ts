@@ -49,7 +49,7 @@ function createService() {
   const projectRepository = {
     findOne: jest.fn().mockResolvedValue({ id: 'project-1', folderId: 'folder-1' }),
   };
-  const folderAccess = { canAccess: jest.fn().mockResolvedValue(true) };
+  const folderAccess = { canAccessProject: jest.fn().mockResolvedValue(true) };
   const config = {
     getOrThrow: (key: string) => CONFIG[key],
   } as unknown as ConfigService;

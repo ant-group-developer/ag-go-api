@@ -95,6 +95,10 @@ export class MediaService {
   ) {
     const project = await this.getProject(projectId);
     await this.requireProjectAccess(project, userId, 'viewer', userType);
+    // The role allows un-watermarked previews; the grants decide on which projects.
+    const unwatermarked =
+      viewerMaySeeUnwatermarked &&
+      (await this.folderAccessService.canSeeOriginals(project, userId, userType));
 
     const normalizedLimit = Math.min(Math.max(limit, 1), 100);
     const query = this.projectMediaRepository
@@ -127,8 +131,7 @@ export class MediaService {
     );
     const servable = variants.filter(
       (variant) =>
-        variant.status === 'ready' &&
-        isVariantServable(variant, activeProfile, viewerMaySeeUnwatermarked),
+        variant.status === 'ready' && isVariantServable(variant, activeProfile, unwatermarked),
     );
     const ttl = this.config.getOrThrow<number>('R2_PRESIGNED_URL_TTL_SECONDS');
     const enrichedItems = await this.actorEnrichment.enrich(
@@ -533,12 +536,12 @@ export class MediaService {
     userType?: 'ADMIN' | 'USER',
     manager?: import('typeorm').EntityManager,
   ): Promise<void> {
-    // Reading also follows the owner and category grants; changing needs the folder.
+    // Reading follows the owner and evaluated projects too; changing needs a grant.
     const allowed =
       minimum === 'viewer'
         ? await this.folderAccessService.canViewProject(project, userId, userType, manager)
-        : await this.folderAccessService.canAccess(
-            project.folderId,
+        : await this.folderAccessService.canAccessProject(
+            project,
             userId,
             minimum,
             userType,
@@ -559,9 +562,11 @@ export class MediaService {
     if (projects.length !== projectIds.length) {
       throw new NotFoundException('Project not found');
     }
-    // Access is granted per folder, so each folder only needs to be checked once.
-    const projectsByFolder = new Map(projects.map((project) => [project.folderId, project]));
-    for (const project of projectsByFolder.values()) {
+    // Access is granted per folder and category, so each pair only needs to be checked once.
+    const projectsByScope = new Map(
+      projects.map((project) => [`${project.folderId}:${project.categoryId}`, project]),
+    );
+    for (const project of projectsByScope.values()) {
       await this.requireProjectAccess(project, userId, 'editor', userType, manager);
     }
   }

@@ -10,6 +10,7 @@ import { PermissionsGuard } from './common/auth/permissions.guard';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from './config/env.validation';
+import { AccessGrantEntity } from './database/entities/access-grant.entity';
 import { AnalysisBatchEntity } from './database/entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './database/entities/analysis-farm-job.entity';
 import { AssetAnalysisEntity } from './database/entities/asset-analysis.entity';
@@ -20,18 +21,21 @@ import { AssetPrepEntity } from './database/entities/asset-prep.entity';
 import { AssetUploadSessionEntity } from './database/entities/asset-upload-session.entity';
 import { AssetVariantEntity } from './database/entities/asset-variant.entity';
 import { AssetEntity } from './database/entities/asset.entity';
-import { CategoryAccessGrantEntity } from './database/entities/category-access-grant.entity';
 import { CategoryEntity } from './database/entities/category.entity';
 import { CountryEntity } from './database/entities/country.entity';
 import { DownloadJobItemEntity } from './database/entities/download-job-item.entity';
 import { DownloadJobEntity } from './database/entities/download-job.entity';
 import { DownloadLogEntity } from './database/entities/download-log.entity';
-import { FolderAccessGrantEntity } from './database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from './database/entities/folder-closure.entity';
 import { FolderEntity } from './database/entities/folder.entity';
 import { GoogleDriveConnectionEntity } from './database/entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from './database/entities/media-render-job.entity';
+import {
+  OriginalAccessBundleCategoryEntity,
+  OriginalAccessBundleEntity,
+  OriginalAccessBundleFolderEntity,
+} from './database/entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './database/entities/outbox-event.entity';
 import { ProjectAuditLogEntity } from './database/entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
@@ -90,8 +94,10 @@ import { WorkersModule } from './modules/workers/workers.module';
         entities: [
           FolderEntity,
           FolderClosureEntity,
-          FolderAccessGrantEntity,
-          CategoryAccessGrantEntity,
+          AccessGrantEntity,
+          OriginalAccessBundleEntity,
+          OriginalAccessBundleFolderEntity,
+          OriginalAccessBundleCategoryEntity,
           CategoryEntity,
           CountryEntity,
           ProvinceEntity,

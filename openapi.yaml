@@ -56,8 +56,8 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a1
       summary:
-        Every active folder, to filter the "Projects" page (listed by category
-        grants)
+        Every active folder, to filter the "Projects" page (it lists every
+        evaluated project)
       tags: *a2
   /folders:
     post:
@@ -119,103 +119,9 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a1
       tags: *a2
-  /folders/{id}/access-grants:
+  /access-grants/users:
     get:
-      operationId: FoldersController_grants
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
-    put:
-      operationId: FoldersController_replaceGrants
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: array
-              items:
-                type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
-  /folders/{id}/access-grants/{principalId}:
-    put:
-      operationId: FoldersController_setGrant
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-        - name: principalId
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SetFolderGrantDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
-    delete:
-      operationId: FoldersController_removeGrant
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-        - name: principalId
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
-  /folder-access/users:
-    get:
-      operationId: FolderAccessController_users
+      operationId: AccessGrantsController_users
       parameters:
         - name: keyword
           required: false
@@ -230,7 +136,7 @@ paths:
             type: string
             enum:
               - user
-              - folderCount
+              - grantCount
               - highestLevel
               - updatedAt
         - name: sortOrder
@@ -265,11 +171,12 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: &a3
         - bearer: []
+      summary: Users with grants the requester manages
       tags: &a4
-        - folder-access
-  /folder-access/users/{userId}/grants:
+        - access-grants
+  /access-grants/users/{userId}:
     get:
-      operationId: FolderAccessController_userGrants
+      operationId: AccessGrantsController_userGrants
       parameters:
         - name: userId
           required: true
@@ -284,10 +191,112 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a3
+      summary: Grants of one user that the requester manages
       tags: *a4
-  /category-access/users:
+  /access-grants/folders/{folderId}:
     get:
-      operationId: CategoryAccessController_users
+      operationId: AccessGrantsController_folderGrants
+      parameters:
+        - name: folderId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      summary: Grants on a folder and those it inherits (folder managers)
+      tags: *a4
+  /access-grants/categories/{categoryId}:
+    get:
+      operationId: AccessGrantsController_categoryGrants
+      parameters:
+        - name: categoryId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      summary: Grants limited to one category that the requester manages
+      tags: *a4
+  /access-grants:
+    post:
+      operationId: AccessGrantsController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAccessGrantsDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      summary:
+        Cấp quyền làm việc cho một user trên thư mục × từng danh mục (hoặc mọi
+        danh mục)
+      tags: *a4
+  /access-grants/{id}:
+    patch:
+      operationId: AccessGrantsController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAccessGrantDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      tags: *a4
+    delete:
+      operationId: AccessGrantsController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      tags: *a4
+  /original-access/users:
+    get:
+      operationId: OriginalAccessController_users
       parameters:
         - name: keyword
           required: false
@@ -302,7 +311,8 @@ paths:
             type: string
             enum:
               - user
-              - categoryCount
+              - grantCount
+              - highestLevel
               - updatedAt
         - name: sortOrder
           required: false
@@ -336,12 +346,31 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: &a5
         - bearer: []
-      summary: Users with category grants (they decide the "Projects" page)
+      summary: "Users with bundles (admins: every one; others: those they granted)"
       tags: &a6
-        - category-access
-  /category-access/categories/{categoryId}/grants:
+        - original-access
+  /original-access/users/{userId}:
     get:
-      operationId: CategoryAccessController_categoryGrants
+      operationId: OriginalAccessController_userBundles
+      parameters:
+        - name: userId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a5
+      summary: Every bundle of one user; `canEdit` says which are the requester's
+      tags: *a6
+  /original-access/categories/{categoryId}:
+    get:
+      operationId: OriginalAccessController_categoryBundles
       parameters:
         - name: categoryId
           required: true
@@ -356,17 +385,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a5
-      summary: Users granted one category
+      summary: Bundles holding one category
       tags: *a6
-  /category-access/users/{userId}/grants:
+  /original-access/reach:
     get:
-      operationId: CategoryAccessController_userGrants
-      parameters:
-        - name: userId
-          required: true
-          in: path
-          schema:
-            type: string
+      operationId: OriginalAccessController_reach
+      parameters: []
       responses:
         "200":
           description: ""
@@ -375,11 +399,55 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a5
+      summary:
+        "Thư mục và danh mục người gọi được đưa vào gói (null: không giới hạn,
+        Admin)"
       tags: *a6
+  /original-access/preview:
     post:
-      operationId: CategoryAccessController_addGrants
+      operationId: OriginalAccessController_preview
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreviewOriginalAccessBundleDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a5
+      summary: Các cặp thư mục × danh mục nằm ngoài phần của người gọi
+      tags: *a6
+  /original-access/bundles:
+    post:
+      operationId: OriginalAccessController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveOriginalAccessBundleDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a5
+      summary: "Cấp một gói bản gốc: các thư mục × các danh mục"
+      tags: *a6
+  /original-access/bundles/{id}:
+    patch:
+      operationId: OriginalAccessController_update
       parameters:
-        - name: userId
+        - name: id
           required: true
           in: path
           schema:
@@ -389,9 +457,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AddCategoryGrantsDto"
+              $ref: "#/components/schemas/SaveOriginalAccessBundleDto"
       responses:
-        "201":
+        "200":
           description: ""
           content:
             application/json:
@@ -399,16 +467,10 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a5
       tags: *a6
-  /category-access/users/{userId}/grants/{categoryId}:
     delete:
-      operationId: CategoryAccessController_removeGrant
+      operationId: OriginalAccessController_remove
       parameters:
-        - name: userId
-          required: true
-          in: path
-          schema:
-            type: string
-        - name: categoryId
+        - name: id
           required: true
           in: path
           schema:
@@ -512,16 +574,7 @@ paths:
   /categories:
     get:
       operationId: CategoriesController_list
-      parameters:
-        - name: granted
-          required: false
-          in: query
-          description:
-            Only the categories of the "Projects" page of the current user (all
-            for admins), granted to them or of an evaluated project in their
-            folders.
-          schema:
-            type: boolean
+      parameters: []
       responses:
         "200":
           description: ""
@@ -994,6 +1047,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a17
+      tags: *a18
+  /projects/filter-scope:
+    get:
+      operationId: ProjectsController_filterScope
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a17
+      summary:
+        'Thư mục và danh mục bộ lọc menu "Dự án" được hiện (null: tất cả, khi
+        có go.project.read_all)'
       tags: *a18
   /projects/owners:
     get:
@@ -3691,12 +3760,23 @@ components:
         sortOrder:
           type: number
           minimum: 0
-    SetFolderGrantDto:
+    CreateAccessGrantsDto:
       type: object
       properties:
+        principalId:
+          type: string
+        folderId:
+          type: string
+          format: uuid
+        categoryIds:
+          description: Danh mục; bỏ trống là mọi danh mục. Mỗi danh mục thành một quyền.
+          type: array
+          items:
+            type: string
+            format: uuid
         accessLevel:
           type: string
-          enum:
+          enum: &a38
             - viewer
             - editor
             - manager
@@ -3704,16 +3784,53 @@ components:
           type: boolean
           default: true
       required:
+        - principalId
+        - folderId
         - accessLevel
-    AddCategoryGrantsDto:
+    UpdateAccessGrantDto:
       type: object
       properties:
+        accessLevel:
+          type: string
+          enum: *a38
+        inheritChildren:
+          type: boolean
+    PreviewOriginalAccessBundleDto:
+      type: object
+      properties:
+        folderIds:
+          type: array
+          items:
+            type: string
+            format: uuid
         categoryIds:
           type: array
           items:
             type: string
             format: uuid
       required:
+        - folderIds
+        - categoryIds
+    SaveOriginalAccessBundleDto:
+      type: object
+      properties:
+        principalId:
+          type: string
+          description: Người nhận; bắt buộc khi tạo, bỏ qua khi sửa
+        folderIds:
+          description: Ít nhất một thư mục
+          type: array
+          items:
+            type: string
+            format: uuid
+        categoryIds:
+          description: Ít nhất một danh mục
+          type: array
+          items:
+            type: string
+            format: uuid
+      required:
+        - folderIds
         - categoryIds
     CreateCategoryDto:
       type: object
@@ -4009,6 +4126,44 @@ components:
       required:
         - uploadSessionId
         - partNumbers
+    UploadClientMetricsDto:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+            - single
+            - multipart
+        transferMs:
+          type: number
+          description: Time spent sending the file content to storage, in ms
+        partUrlWaitMs:
+          type: number
+          description: Time spent waiting for part URLs from the API, in ms
+        partSize:
+          type: number
+        partCount:
+          type: number
+        parallelParts:
+          type: number
+        retries:
+          type: number
+          description: Failed part attempts that were retried
+        concurrentUploads:
+          type: number
+          description: Files uploading at the same time in the browser
+        networkType:
+          type: string
+          description: navigator.connection.effectiveType (Chromium only)
+        downlinkMbps:
+          type: number
+          description: navigator.connection.downlink in Mbps (Chromium only)
+        rttMs:
+          type: number
+          description: navigator.connection.rtt in ms (Chromium only)
+      required:
+        - mode
+        - transferMs
     CompleteUploadDto:
       type: object
       properties:
@@ -4018,6 +4173,8 @@ components:
         checksumSha256:
           type: string
           pattern: ^[a-fA-F0-9]{64}$
+        metrics:
+          $ref: "#/components/schemas/UploadClientMetricsDto"
       required:
         - uploadSessionId
     AbortUploadDto:
