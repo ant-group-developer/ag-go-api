@@ -83,7 +83,7 @@ import { StudioUsage2130000000000 } from './migrations/2130000000000-studio-usag
 import { FarmJobRetryAttempts2140000000000 } from './migrations/2140000000000-farm-job-retry-attempts';
 import { DataRetentionIndexes2150000000000 } from './migrations/2150000000000-data-retention-indexes';
 
-loadEnv();
+loadEnv({ quiet: true });
 
 const { error, value: validatedEnv } = envValidationSchema.validate(process.env, {
   abortEarly: false,
