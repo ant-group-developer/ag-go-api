@@ -6,6 +6,10 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * its asset or project is deleted later, and an unknown id must not reject the whole batch.
  *
  * Also indexes the download tables by asset and project for the usage counts.
+ *
+ * Those download indexes were built without CONCURRENTLY, which blocked writes on large live
+ * tables. New indexes on large tables must use CREATE INDEX CONCURRENTLY with `transaction =
+ * false` on the migration (see DataRetentionIndexes2150000000000).
  */
 export class StudioUsage2130000000000 implements MigrationInterface {
   name = 'StudioUsage2130000000000';

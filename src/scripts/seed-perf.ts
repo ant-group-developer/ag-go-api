@@ -753,7 +753,7 @@ async function seed(client: Client, opts: CliOptions) {
   );
   await bulkInsert(
     client,
-    'folder_access_grants',
+    'access_grants',
     [
       { name: 'id', type: 'uuid' },
       { name: 'folder_id', type: 'uuid' },
@@ -764,7 +764,7 @@ async function seed(client: Client, opts: CliOptions) {
       { name: 'granted_by', type: 'text' },
     ],
     grantRows,
-    'folder_access_grants',
+    'access_grants',
   );
   await bulkInsert(
     client,
@@ -828,7 +828,7 @@ async function main() {
     if (!opts.clean) await seed(client, opts);
     await client.query('COMMIT');
     await client.query(
-      'ANALYZE categories, tags, folders, folder_closure, folder_access_grants, projects, project_tags',
+      'ANALYZE categories, tags, folders, folder_closure, access_grants, projects, project_tags',
     );
     console.log(`Done in ${((Date.now() - started) / 1000).toFixed(1)}s`);
   } catch (error) {

@@ -9,11 +9,12 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
 import { MAX_CSV_FILE_SIZE_BYTES, type CsvUploadFile } from '../../common/csv/csv-import';
 import { CountriesService } from './countries.service';
+import { CountryDto } from './dto/country.dto';
 import { CreateCountryDto } from './dto/create-country.dto';
 
 @ApiTags('countries')
@@ -23,6 +24,7 @@ export class CountriesController {
   constructor(private readonly countriesService: CountriesService) {}
 
   @Get()
+  @ApiOkResponse({ type: CountryDto, isArray: true })
   list() {
     return this.countriesService.list();
   }

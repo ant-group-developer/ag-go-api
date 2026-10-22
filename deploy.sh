@@ -13,6 +13,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+IMAGE=ag-go-api
 WORKERS=(worker-media worker-io)
 HEALTH_TIMEOUT_SECONDS=${HEALTH_TIMEOUT_SECONDS:-60}
 
@@ -64,7 +65,23 @@ else
   echo 'None'
 fi
 
-log 'Building image'
+if [[ -z "${TAG:-}" ]]; then
+  TAG=$(git -c safe.directory="$PWD" rev-parse --short HEAD 2>/dev/null || true)
+  TAG=${TAG:-latest}
+fi
+export TAG
+
+# The image running now: kept for rollback and by the image cleanup below.
+previous_image=''
+for service in api "${WORKERS[@]}"; do
+  previous_container=$(docker compose ps -a -q "$service" 2>/dev/null | head -n 1 || true)
+  if [[ -n "$previous_container" ]]; then
+    previous_image=$(docker inspect -f '{{.Config.Image}}' "$previous_container" 2>/dev/null || true)
+    [[ -n "$previous_image" ]] && break
+  fi
+done
+
+log "Building image $IMAGE:$TAG"
 docker compose build api
 
 if [[ "${SKIP_MIGRATION:-0}" != 1 ]]; then
@@ -79,7 +96,7 @@ docker compose up -d --no-deps api
 log "Waiting for api to become healthy (up to ${HEALTH_TIMEOUT_SECONDS}s)"
 deadline=$((SECONDS + HEALTH_TIMEOUT_SECONDS))
 until docker compose exec -T api node -e "
-  fetch('http://127.0.0.1:' + process.env.PORT + '/' + process.env.API_PREFIX + '/health')
+  fetch('http://127.0.0.1:' + process.env.PORT + '/' + process.env.API_PREFIX + '/health/ready')
     .then((res) => process.exit(res.ok ? 0 : 1))
     .catch(() => process.exit(1));
 " >/dev/null 2>&1; do
@@ -94,6 +111,16 @@ echo 'api is healthy'
 
 log "Replacing ${WORKERS[*]} (old workers finish running jobs first, this can take a while)"
 docker compose up -d --no-deps --remove-orphans "${WORKERS[@]}"
+
+# Every deploy leaves an image per commit; keep this one and the previous one (rollback).
+log 'Removing older images'
+images=$(docker image ls "$IMAGE" --format '{{.Repository}}:{{.Tag}}' || true)
+for image in $images; do
+  if [[ "$image" != "$IMAGE:$TAG" && "$image" != "$previous_image" ]]; then
+    docker image rm "$image" >/dev/null 2>&1 && echo "Removed $image" || true
+  fi
+done
+docker image prune -f >/dev/null || true
 
 log 'Deploy finished'
 docker compose ps

@@ -1,6 +1,8 @@
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
+import { DataRetentionService } from '../infra/queue/data-retention.service';
 import { OutboxDispatcherService } from '../infra/queue/outbox-dispatcher.service';
 import { FarmResultPollerService } from '../modules/analysis/farm-result-poller.service';
 import { MediaQueueWorkerService } from '../modules/assets/media-queue-worker.service';
@@ -53,6 +55,8 @@ async function bootstrap(): Promise<void> {
     app.get(OutboxDispatcherService).start();
     // Start farm result poller only in outbox role; no-ops automatically if FARM_URL is unset.
     app.get(FarmResultPollerService).start();
+    // Run daily data retention cleanup (outbox, system logs, studio usage)
+    app.get(DataRetentionService).start();
     started.push('outbox');
   }
 
@@ -72,4 +76,8 @@ async function bootstrap(): Promise<void> {
   process.once('SIGTERM', () => void shutdown());
 }
 
-void bootstrap();
+bootstrap().catch((err: unknown) => {
+  const logger = new Logger('worker-bootstrap');
+  logger.error('Worker failed to start', err instanceof Error ? err.stack : String(err));
+  process.exit(1);
+});

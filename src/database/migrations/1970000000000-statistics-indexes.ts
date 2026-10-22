@@ -5,8 +5,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * lists the latest audit entries across every project. Without these indexes each of those reads
  * scans the whole table.
  *
- * Not CONCURRENTLY: migrations run in one transaction (deploy.sh). The builds block writes to
- * these tables only briefly, at the main host's deploy.
+ * Not CONCURRENTLY: these tables were small enough that a brief write lock at deploy was
+ * acceptable. New indexes on large live tables must use CREATE INDEX CONCURRENTLY with
+ * `transaction = false` (see DataRetentionIndexes2150000000000).
  */
 export class StatisticsIndexesMigration1970000000000 implements MigrationInterface {
   name = 'StatisticsIndexesMigration1970000000000';

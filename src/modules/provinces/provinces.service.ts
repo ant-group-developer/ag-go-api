@@ -52,15 +52,15 @@ export class ProvincesService {
     if (query.countryId) {
       builder.andWhere('province.country_id = :countryId', { countryId: query.countryId });
     }
-    const keyword = query.normalizedKeyword ?? query.search?.trim() ?? undefined;
+    const keyword = query.normalizedKeyword;
     if (keyword) {
-      // Accent-insensitive, so "ninh binh" finds "Ninh Bình".
-      const search = `%${keyword.toLowerCase()}%`;
+      // Accent-insensitive, so "ninh binh" finds "Ninh Bình". '\' escapes %/_ so they match literally.
+      const search = `%${keyword.toLowerCase().replace(/[\\%_]/g, '\\$&')}%`;
       builder.andWhere(
-        `(immutable_unaccent(LOWER(province.name)) LIKE immutable_unaccent(:search)
-          OR LOWER(COALESCE(province.code, '')) LIKE :search
-          OR immutable_unaccent(LOWER(country.name)) LIKE immutable_unaccent(:search)
-          OR LOWER(COALESCE(country.code, '')) LIKE :search)`,
+        `(immutable_unaccent(LOWER(province.name)) LIKE immutable_unaccent(:search) ESCAPE '\\'
+          OR LOWER(COALESCE(province.code, '')) LIKE :search ESCAPE '\\'
+          OR immutable_unaccent(LOWER(country.name)) LIKE immutable_unaccent(:search) ESCAPE '\\'
+          OR LOWER(COALESCE(country.code, '')) LIKE :search ESCAPE '\\')`,
         { search },
       );
     }

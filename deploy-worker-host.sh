@@ -14,7 +14,7 @@
 #   cp .env.example .env   # copy the main host's values (R2, Google, QUEUE_PREFIX...), but
 #                          # point DATABASE_URL and REDIS_URL at its private IP, not localhost
 # Every deploy, on the commit the main host runs:
-#   git pull --ff-only origin main && sudo bash ./deploy-worker-host.sh
+#   git fetch origin && git checkout --detach <commit> && sudo bash ./deploy-worker-host.sh
 # Run it inside tmux/screen: the old workers finish their running jobs first (up to
 # WORKER_STOP_GRACE_PERIOD), and the host has no workers if the script is cut off meanwhile.
 # On a Windows machine with Docker Desktop, use deploy-worker-host.ps1 (same steps).

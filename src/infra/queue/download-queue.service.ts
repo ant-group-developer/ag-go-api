@@ -2,7 +2,7 @@ import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
-import { DOWNLOAD_JOB, DOWNLOAD_QUEUE } from './queue.constants';
+import { DEFAULT_FAILED_JOB_RETENTION, DOWNLOAD_JOB, DOWNLOAD_QUEUE } from './queue.constants';
 
 export type DownloadQueueJobData = {
   jobId: string;
@@ -20,7 +20,7 @@ export class DownloadQueueService implements OnModuleDestroy {
       attempts: 3,
       backoff: { type: 'exponential', delay: 5_000 },
       removeOnComplete: 1000,
-      removeOnFail: false,
+      removeOnFail: DEFAULT_FAILED_JOB_RETENTION,
     });
   }
 

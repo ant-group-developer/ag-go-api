@@ -18,6 +18,7 @@ import { AssetsService } from '../assets/assets.service';
 import { CompleteUploadDto } from '../assets/dto/complete-upload.dto';
 import { CreateRenderBatchDto } from './dto/create-render-batch.dto';
 import { CreateWatermarkLogoUploadSessionDto } from './dto/create-watermark-logo-upload-session.dto';
+import { ListAutoJobsQueryDto, RenderJobPageQueryDto } from './dto/render-job-page-query.dto';
 import { RerenderWatermarkDto } from './dto/rerender-watermark.dto';
 import { UpdateRenderProfileDto } from './dto/update-render-profile.dto';
 import {
@@ -46,7 +47,7 @@ export class RenderController {
   @Patch('render-profiles/:id')
   @RequirePermissions(GO_PERMISSIONS.SETTINGS_MANAGE)
   updateProfile(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateRenderProfileDto,
     @Req() request: Request,
   ) {
@@ -73,7 +74,7 @@ export class RenderController {
   @Post('render-watermark/assets/:assetId/complete')
   @RequirePermissions(GO_PERMISSIONS.SETTINGS_MANAGE)
   completeWatermarkUpload(
-    @Param('assetId') assetId: string,
+    @Param('assetId', ParseUUIDPipe) assetId: string,
     @Body() dto: CompleteUploadDto,
     @Req() request: Request,
   ) {
@@ -84,7 +85,7 @@ export class RenderController {
   @Post('render-watermark/assets/:assetId/abort')
   @RequirePermissions(GO_PERMISSIONS.SETTINGS_MANAGE)
   abortWatermarkUpload(
-    @Param('assetId') assetId: string,
+    @Param('assetId', ParseUUIDPipe) assetId: string,
     @Body() dto: CompleteUploadDto,
     @Req() request: Request,
   ) {
@@ -106,24 +107,37 @@ export class RenderController {
 
   @Get('render-batches')
   @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
-  listAllBatches(@Req() request: Request) {
+  listAllBatches(@Query() query: RenderJobPageQueryDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
-    return this.renderService.listAllBatches(context.userId, context.userType);
+    return this.renderService.listAllBatches(
+      context.userId,
+      context.userType,
+      parseJobPageQuery(query),
+    );
   }
 
   @Get('projects/:projectId/render-batches')
   @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
-  listBatches(@Param('projectId') projectId: string, @Req() request: Request) {
+  listBatches(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Query() query: RenderJobPageQueryDto,
+    @Req() request: Request,
+  ) {
     const context = this.authContext.getContext(request);
-    return this.renderService.listBatches(projectId, context.userId, context.userType);
+    return this.renderService.listBatches(
+      projectId,
+      context.userId,
+      context.userType,
+      parseJobPageQuery(query),
+    );
   }
 
   /** One page of the batch's jobs; takes the same paging query as `render-jobs/auto`. */
   @Get('render-batches/:id/jobs')
   @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
   listJobs(
-    @Param('id') id: string,
-    @Query() query: Record<string, string | undefined>,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: RenderJobPageQueryDto,
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
@@ -138,7 +152,7 @@ export class RenderController {
   /** Jobs queued automatically after an upload or a Drive import (not part of a batch). */
   @Get('render-jobs/auto')
   @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
-  listAutoJobs(@Query() query: Record<string, string | undefined>, @Req() request: Request) {
+  listAutoJobs(@Query() query: ListAutoJobsQueryDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.renderService.listAutoJobs(context.userId, context.userType, {
       ...(query.projectId ? { projectId: query.projectId } : {}),
@@ -148,7 +162,7 @@ export class RenderController {
 
   @Post('render-jobs/:id/retry')
   @RequirePermissions(GO_PERMISSIONS.RENDER_BATCH)
-  retryJob(@Param('id') id: string, @Req() request: Request) {
+  retryJob(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.renderService.retryJob(id, context.userId, context.userType);
   }
@@ -162,14 +176,14 @@ export class RenderController {
 
   @Get('render-batches/:id')
   @RequirePermissions(GO_PERMISSIONS.RENDER_READ)
-  getBatch(@Param('id') id: string, @Req() request: Request) {
+  getBatch(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.renderService.getBatch(id, context.userId, context.userType);
   }
 
   @Post('render-batches/:id/cancel')
   @RequirePermissions(GO_PERMISSIONS.RENDER_BATCH)
-  cancelBatch(@Param('id') id: string, @Req() request: Request) {
+  cancelBatch(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.renderService.cancelBatch(id, context.userId, context.userType);
   }
@@ -177,31 +191,43 @@ export class RenderController {
   /** Queues every failed job of the batch again. */
   @Post('render-batches/:id/retry-failed')
   @RequirePermissions(GO_PERMISSIONS.RENDER_BATCH)
-  retryFailedJobs(@Param('id') id: string, @Req() request: Request) {
+  retryFailedJobs(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.renderService.retryFailedJobs(id, context.userId, context.userType);
   }
 
   @Post('render-batches/:id/pause')
   @RequirePermissions(GO_PERMISSIONS.RENDER_BATCH)
-  pauseBatch(@Param('id') id: string, @Req() request: Request) {
+  pauseBatch(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.renderService.pauseBatch(id, context.userId, context.userType);
   }
 
   @Post('render-batches/:id/resume')
   @RequirePermissions(GO_PERMISSIONS.RENDER_BATCH)
-  resumeBatch(@Param('id') id: string, @Req() request: Request) {
+  resumeBatch(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.renderService.resumeBatch(id, context.userId, context.userType);
   }
 }
 
-/** Paging, status tab, search and sort of a render job list, from its query string. */
-function parseJobPageQuery(query: Record<string, string | undefined>): RenderJobPageOptions {
+/** Paging, status tab, search and sort of a render job list, from its query string or DTO. */
+function parseJobPageQuery(
+  query: RenderJobPageQueryDto | Record<string, unknown>,
+): RenderJobPageOptions {
   const { page, pageSize, status, search, sortBy, sortOrder } = query;
-  const parsedPage = page ? Number.parseInt(page, 10) : undefined;
-  const parsedPageSize = pageSize ? Number.parseInt(pageSize, 10) : undefined;
+  const parsedPage =
+    typeof page === 'number'
+      ? page
+      : typeof page === 'string'
+        ? Number.parseInt(page, 10)
+        : undefined;
+  const parsedPageSize =
+    typeof pageSize === 'number'
+      ? pageSize
+      : typeof pageSize === 'string'
+        ? Number.parseInt(pageSize, 10)
+        : undefined;
   const normalizedSortOrder = typeof sortOrder === 'string' ? sortOrder.toUpperCase() : undefined;
   const trimmedSearch = typeof search === 'string' ? search.trim() : '';
   return {

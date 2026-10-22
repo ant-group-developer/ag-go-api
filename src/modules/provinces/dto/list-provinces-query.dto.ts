@@ -1,12 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsUUID } from 'class-validator';
 import { BaseKeywordQueryDto } from '../../../common/dto/base-keyword-query.dto';
 
 export const PROVINCE_SORT_FIELDS = ['name', 'code', 'country'] as const;
 export type ProvinceSortField = (typeof PROVINCE_SORT_FIELDS)[number];
 
 export class ListProvincesQueryDto extends BaseKeywordQueryDto {
-  @ApiPropertyOptional({ type: String })
+  @ApiPropertyOptional({ type: String, format: 'uuid' })
   @IsOptional()
   @IsUUID()
   countryId?: string;
@@ -21,13 +21,4 @@ export class ListProvincesQueryDto extends BaseKeywordQueryDto {
   @IsOptional()
   @IsIn(['asc', 'desc'])
   sortOrder?: 'asc' | 'desc';
-
-  /**
-   * @deprecated Use keyword for the shared list-query contract.
-   */
-  @ApiPropertyOptional({ deprecated: true, maxLength: 200 })
-  @IsOptional()
-  @IsString()
-  @MaxLength(200)
-  search?: string;
 }

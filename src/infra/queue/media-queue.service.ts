@@ -2,7 +2,11 @@ import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
-import { MEDIA_PROCESSING_JOB, MEDIA_PROCESSING_QUEUE } from './queue.constants';
+import {
+  DEFAULT_FAILED_JOB_RETENTION,
+  MEDIA_PROCESSING_JOB,
+  MEDIA_PROCESSING_QUEUE,
+} from './queue.constants';
 
 export type MediaProcessingJobData = {
   eventId: string;
@@ -27,7 +31,7 @@ export class MediaQueueService implements OnModuleDestroy {
         delay: this.config.getOrThrow<number>('MEDIA_JOB_BACKOFF_MS'),
       },
       removeOnComplete: 1000,
-      removeOnFail: false,
+      removeOnFail: DEFAULT_FAILED_JOB_RETENTION,
     });
   }
 

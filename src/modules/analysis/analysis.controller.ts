@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
@@ -23,6 +24,7 @@ import { AnalysisSignService } from './analysis-sign.service';
 import { AnalysisService } from './analysis.service';
 import { AnalysisBatchesQueryDto } from './dto/analysis-batches-query.dto';
 import { AnalysisLogsQueryDto } from './dto/analysis-logs-query.dto';
+import { AnalysisStatsQueryDto } from './dto/analysis-stats-query.dto';
 import { BackfillAnalysisDto } from './dto/backfill-analysis.dto';
 import { EnqueueAnalysisDto } from './dto/enqueue-analysis.dto';
 import { FarmTicketGuard } from './farm/farm-ticket.guard';
@@ -50,6 +52,7 @@ export class AnalysisController {
   // Workers read the ag-farm sign contract ({ results }), not the API envelope
   @RawResponse()
   @UseGuards(FarmTicketGuard)
+  @Throttle({ default: { limit: 120, ttl: 60000 } })
   @ApiOperation({ summary: 'Sign storage URLs for a farm worker (Ticket auth)' })
   async farmSign(@Body() body: unknown, @Req() req: Request) {
     const parsed = SignRequestSchema.safeParse(body);
@@ -71,14 +74,8 @@ export class AnalysisController {
   @ApiBearerAuth()
   @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
   @ApiOperation({ summary: 'Analysis counts by status for assets in the given folders' })
-  getStats(@Query('folderIds') folderIds?: string) {
-    const ids = folderIds
-      ? folderIds
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : undefined;
-    return this.analysisService.getStats(ids);
+  getStats(@Query() query: AnalysisStatsQueryDto) {
+    return this.analysisService.getStats(query.folderIds);
   }
 
   // ---------------------------------------------------------------------------
@@ -159,7 +156,7 @@ export class AnalysisController {
   @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
   @ApiOperation({ summary: 'Enqueue analysis for a single asset' })
   enqueueForAsset(
-    @Param('assetId') assetId: string,
+    @Param('assetId', ParseUUIDPipe) assetId: string,
     @Body() dto: EnqueueAnalysisDto,
     @Req() req: Request,
   ) {
@@ -172,7 +169,7 @@ export class AnalysisController {
   @Get('assets/:assetId/analysis')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Latest analysis run of an asset with the whole-video description' })
-  getAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
+  getAnalysis(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() req: Request) {
     const context = this.authContext.getContext(req);
     return this.analysisService.getAnalysisForAsset(assetId, context.userId, context.userType);
   }
@@ -181,7 +178,7 @@ export class AnalysisController {
   @ApiBearerAuth()
   @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
   @ApiOperation({ summary: 'Pause the in-flight analysis of an asset' })
-  pauseAssetAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
+  pauseAssetAnalysis(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() req: Request) {
     const context = this.authContext.getContext(req);
     return this.analysisService.controlAssetAnalysis(
       assetId,
@@ -195,7 +192,7 @@ export class AnalysisController {
   @ApiBearerAuth()
   @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
   @ApiOperation({ summary: 'Resume the paused analysis of an asset' })
-  resumeAssetAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
+  resumeAssetAnalysis(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() req: Request) {
     const context = this.authContext.getContext(req);
     return this.analysisService.controlAssetAnalysis(
       assetId,
@@ -209,7 +206,7 @@ export class AnalysisController {
   @ApiBearerAuth()
   @RequirePermissions(GO_PERMISSIONS.ANALYSIS_MANAGE)
   @ApiOperation({ summary: 'Cancel the in-flight analysis of an asset' })
-  cancelAssetAnalysis(@Param('assetId') assetId: string, @Req() req: Request) {
+  cancelAssetAnalysis(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() req: Request) {
     const context = this.authContext.getContext(req);
     return this.analysisService.controlAssetAnalysis(
       assetId,
@@ -226,7 +223,10 @@ export class AnalysisController {
   @Get('projects/:projectId/analysis-status')
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get analysis status for all media in a project' })
-  getProjectAnalysisStatus(@Param('projectId') projectId: string, @Req() req: Request) {
+  getProjectAnalysisStatus(
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Req() req: Request,
+  ) {
     const context = this.authContext.getContext(req);
     return this.analysisService.getProjectAnalysisStatus(
       projectId,

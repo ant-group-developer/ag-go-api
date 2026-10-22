@@ -25,9 +25,22 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      summary: Health check
-      tags:
+      summary: Liveness check
+      tags: &a1
         - system
+  /health/ready:
+    get:
+      operationId: HealthController_getReady
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      summary: Readiness check verifying database and Redis connections
+      tags: *a1
   /folders/tree:
     get:
       operationId: FoldersController_tree
@@ -39,9 +52,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a1
+      security: &a2
         - bearer: []
-      tags: &a2
+      tags: &a3
         - folders
   /folders/options:
     get:
@@ -54,11 +67,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a1
+      security: *a2
       summary:
         Every active folder, to filter the "Projects" page (it lists every
         evaluated project)
-      tags: *a2
+      tags: *a3
   /folders:
     post:
       operationId: FoldersController_create
@@ -76,8 +89,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
+      security: *a2
+      tags: *a3
   /folders/{id}:
     patch:
       operationId: FoldersController_update
@@ -100,8 +113,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
+      security: *a2
+      tags: *a3
     delete:
       operationId: FoldersController_remove
       parameters:
@@ -117,8 +130,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
+      security: *a2
+      tags: *a3
   /access-grants/users:
     get:
       operationId: AccessGrantsController_users
@@ -169,10 +182,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a3
+      security: &a4
         - bearer: []
       summary: Users with grants the requester manages
-      tags: &a4
+      tags: &a5
         - access-grants
   /access-grants/users/{userId}:
     get:
@@ -190,9 +203,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a3
+      security: *a4
       summary: Grants of one user that the requester manages
-      tags: *a4
+      tags: *a5
   /access-grants/folders/{folderId}:
     get:
       operationId: AccessGrantsController_folderGrants
@@ -209,9 +222,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a3
+      security: *a4
       summary: Grants on a folder and those it inherits (folder managers)
-      tags: *a4
+      tags: *a5
   /access-grants/categories/{categoryId}:
     get:
       operationId: AccessGrantsController_categoryGrants
@@ -228,9 +241,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a3
+      security: *a4
       summary: Grants limited to one category that the requester manages
-      tags: *a4
+      tags: *a5
   /access-grants:
     post:
       operationId: AccessGrantsController_create
@@ -248,11 +261,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a3
+      security: *a4
       summary:
         Cấp quyền làm việc cho một user trên thư mục × từng danh mục (hoặc mọi
         danh mục)
-      tags: *a4
+      tags: *a5
   /access-grants/{id}:
     patch:
       operationId: AccessGrantsController_update
@@ -275,8 +288,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a3
-      tags: *a4
+      security: *a4
+      tags: *a5
     delete:
       operationId: AccessGrantsController_remove
       parameters:
@@ -292,8 +305,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a3
-      tags: *a4
+      security: *a4
+      tags: *a5
   /original-access/users:
     get:
       operationId: OriginalAccessController_users
@@ -344,10 +357,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a5
+      security: &a6
         - bearer: []
       summary: "Users with bundles (admins: every one; others: those they granted)"
-      tags: &a6
+      tags: &a7
         - original-access
   /original-access/users/{userId}:
     get:
@@ -365,9 +378,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a5
+      security: *a6
       summary: Every bundle of one user; `canEdit` says which are the requester's
-      tags: *a6
+      tags: *a7
   /original-access/categories/{categoryId}:
     get:
       operationId: OriginalAccessController_categoryBundles
@@ -384,9 +397,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a5
+      security: *a6
       summary: Bundles holding one category
-      tags: *a6
+      tags: *a7
   /original-access/reach:
     get:
       operationId: OriginalAccessController_reach
@@ -398,11 +411,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a5
+      security: *a6
       summary:
         "Thư mục và danh mục người gọi được đưa vào gói (null: không giới hạn,
         Admin)"
-      tags: *a6
+      tags: *a7
   /original-access/preview:
     post:
       operationId: OriginalAccessController_preview
@@ -420,9 +433,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a5
+      security: *a6
       summary: Các cặp thư mục × danh mục nằm ngoài phần của người gọi
-      tags: *a6
+      tags: *a7
   /original-access/bundles:
     post:
       operationId: OriginalAccessController_create
@@ -440,9 +453,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a5
+      security: *a6
       summary: "Cấp một gói bản gốc: các thư mục × các danh mục"
-      tags: *a6
+      tags: *a7
   /original-access/bundles/{id}:
     patch:
       operationId: OriginalAccessController_update
@@ -465,8 +478,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a5
-      tags: *a6
+      security: *a6
+      tags: *a7
     delete:
       operationId: OriginalAccessController_remove
       parameters:
@@ -482,8 +495,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a5
-      tags: *a6
+      security: *a6
+      tags: *a7
   /account/me:
     get:
       operationId: AccountController_getMe
@@ -495,10 +508,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a7
+      security: &a8
         - bearer: []
       summary: Lấy thông tin user hiện tại từ Account API
-      tags: &a8
+      tags: &a9
         - account
   /account/users:
     get:
@@ -518,9 +531,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a7
+      security: *a8
       summary: Proxy thông tin user hiện tại từ Account API
-      tags: *a8
+      tags: *a9
   /account/users/search:
     get:
       operationId: AccountController_searchUsers
@@ -554,9 +567,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a7
+      security: *a8
       summary: Tìm user trong Account API bằng token của user hiện tại
-      tags: *a8
+      tags: *a9
   /account/applications:
     get:
       operationId: AccountController_getApplications
@@ -567,10 +580,32 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a7
-      summary: Lấy danh sách application từ Account API
-      tags: *a8
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AccountApplicationDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: *a8
+      summary: Lấy danh sách application từ Account API (admins only)
+      tags: *a9
   /categories:
     get:
       operationId: CategoriesController_list
@@ -582,9 +617,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a9
+      security: &a10
         - bearer: []
-      tags: &a10
+      tags: &a11
         - categories
     post:
       operationId: CategoriesController_create
@@ -602,8 +637,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a9
-      tags: *a10
+      security: *a10
+      tags: *a11
   /categories/{id}:
     patch:
       operationId: CategoriesController_update
@@ -626,8 +661,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a9
-      tags: *a10
+      security: *a10
+      tags: *a11
     delete:
       operationId: CategoriesController_remove
       parameters:
@@ -643,8 +678,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a9
-      tags: *a10
+      security: *a10
+      tags: *a11
   /countries:
     get:
       operationId: CountriesController_list
@@ -655,10 +690,32 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: &a11
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CountryDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: &a12
         - bearer: []
-      tags: &a12
+      tags: &a13
         - countries
     post:
       operationId: CountriesController_create
@@ -676,8 +733,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a11
-      tags: *a12
+      security: *a12
+      tags: *a13
   /countries/import:
     post:
       operationId: CountriesController_importCsv
@@ -701,8 +758,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a11
-      tags: *a12
+      security: *a12
+      tags: *a13
   /provinces:
     get:
       operationId: ProvincesController_list
@@ -713,7 +770,6 @@ paths:
           schema:
             minimum: 1
             default: 1
-            example: 1
             type: number
         - name: pageSize
           required: false
@@ -722,7 +778,6 @@ paths:
             minimum: 1
             maximum: 100
             default: 20
-            example: 20
             type: number
         - name: keyword
           required: false
@@ -734,41 +789,56 @@ paths:
           required: false
           in: query
           schema:
+            format: uuid
             type: string
         - name: sortBy
           required: false
           in: query
           schema:
+            type: string
             enum:
               - name
               - code
               - country
-            type: string
         - name: sortOrder
           required: false
           in: query
           schema:
+            default: asc
+            type: string
             enum:
               - asc
               - desc
-            type: string
-        - name: search
-          required: false
-          in: query
-          deprecated: true
-          schema:
-            maxLength: 200
-            type: string
       responses:
         "200":
           description: ""
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: &a13
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProvinceListResponseDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: &a14
         - bearer: []
-      tags: &a14
+      tags: &a15
         - provinces
     post:
       operationId: ProvincesController_create
@@ -786,8 +856,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a13
-      tags: *a14
+      security: *a14
+      tags: *a15
   /provinces/import:
     post:
       operationId: ProvincesController_importCsv
@@ -811,8 +881,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a13
-      tags: *a14
+      security: *a14
+      tags: *a15
   /tags:
     get:
       operationId: TagsController_list
@@ -823,10 +893,32 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: &a15
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TagDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: &a16
         - bearer: []
-      tags: &a16
+      tags: &a17
         - tags
     post:
       operationId: TagsController_create
@@ -843,9 +935,29 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a15
-      tags: *a16
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TagDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: *a16
+      tags: *a17
   /tags/{id}:
     patch:
       operationId: TagsController_update
@@ -867,9 +979,29 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a15
-      tags: *a16
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/TagDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: *a16
+      tags: *a17
     delete:
       operationId: TagsController_remove
       parameters:
@@ -885,8 +1017,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a15
-      tags: *a16
+      security: *a16
+      tags: *a17
   /projects:
     get:
       operationId: ProjectsController_list
@@ -1025,10 +1157,30 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: &a17
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProjectPageDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: &a18
         - bearer: []
-      tags: &a18
+      tags: &a19
         - projects
     post:
       operationId: ProjectsController_create
@@ -1045,9 +1197,29 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a17
-      tags: *a18
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProjectDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: *a18
+      tags: *a19
   /projects/filter-scope:
     get:
       operationId: ProjectsController_filterScope
@@ -1059,11 +1231,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a17
+      security: *a18
       summary:
         'Thư mục và danh mục bộ lọc menu "Dự án" được hiện (null: tất cả, khi
         có go.project.read_all)'
-      tags: *a18
+      tags: *a19
   /projects/owners:
     get:
       operationId: ProjectsController_owners
@@ -1084,10 +1256,32 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a17
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProjectOwnerUserDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: *a18
       summary: Owners (authors) of the projects the user can list
-      tags: *a18
+      tags: *a19
   /projects/{id}:
     get:
       operationId: ProjectsController_findOne
@@ -1103,9 +1297,29 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a17
-      tags: *a18
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProjectDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: *a18
+      tags: *a19
     patch:
       operationId: ProjectsController_update
       parameters:
@@ -1126,9 +1340,29 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a17
-      tags: *a18
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/ProjectDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: *a18
+      tags: *a19
     delete:
       operationId: ProjectsController_remove
       parameters:
@@ -1144,8 +1378,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a17
-      tags: *a18
+      security: *a18
+      tags: *a19
   /audit/project/{projectId}:
     get:
       operationId: AuditController_listProject
@@ -1155,6 +1389,21 @@ paths:
           in: path
           schema:
             type: string
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 50
+            type: number
       responses:
         "200":
           description: ""
@@ -1178,17 +1427,23 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       summary: Sign storage URLs for a farm worker (Ticket auth)
-      tags: &a19
+      tags: &a20
         - analysis
   /analysis/stats:
     get:
       operationId: AnalysisController_getStats
       parameters:
         - name: folderIds
-          required: true
+          required: false
           in: query
+          description:
+            Comma-separated folder IDs; omit for every folder the caller can
+            analyse
           schema:
-            type: string
+            type: array
+            items:
+              type: string
+              format: uuid
       responses:
         "200":
           description: ""
@@ -1199,7 +1454,7 @@ paths:
       security:
         - bearer: []
       summary: Analysis counts by status for assets in the given folders
-      tags: *a19
+      tags: *a20
   /analysis/backfill:
     post:
       operationId: AnalysisController_backfill
@@ -1220,7 +1475,7 @@ paths:
       security:
         - bearer: []
       summary: Enqueue analysis for a batch of assets
-      tags: *a19
+      tags: *a20
   /analysis/batches:
     get:
       operationId: AnalysisController_listBatches
@@ -1278,7 +1533,7 @@ paths:
       security:
         - bearer: []
       summary: Scan batches with their progress, newest first by default
-      tags: *a19
+      tags: *a20
   /analysis/batches/{batchId}/pause:
     post:
       operationId: AnalysisController_pauseBatch
@@ -1298,7 +1553,7 @@ paths:
       security:
         - bearer: []
       summary: Pause a scan batch (its farm jobs and unfinished analyses)
-      tags: *a19
+      tags: *a20
   /analysis/batches/{batchId}/resume:
     post:
       operationId: AnalysisController_resumeBatch
@@ -1318,7 +1573,7 @@ paths:
       security:
         - bearer: []
       summary: Resume a paused scan batch
-      tags: *a19
+      tags: *a20
   /analysis/batches/{batchId}/cancel:
     post:
       operationId: AnalysisController_cancelBatch
@@ -1338,7 +1593,7 @@ paths:
       security:
         - bearer: []
       summary: Cancel everything unfinished in a scan batch
-      tags: *a19
+      tags: *a20
   /analysis/logs:
     get:
       operationId: AnalysisController_getLogs
@@ -1382,7 +1637,7 @@ paths:
       security:
         - bearer: []
       summary: Processing log of the analysis pipeline, newest first
-      tags: *a19
+      tags: *a20
   /assets/{assetId}/analysis:
     post:
       operationId: AnalysisController_enqueueForAsset
@@ -1408,7 +1663,7 @@ paths:
       security:
         - bearer: []
       summary: Enqueue analysis for a single asset
-      tags: *a19
+      tags: *a20
     get:
       operationId: AnalysisController_getAnalysis
       parameters:
@@ -1427,7 +1682,7 @@ paths:
       security:
         - bearer: []
       summary: Latest analysis run of an asset with the whole-video description
-      tags: *a19
+      tags: *a20
   /assets/{assetId}/analysis/pause:
     post:
       operationId: AnalysisController_pauseAssetAnalysis
@@ -1447,7 +1702,7 @@ paths:
       security:
         - bearer: []
       summary: Pause the in-flight analysis of an asset
-      tags: *a19
+      tags: *a20
   /assets/{assetId}/analysis/resume:
     post:
       operationId: AnalysisController_resumeAssetAnalysis
@@ -1467,7 +1722,7 @@ paths:
       security:
         - bearer: []
       summary: Resume the paused analysis of an asset
-      tags: *a19
+      tags: *a20
   /assets/{assetId}/analysis/cancel:
     post:
       operationId: AnalysisController_cancelAssetAnalysis
@@ -1487,7 +1742,7 @@ paths:
       security:
         - bearer: []
       summary: Cancel the in-flight analysis of an asset
-      tags: *a19
+      tags: *a20
   /projects/{projectId}/analysis-status:
     get:
       operationId: AnalysisController_getProjectAnalysisStatus
@@ -1507,7 +1762,7 @@ paths:
       security:
         - bearer: []
       summary: Get analysis status for all media in a project
-      tags: *a19
+      tags: *a20
   /prep/stats:
     get:
       operationId: PrepController_stats
@@ -1519,10 +1774,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a20
+      security: &a21
         - bearer: []
       summary: Footage by prep state, and the latest prep backfills
-      tags: &a21
+      tags: &a22
         - prep
   /prep/backfill:
     post:
@@ -1541,9 +1796,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
+      security: *a21
       summary: Queue a prep (lane batch) for footage without one, or for all of it
-      tags: *a21
+      tags: *a22
   /prep/batches/{batchId}/pause:
     post:
       operationId: PrepController_pause
@@ -1560,9 +1815,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
+      security: *a21
       summary: Pause a prep backfill
-      tags: *a21
+      tags: *a22
   /prep/batches/{batchId}/resume:
     post:
       operationId: PrepController_resume
@@ -1579,9 +1834,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
+      security: *a21
       summary: Resume a paused prep backfill
-      tags: *a21
+      tags: *a22
   /prep/batches/{batchId}/cancel:
     post:
       operationId: PrepController_cancel
@@ -1598,9 +1853,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a20
+      security: *a21
       summary: Cancel everything unfinished in a prep backfill
-      tags: *a21
+      tags: *a22
   /logs:
     get:
       operationId: LogsController_list
@@ -1625,6 +1880,21 @@ paths:
           in: path
           schema:
             type: string
+        - name: cursor
+          required: false
+          in: query
+          description: Cursor for pagination
+          schema:
+            maxLength: 500
+            type: string
+        - name: limit
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 50
+            type: number
       responses:
         "200":
           description: ""
@@ -1632,9 +1902,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a22
+      security: &a23
         - bearer: []
-      tags: &a23
+      tags: &a24
         - project-media
     post:
       operationId: MediaController_attach
@@ -1657,8 +1927,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a23
+      tags: *a24
   /project-media/{id}:
     patch:
       operationId: MediaController_update
@@ -1681,8 +1951,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a23
+      tags: *a24
     delete:
       operationId: MediaController_remove
       parameters:
@@ -1698,8 +1968,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a23
+      tags: *a24
   /project-media/bulk-approve:
     post:
       operationId: MediaController_bulkApproveMedia
@@ -1717,8 +1987,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a23
+      tags: *a24
   /projects/bulk-approve:
     post:
       operationId: MediaController_bulkApproveProjects
@@ -1736,8 +2006,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a23
+      tags: *a24
   /project-media/{id}/evaluations:
     get:
       operationId: MediaController_listEvaluationHistory
@@ -1754,8 +2024,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a23
+      tags: *a24
   /projects/{projectId}/reorder-media:
     patch:
       operationId: MediaController_reorder
@@ -1778,8 +2048,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a23
+      tags: *a24
   /projects/{projectId}/thumbnail:
     patch:
       operationId: MediaController_setThumbnail
@@ -1802,8 +2072,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a23
+      tags: *a24
   /assets/upload-session:
     post:
       operationId: AssetsController_createUploadSession
@@ -1821,9 +2091,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a24
+      security: &a25
         - bearer: []
-      tags: &a25
+      tags: &a26
         - assets
   /assets/{assetId}/upload-parts:
     post:
@@ -1847,9 +2117,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
+      security: *a25
       summary: Presigned URL để upload từng phần của phiên upload multipart
-      tags: *a25
+      tags: *a26
   /assets/{assetId}/complete:
     post:
       operationId: AssetsController_completeUpload
@@ -1872,8 +2142,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a25
+      tags: *a26
   /assets/{assetId}/abort:
     post:
       operationId: AssetsController_abortUpload
@@ -1896,8 +2166,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a25
+      tags: *a26
   /assets/{assetId}/variants:
     get:
       operationId: AssetsController_listVariants
@@ -1914,8 +2184,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a25
+      tags: *a26
   /assets/{assetId}/original-url:
     get:
       operationId: AssetsController_originalUrl
@@ -1932,9 +2202,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
+      security: *a25
       summary: Presigned URL file gốc (không watermark) để đánh giá media
-      tags: *a25
+      tags: *a26
   /assets/{assetId}/renditions:
     get:
       operationId: AssetsController_listRenditions
@@ -1951,11 +2221,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
+      security: *a25
       summary:
         Các bản preview (độ phân giải, watermark, bitrate) người xem được chọn;
         bản không watermark chỉ cho người có quyền xem file gốc
-      tags: *a25
+      tags: *a26
   /assets/{assetId}/preview/{variantCode}:
     get:
       operationId: AssetsController_preview
@@ -1970,11 +2240,18 @@ paths:
           in: path
           schema:
             type: string
+        - name: width
+          required: false
+          in: query
+          description: Requested preview width in pixels
+          schema:
+            minimum: 1
+            type: number
       responses:
         "200":
           description: ""
-      security: *a24
-      tags: *a25
+      security: *a25
+      tags: *a26
   /assets/{assetId}/preview-url:
     get:
       operationId: AssetsController_previewUrl
@@ -1984,6 +2261,20 @@ paths:
           in: path
           schema:
             type: string
+        - name: width
+          required: false
+          in: query
+          description: Requested preview width in pixels
+          schema:
+            minimum: 1
+            type: number
+        - name: variantCode
+          required: false
+          in: query
+          schema:
+            default: thumbnail
+            allOf:
+              - $ref: "#/components/schemas/Object"
       responses:
         "200":
           description: ""
@@ -1991,11 +2282,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
+      security: *a25
       summary:
         Tạo presigned URL để tải preview trực tiếp từ R2. variantCode=preview
         kèm width chọn kích thước phù hợp.
-      tags: *a25
+      tags: *a26
   /assets/{assetId}/retry:
     post:
       operationId: AssetsController_retry
@@ -2012,8 +2303,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a25
+      tags: *a26
   /render-profiles:
     get:
       operationId: RenderController_listProfiles
@@ -2025,9 +2316,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a26
+      security: &a27
         - bearer: []
-      tags: &a27
+      tags: &a28
         - render
   /render-profiles/{id}:
     patch:
@@ -2051,8 +2342,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-watermark/upload-session:
     post:
       operationId: RenderController_createWatermarkUploadSession
@@ -2070,8 +2361,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-watermark/logos/{assetId}/url:
     get:
       operationId: RenderController_getWatermarkLogoUrl
@@ -2088,8 +2379,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-watermark/assets/{assetId}/complete:
     post:
       operationId: RenderController_completeWatermarkUpload
@@ -2112,8 +2403,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-watermark/assets/{assetId}/abort:
     post:
       operationId: RenderController_abortWatermarkUpload
@@ -2136,8 +2427,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-batches:
     post:
       operationId: RenderController_createBatch
@@ -2155,11 +2446,62 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
     get:
       operationId: RenderController_listAllBatches
-      parameters: []
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - all
+              - active
+              - completed
+              - failed
+              - cancelled
+        - name: search
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: sortBy
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - createdAt
+              - startedAt
+              - elapsed
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - ASC
+              - DESC
+              - asc
+              - desc
       responses:
         "200":
           description: ""
@@ -2167,8 +2509,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /projects/{projectId}/render-batches:
     get:
       operationId: RenderController_listBatches
@@ -2178,6 +2520,57 @@ paths:
           in: path
           schema:
             type: string
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - all
+              - active
+              - completed
+              - failed
+              - cancelled
+        - name: search
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: sortBy
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - createdAt
+              - startedAt
+              - elapsed
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - ASC
+              - DESC
+              - asc
+              - desc
       responses:
         "200":
           description: ""
@@ -2185,8 +2578,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-batches/{id}/jobs:
     get:
       operationId: RenderController_listJobs
@@ -2196,6 +2589,57 @@ paths:
           in: path
           schema:
             type: string
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - all
+              - active
+              - completed
+              - failed
+              - cancelled
+        - name: search
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: sortBy
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - createdAt
+              - startedAt
+              - elapsed
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - ASC
+              - DESC
+              - asc
+              - desc
       responses:
         "200":
           description: ""
@@ -2203,12 +2647,69 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-jobs/auto:
     get:
       operationId: RenderController_listAutoJobs
-      parameters: []
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - all
+              - active
+              - completed
+              - failed
+              - cancelled
+        - name: search
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: sortBy
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - createdAt
+              - startedAt
+              - elapsed
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - ASC
+              - DESC
+              - asc
+              - desc
+        - name: projectId
+          required: false
+          in: query
+          description: Optional project ID to filter auto jobs
+          schema:
+            type: string
       responses:
         "200":
           description: ""
@@ -2216,8 +2717,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-jobs/{id}/retry:
     post:
       operationId: RenderController_retryJob
@@ -2234,8 +2735,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-watermark/rerender:
     post:
       operationId: RenderController_rerenderWatermark
@@ -2253,8 +2754,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-batches/{id}:
     get:
       operationId: RenderController_getBatch
@@ -2271,8 +2772,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-batches/{id}/cancel:
     post:
       operationId: RenderController_cancelBatch
@@ -2289,8 +2790,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-batches/{id}/retry-failed:
     post:
       operationId: RenderController_retryFailedJobs
@@ -2307,8 +2808,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-batches/{id}/pause:
     post:
       operationId: RenderController_pauseBatch
@@ -2325,8 +2826,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /render-batches/{id}/resume:
     post:
       operationId: RenderController_resumeBatch
@@ -2343,8 +2844,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a27
+      tags: *a28
   /downloads:
     post:
       operationId: DownloadsController_create
@@ -2362,9 +2863,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a28
+      security: &a29
         - bearer: []
-      tags: &a29
+      tags: &a30
         - downloads
   /downloads/{id}:
     get:
@@ -2382,8 +2883,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a29
+      tags: *a30
   /downloads/{id}/cancel:
     post:
       operationId: DownloadsController_cancel
@@ -2400,8 +2901,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a29
+      tags: *a30
   /statistics/summary:
     get:
       operationId: StatisticsController_summary
@@ -2434,9 +2935,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a30
+      security: &a31
         - bearer: []
-      tags: &a31
+      tags: &a32
         - statistics
   /statistics/trend:
     get:
@@ -2470,8 +2971,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a31
+      tags: *a32
   /statistics/project-trend:
     get:
       operationId: StatisticsController_projectTrend
@@ -2504,8 +3005,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a31
+      tags: *a32
   /statistics/breakdown:
     get:
       operationId: StatisticsController_breakdown
@@ -2561,8 +3062,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a31
+      tags: *a32
   /statistics/progress:
     get:
       operationId: StatisticsController_progress
@@ -2581,8 +3082,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a31
+      tags: *a32
   /statistics/team:
     get:
       operationId: StatisticsController_team
@@ -2615,8 +3116,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a31
+      tags: *a32
   /statistics/studio-usage:
     get:
       operationId: StatisticsController_studioUsage
@@ -2649,8 +3150,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a31
+      tags: *a32
   /statistics/operations:
     get:
       operationId: StatisticsController_operations
@@ -2683,8 +3184,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a31
+      tags: *a32
   /statistics/activity:
     get:
       operationId: StatisticsController_activity
@@ -2703,8 +3204,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a31
+      tags: *a32
   /google-drive/connection:
     get:
       operationId: GoogleDriveController_connection
@@ -2716,9 +3217,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a32
+      security: &a33
         - bearer: []
-      tags: &a33
+      tags: &a34
         - google-drive
     delete:
       operationId: GoogleDriveController_disconnect
@@ -2730,21 +3231,25 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
   /google-drive/connection/start:
     post:
       operationId: GoogleDriveController_start
       parameters:
         - name: projectId
-          required: true
+          required: false
           in: query
           schema:
+            format: uuid
             type: string
         - name: returnUrl
-          required: true
+          required: false
           in: query
+          description: Frontend path to return to after Google OAuth; must be on
+            FRONTEND_ORIGIN
           schema:
+            maxLength: 2000
             type: string
       responses:
         "201":
@@ -2752,9 +3257,29 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/StartDriveConnectionResponseDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      security: *a33
+      tags: *a34
   /google-drive/connection/callback:
     get:
       operationId: GoogleDriveController_callback
@@ -2767,17 +3292,14 @@ paths:
         - name: state
           required: true
           in: query
+          description: OAuth state issued by POST /google-drive/connection/start
           schema:
             type: string
       responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+        "302":
+          description: Redirects to FRONTEND_ORIGIN with status=connected
+      security: *a33
+      tags: *a34
   /google-drive/picker-token:
     get:
       operationId: GoogleDriveController_pickerToken
@@ -2789,8 +3311,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
   /google-drive/sources/summary:
     post:
       operationId: GoogleDriveController_summarizeSources
@@ -2808,8 +3330,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
   /google-drive/imports:
     post:
       operationId: GoogleDriveController_createImport
@@ -2827,52 +3349,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
     get:
       operationId: GoogleDriveController_listImports
       parameters:
-        - name: projectId
-          required: false
-          in: query
-          description:
-            Limit to one project (latest 50, not paged; the other params are
-            ignored)
-          schema:
-            type: string
         - name: page
           required: false
           in: query
           schema:
-            example: 1
+            minimum: 1
+            default: 1
             type: number
         - name: pageSize
           required: false
           in: query
-          description: Max 100
           schema:
-            example: 20
+            minimum: 1
+            maximum: 100
+            default: 20
             type: number
+        - name: projectId
+          required: false
+          in: query
+          description: Limit to one project (latest 50, not paged; other params ignored)
+          schema:
+            type: string
         - name: status
           required: false
           in: query
           schema:
+            type: string
             enum:
               - all
               - active
               - completed
               - failed
-            type: string
         - name: search
           required: false
           in: query
           description: Matches the project name or a source folder name
           schema:
+            maxLength: 200
             type: string
         - name: sortBy
           required: false
           in: query
           schema:
+            type: string
             enum:
               - createdAt
               - finishedAt
@@ -2880,15 +3404,16 @@ paths:
               - fileCount
               - totalBytes
               - progress
-            type: string
         - name: sortOrder
           required: false
           in: query
           schema:
+            type: string
             enum:
               - asc
               - desc
-            type: string
+              - ASC
+              - DESC
       responses:
         "200":
           description: ""
@@ -2896,8 +3421,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
   /google-drive/imports/{batchId}:
     get:
       operationId: GoogleDriveController_getImport
@@ -2914,8 +3439,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
   /google-drive/imports/{batchId}/cancel:
     post:
       operationId: GoogleDriveController_cancel
@@ -2932,8 +3457,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
   /google-drive/imports/{batchId}/pause:
     post:
       operationId: GoogleDriveController_pause
@@ -2950,8 +3475,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
   /google-drive/imports/{batchId}/resume:
     post:
       operationId: GoogleDriveController_resume
@@ -2968,8 +3493,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
   /google-drive/imports/{batchId}/items:
     get:
       operationId: GoogleDriveController_items
@@ -2983,35 +3508,39 @@ paths:
           required: false
           in: query
           schema:
-            example: 1
+            minimum: 1
+            default: 1
             type: number
         - name: pageSize
           required: false
           in: query
-          description: Max 100
           schema:
-            example: 20
+            minimum: 1
+            maximum: 100
+            default: 20
             type: number
         - name: status
           required: false
           in: query
           schema:
+            type: string
             enum:
               - all
               - active
               - completed
               - failed
-            type: string
         - name: search
           required: false
           in: query
           description: Matches the file name
           schema:
+            maxLength: 200
             type: string
         - name: sortBy
           required: false
           in: query
           schema:
+            type: string
             enum:
               - createdAt
               - name
@@ -3019,15 +3548,16 @@ paths:
               - resolution
               - duration
               - modifiedAt
-            type: string
         - name: sortOrder
           required: false
           in: query
           schema:
+            type: string
             enum:
               - asc
               - desc
-            type: string
+              - ASC
+              - DESC
       responses:
         "200":
           description: ""
@@ -3035,8 +3565,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
   /google-drive/imports/{batchId}/items/{itemId}/retry:
     post:
       operationId: GoogleDriveController_retry
@@ -3058,8 +3588,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a33
+      tags: *a34
   /settings/public:
     get:
       operationId: SettingsController_getPublic
@@ -3070,8 +3600,28 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
-      tags: &a34
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/WebSettingsDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
+      tags: &a35
         - settings
   /settings:
     get:
@@ -3083,10 +3633,30 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/WebSettingsDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
       security:
         - bearer: []
-      tags: *a34
+      tags: *a35
     patch:
       operationId: SettingsController_update
       parameters: []
@@ -3102,10 +3672,30 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiResponse"
+                type: object
+                required:
+                  - data
+                  - requestId
+                  - timestamp
+                  - success
+                  - error
+                properties:
+                  data:
+                    $ref: "#/components/schemas/WebSettingsDto"
+                  requestId:
+                    type: string
+                  timestamp:
+                    type: string
+                    format: date-time
+                  success:
+                    type: boolean
+                  error:
+                    allOf:
+                      - $ref: "#/components/schemas/ApiError"
+                    nullable: true
       security:
         - bearer: []
-      tags: *a34
+      tags: *a35
   /footage/folders:
     get:
       operationId: FootageController_getFolders
@@ -3118,11 +3708,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - &a35
+        - &a36
           bearer: []
         - service-key: []
       summary: List accessible folders with analysed video counts
-      tags: &a36
+      tags: &a37
         - footage
   /footage/catalog:
     post:
@@ -3142,10 +3732,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a36
         - service-key: []
       summary: Analysed videos of the given folders with their descriptions (AI input)
-      tags: *a36
+      tags: *a37
   /footage/assets/{assetId}/media:
     get:
       operationId: FootageController_getAssetMedia
@@ -3163,10 +3753,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a36
         - service-key: []
       summary: Preview URL of the whole video, keyframes and contact sheet
-      tags: *a36
+      tags: *a37
   /footage/assets/{assetId}/preview-url:
     get:
       operationId: FootageController_getPreviewUrl
@@ -3190,10 +3780,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a36
         - service-key: []
       summary: Presigned URL of one preview offered by the footage player
-      tags: *a36
+      tags: *a37
   /footage/assets/resolve:
     post:
       operationId: FootageController_resolveAssets
@@ -3212,10 +3802,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a36
         - service-key: []
       summary: Signed URLs of whole video files for rendering (respects decision 8)
-      tags: *a36
+      tags: *a37
   /footage/assets/prep:
     post:
       operationId: FootageController_readPreps
@@ -3234,12 +3824,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a36
         - service-key: []
       summary:
         Prepared Studio inputs (shots, frames, sheets, transcript) or how far
         their prep is
-      tags: *a36
+      tags: *a37
   /footage/assets/prep/run:
     post:
       operationId: FootageController_runPreps
@@ -3258,12 +3848,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a36
         - service-key: []
       summary:
         Run the prep of footage now (missing or failed), or raise one waiting
         in a backfill
-      tags: *a36
+      tags: *a37
   /footage/search:
     get:
       operationId: FootageController_search
@@ -3448,10 +4038,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a36
         - service-key: []
       summary: Full-text + trigram search across analysed videos
-      tags: *a36
+      tags: *a37
   /footage/facets:
     get:
       operationId: FootageController_getFacets
@@ -3636,10 +4226,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a36
         - service-key: []
       summary: Facet counts for search filters
-      tags: *a36
+      tags: *a37
   /usage/studio-events:
     post:
       operationId: StudioUsageController_record
@@ -3660,7 +4250,7 @@ paths:
       security:
         - service-key: []
       summary: Footage usage events from AG Studio (service key only)
-      tags: &a37
+      tags: &a38
         - usage
   /footage/assets/{assetId}/studio-usage:
     get:
@@ -3681,7 +4271,7 @@ paths:
       security:
         - bearer: []
       summary: How AG Studio used one footage, and its downloads
-      tags: *a37
+      tags: *a38
   /projects/{projectId}/studio-usage:
     get:
       operationId: StudioUsageController_projectUsage
@@ -3701,7 +4291,7 @@ paths:
       security:
         - bearer: []
       summary: How AG Studio used a project's footage, and their downloads
-      tags: *a37
+      tags: *a38
   /system/workers:
     get:
       operationId: WorkersController_list
@@ -3776,7 +4366,7 @@ components:
             format: uuid
         accessLevel:
           type: string
-          enum: &a38
+          enum: &a39
             - viewer
             - editor
             - manager
@@ -3792,7 +4382,7 @@ components:
       properties:
         accessLevel:
           type: string
-          enum: *a38
+          enum: *a39
         inheritChildren:
           type: boolean
     PreviewOriginalAccessBundleDto:
@@ -3832,24 +4422,323 @@ components:
       required:
         - folderIds
         - categoryIds
+    AccountApplicationDto:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        code:
+          type: string
+        description:
+          type: string
+          nullable: true
+        website:
+          type: string
+          nullable: true
+        logo:
+          type: string
+          nullable: true
+        visibility:
+          type: string
+        is_active:
+          type: boolean
+      required:
+        - id
+        - name
+        - code
     CreateCategoryDto:
       type: object
       properties: {}
     UpdateCategoryDto:
       type: object
       properties: {}
+    CountryDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          nullable: true
+        name:
+          type: string
+        flagUrl:
+          type: string
+          nullable: true
+        sortOrder:
+          type: number
+        isActive:
+          type: boolean
+      required:
+        - id
+        - name
+        - sortOrder
+        - isActive
     CreateCountryDto:
       type: object
       properties: {}
+    ProvinceCountryDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        code:
+          type: string
+          nullable: true
+      required:
+        - id
+        - name
+    ProvinceDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        countryId:
+          type: string
+          format: uuid
+        country:
+          $ref: "#/components/schemas/ProvinceCountryDto"
+        code:
+          type: string
+          nullable: true
+        name:
+          type: string
+        sortOrder:
+          type: number
+        isActive:
+          type: boolean
+      required:
+        - id
+        - countryId
+        - name
+        - sortOrder
+        - isActive
+    ProvinceListResponseDto:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProvinceDto"
+        page:
+          type: number
+        pageSize:
+          type: number
+        total:
+          type: number
+        totalPages:
+          type: number
+      required:
+        - items
+        - page
+        - pageSize
+        - total
+        - totalPages
     CreateProvinceDto:
       type: object
       properties: {}
+    TagActorDto:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        avatar:
+          type: string
+          nullable: true
+      required:
+        - id
+    TagDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        normalizedName:
+          type: string
+        createdBy:
+          type: string
+        createdByUser:
+          nullable: true
+          type: object
+          allOf:
+            - $ref: "#/components/schemas/TagActorDto"
+        createdAt:
+          type: object
+          nullable: true
+          format: date-time
+        updatedAt:
+          type: object
+          nullable: true
+          format: date-time
+      required:
+        - id
+        - name
     CreateTagDto:
       type: object
       properties: {}
     UpdateTagDto:
       type: object
       properties: {}
+    ProjectOwnerUserDto:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          nullable: true
+        email:
+          type: string
+          nullable: true
+        avatar:
+          type: string
+          nullable: true
+      required:
+        - id
+    ProjectDto:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        folderId:
+          type: string
+          format: uuid
+        folderName:
+          type: string
+          nullable: true
+        folderPath:
+          type: string
+          nullable: true
+        categoryId:
+          type: string
+          nullable: true
+          format: uuid
+        categoryName:
+          type: string
+          nullable: true
+        countryId:
+          type: string
+          nullable: true
+          format: uuid
+        countryName:
+          type: string
+          nullable: true
+        countryFlagUrl:
+          type: string
+          nullable: true
+        provinceId:
+          type: string
+          nullable: true
+          format: uuid
+        provinceName:
+          type: string
+          nullable: true
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        evaluationStatus:
+          type: string
+          enum:
+            - draft
+            - pending
+            - completed
+            - partially_completed
+            - failed
+        mediaCount:
+          type: number
+        imageCount:
+          type: number
+        videoCount:
+          type: number
+        originalBytes:
+          type: string
+        renderedBytes:
+          type: string
+        thumbnailProjectMediaId:
+          type: string
+          nullable: true
+          format: uuid
+        thumbnailAssetId:
+          type: string
+          nullable: true
+          format: uuid
+        thumbnailSource:
+          type: string
+          nullable: true
+          enum:
+            - manual
+            - auto
+        ownerUserId:
+          type: string
+        ownerUser:
+          nullable: true
+          type: object
+          allOf:
+            - $ref: "#/components/schemas/ProjectOwnerUserDto"
+        tagIds:
+          type: array
+          items:
+            type: string
+        tags:
+          type: array
+          items:
+            type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - folderId
+        - name
+        - evaluationStatus
+        - mediaCount
+        - imageCount
+        - videoCount
+        - ownerUserId
+        - createdAt
+        - updatedAt
+    ProjectPageDto:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectDto"
+        page:
+          type: number
+        pageSize:
+          type: number
+        total:
+          type: number
+        totalPages:
+          type: number
+      required:
+        - items
+        - page
+        - pageSize
+        - total
+        - totalPages
     CreateProjectDto:
       type: object
       properties:
@@ -4228,6 +5117,16 @@ components:
     CreateDownloadDto:
       type: object
       properties: {}
+    StartDriveConnectionResponseDto:
+      type: object
+      properties:
+        authorizationUrl:
+          type: string
+        state:
+          type: string
+      required:
+        - authorizationUrl
+        - state
     SummarizeSourceDto:
       type: object
       properties:
@@ -4288,6 +5187,34 @@ components:
           default: reuse_existing
       required:
         - projectId
+    WebSettingsDto:
+      type: object
+      properties:
+        siteName:
+          type: string
+        siteDescription:
+          type: string
+          nullable: true
+        logoUrl:
+          type: string
+          nullable: true
+        faviconUrl:
+          type: string
+          nullable: true
+        loginBackgroundUrl:
+          type: string
+          nullable: true
+        supportEmail:
+          type: string
+          nullable: true
+        supportUrl:
+          type: string
+          nullable: true
+        primaryColor:
+          type: string
+          nullable: true
+      required:
+        - siteName
     UpdateSettingsDto:
       type: object
       properties: {}

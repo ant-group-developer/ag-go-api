@@ -5,8 +5,9 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  * batch row locked so workers on several hosts cannot write a stale count last. Without an
  * index that count scans every render job ever made while holding the lock.
  *
- * Not CONCURRENTLY: migrations run in one transaction (deploy.sh). The build blocks writes to
- * media_render_jobs only briefly, at the main host's deploy.
+ * Not CONCURRENTLY: this index was small enough that a brief write lock at deploy was
+ * acceptable. New indexes on large live tables must use CREATE INDEX CONCURRENTLY with
+ * `transaction = false` (see DataRetentionIndexes2150000000000).
  */
 export class RenderJobBatchIndexMigration1950000000000 implements MigrationInterface {
   name = 'RenderJobBatchIndexMigration1950000000000';

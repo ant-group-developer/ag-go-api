@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Repository } from 'typeorm';
@@ -41,7 +41,7 @@ export class AnalysisPipelineService {
     @InjectRepository(AnalysisFarmJobEntity)
     private readonly farmJobRepo: Repository<AnalysisFarmJobEntity>,
     private readonly farmClient: FarmClient,
-    private readonly outboxService: OutboxService,
+    @Optional() private readonly outboxService: OutboxService | undefined,
     private readonly analysisLog: AnalysisLogService,
     private readonly config: ConfigService,
   ) {}
@@ -195,21 +195,13 @@ export class AnalysisPipelineService {
         completedAt: new Date(),
         usable,
       });
-      await manager.save(
-        this.outboxService.create(manager, {
-          eventType: 'asset.analysis.completed',
-          aggregateType: 'asset_analysis',
-          aggregateId: analysisId,
-          payload: { analysisId, assetId: analysis.assetId, usable, quality: analysis.quality },
-        }),
-      );
       return { assetId: analysis.assetId, usable, quality: analysis.quality, dead };
     });
     if (completed) {
       const asset = await this.assetRepo
         .findOne({ where: { id: completed.assetId } })
         .catch(() => null);
-      await this.analysisLog.write({
+      await this.analysisLog?.write({
         level: 'info',
         action: 'analysis.completed',
         message: completed.dead

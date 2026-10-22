@@ -33,6 +33,12 @@ import {
   refreshRenderBatch,
 } from './render-job-lifecycle';
 import {
+  AutoJobCounts,
+  AutoJobSortField,
+  EMPTY_JOB_COUNTS,
+  RenderJobPageOptions,
+} from './render-job-query';
+import {
   normalizeRenderSizes,
   normalizeRenderVariants,
   PREVIEW_VARIANT_SQL,
@@ -56,41 +62,17 @@ function anyOf(ids: string[]) {
   return Raw((column) => `${column} = ANY(:ids)`, { ids });
 }
 
-/** Status tabs of the auto render job list; 'active' groups queued and processing jobs. */
-export const AUTO_JOB_STATUS_FILTERS = [
-  'all',
-  'active',
-  'completed',
-  'failed',
-  'cancelled',
-] as const;
-export type AutoJobStatusFilter = (typeof AUTO_JOB_STATUS_FILTERS)[number];
-
-export function isAutoJobStatusFilter(value: unknown): value is AutoJobStatusFilter {
-  return AUTO_JOB_STATUS_FILTERS.includes(value as AutoJobStatusFilter);
-}
-
-export type AutoJobCounts = Record<AutoJobStatusFilter, number>;
-
-const EMPTY_JOB_COUNTS: AutoJobCounts = {
-  all: 0,
-  active: 0,
-  completed: 0,
-  failed: 0,
-  cancelled: 0,
-};
-
-/**
- * Sortable columns of the auto render job list: when the job was queued, when processing
- * started, and how long processing took (finished - started).
- */
-export const AUTO_JOB_SORT_FIELDS = ['createdAt', 'startedAt', 'elapsed'] as const;
-export type AutoJobSortField = (typeof AUTO_JOB_SORT_FIELDS)[number];
-export type AutoJobSortOrder = 'ASC' | 'DESC';
-
-export function isAutoJobSortField(value: unknown): value is AutoJobSortField {
-  return AUTO_JOB_SORT_FIELDS.includes(value as AutoJobSortField);
-}
+export {
+  AUTO_JOB_SORT_FIELDS,
+  AUTO_JOB_STATUS_FILTERS,
+  EMPTY_JOB_COUNTS,
+  isAutoJobSortField,
+  isAutoJobStatusFilter,
+  type AutoJobCounts,
+  type AutoJobSortField,
+  type AutoJobStatusFilter,
+  type RenderJobPageOptions,
+} from './render-job-query';
 
 /** SQL expression per sort field; jobs not started / not finished yet sort last either way. */
 const AUTO_JOB_SORT_EXPRESSIONS: Record<AutoJobSortField, string> = {
@@ -100,16 +82,6 @@ const AUTO_JOB_SORT_EXPRESSIONS: Record<AutoJobSortField, string> = {
 };
 
 export type RenderJobSource = 'batch' | 'upload' | 'import' | 'retry' | 'other';
-
-/** Paging, status tab, search and sort of a render job list. */
-export type RenderJobPageOptions = {
-  page?: number;
-  pageSize?: number;
-  status?: AutoJobStatusFilter;
-  search?: string;
-  sortBy?: AutoJobSortField;
-  sortOrder?: AutoJobSortOrder;
-};
 
 function pageBounds(options: RenderJobPageOptions): { page: number; pageSize: number } {
   return {
@@ -457,45 +429,92 @@ export class RenderService {
     return enrichedBatch as unknown as RenderBatchEntity;
   }
 
-  async listBatches(projectId: string, userId: string, userType?: 'ADMIN' | 'USER') {
+  async listBatches(
+    projectId: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    options: RenderJobPageOptions = {},
+  ) {
     const project = await this.projectRepository.findOne({ where: { id: projectId } });
     if (!project || !(await this.folderAccess.canViewProject(project, userId, userType))) {
       throw new ForbiddenException('Insufficient project permission');
     }
-    return this.enrichBatches(
-      await this.batchRepository.find({
-        where: { projectId },
-        order: { createdAt: 'DESC' },
-        take: 50,
-      }),
-    );
+    const query = this.batchRepository
+      .createQueryBuilder('batch')
+      .where('batch.project_id = :projectId', { projectId });
+    return this.pageBatches(query, options);
   }
 
-  async listAllBatches(userId: string, userType?: 'ADMIN' | 'USER') {
-    const batches = await this.batchRepository.find({
-      order: { createdAt: 'DESC' },
-    });
-    if (isAdminUserType(userType)) {
-      return this.enrichBatches(batches);
+  async listAllBatches(
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    options: RenderJobPageOptions = {},
+  ) {
+    const query = this.batchRepository.createQueryBuilder('batch');
+    if (!isAdminUserType(userType)) {
+      query.leftJoin(ProjectEntity, 'project', 'project.id = batch.project_id').where(
+        `EXISTS (
+            SELECT 1 FROM folder_closure c
+            JOIN access_grants g ON g.folder_id = c.ancestor_id
+            WHERE (c.descendant_id = batch.folder_id OR c.descendant_id = project.folder_id)
+              AND (g.category_id IS NULL OR g.category_id = project.category_id)
+              AND g.principal_type = 'user'
+              AND g.principal_id = :userId
+              AND (c.depth = 0 OR g.inherit_children = true)
+          )`,
+        { userId },
+      );
     }
-    const visible: RenderBatchEntity[] = [];
-    for (const batch of batches) {
-      if (batch.projectId) {
-        const project = await this.projectRepository.findOne({ where: { id: batch.projectId } });
-        if (
-          project &&
-          (await this.folderAccess.canAccessProject(project, userId, 'viewer', userType))
-        ) {
-          visible.push(batch);
-        }
-      } else if (
-        batch.folderId &&
-        (await this.folderAccess.canAccess(batch.folderId, userId, 'viewer', userType))
-      ) {
-        visible.push(batch);
-      }
+    return this.pageBatches(query, options);
+  }
+
+  /** One page of render batches, filtered, counted and sorted. */
+  private async pageBatches(
+    query: SelectQueryBuilder<RenderBatchEntity>,
+    options: RenderJobPageOptions,
+  ) {
+    const { page, pageSize } = pageBounds(options);
+    const status = options.status ?? 'all';
+
+    const search = options.search?.trim();
+    if (search) {
+      query.andWhere('(batch.id::text ILIKE :search OR batch.error_message ILIKE :search)', {
+        search: `%${search}%`,
+      });
     }
-    return this.enrichBatches(visible);
+
+    const countRow = await query
+      .clone()
+      .select('COUNT(*)::int', 'all')
+      .addSelect(`COUNT(*) FILTER (WHERE batch.status IN (:...activeStatuses))::int`, 'active')
+      .addSelect(`COUNT(*) FILTER (WHERE batch.status = 'completed')::int`, 'completed')
+      .addSelect(`COUNT(*) FILTER (WHERE batch.status = 'failed')::int`, 'failed')
+      .addSelect(`COUNT(*) FILTER (WHERE batch.status = 'cancelled')::int`, 'cancelled')
+      .setParameter('activeStatuses', ACTIVE_JOB_STATUSES)
+      .getRawOne<AutoJobCounts>();
+    const counts = countRow ?? { ...EMPTY_JOB_COUNTS };
+
+    if (status === 'active') {
+      query.andWhere('batch.status IN (:...activeStatuses)', {
+        activeStatuses: ACTIVE_JOB_STATUSES,
+      });
+    } else if (status !== 'all') {
+      query.andWhere('batch.status = :status', { status });
+    }
+
+    const sortOrder = options.sortOrder === 'ASC' ? 'ASC' : 'DESC';
+    query
+      .orderBy('batch.created_at', sortOrder)
+      .addOrderBy('batch.id', 'DESC')
+      .skip((page - 1) * pageSize)
+      .take(pageSize);
+
+    const [batches, total] = await Promise.all([
+      query.getMany(),
+      status === 'all' ? counts.all : counts[status],
+    ]);
+    const items = await this.enrichBatches(batches);
+    return { items, total, page, pageSize, counts };
   }
 
   /**
@@ -779,7 +798,7 @@ export class RenderService {
       startedAt: null,
       finishedAt: null,
     });
-    // Failed BullMQ jobs are kept (removeOnFail: false), so re-adding with the same id is a no-op.
+    // Failed BullMQ jobs are retained within limits (removeOnFail), so re-adding with the same id is a no-op.
     await this.mediaQueue.addProcessingJob({
       eventId: `${job.id}-retry-${uuidv7()}`,
       assetId: job.assetId,
@@ -850,7 +869,7 @@ export class RenderService {
       return rows;
     });
     // After the commit, so the workers see the jobs queued when they claim them. Failed BullMQ
-    // jobs are kept (removeOnFail: false), so each retry needs a new BullMQ job id.
+    // jobs are retained within limits (removeOnFail), so each retry needs a new BullMQ job id.
     await Promise.all(
       jobs.map((job) =>
         this.mediaQueue.addProcessingJob({

@@ -80,6 +80,47 @@ export class PrepIngestService {
     }
   }
 
+  /**
+   * Handles ingest failure for a prep farm job. Increments attempt_count in the DB.
+   * If attempts reach or exceed maxAttempts, marks the prep as failed and returns true (caller should ack).
+   * Returns false if retries remain, or if the job does not belong to a prep.
+   */
+  async handleJobFailure(job: ListedJob, error: unknown, maxAttempts: number): Promise<boolean> {
+    const row = await this.findOrAdoptFarmJob(job).catch(() => null);
+    if (!row) return false;
+
+    await this.farmJobRepo
+      .createQueryBuilder()
+      .update(AssetPrepFarmJobEntity)
+      .set({ attemptCount: () => 'attempt_count + 1' })
+      .where('farm_job_id = :farmJobId', { farmJobId: row.farmJobId })
+      .execute();
+    const updated = await this.farmJobRepo.findOne({ where: { farmJobId: row.farmJobId } });
+    const attempts =
+      updated && updated.attemptCount > (row.attemptCount ?? 0)
+        ? updated.attemptCount
+        : (row.attemptCount ?? 0) + 1;
+    row.attemptCount = attempts;
+
+    const message = errorMessage(error);
+    if (attempts >= maxAttempts) {
+      const reason = `Exceeded max ingest attempts (${attempts}/${maxAttempts}): ${message}`;
+      if (row.type === PREP_JOB_TYPES.transcribe) {
+        const prep = await this.prepRepo.findOne({ where: { id: row.prepId } });
+        if (prep && !PREP_FINISHED_STATUSES.includes(prep.status)) {
+          await this.transcriptFailed(row, prep, reason);
+        } else {
+          await this.markIngested(row, 'failed');
+        }
+      } else {
+        await this.failPrep(row, reason);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
   // ---------------------------------------------------------------------------
   // scan.prep completed
   // ---------------------------------------------------------------------------

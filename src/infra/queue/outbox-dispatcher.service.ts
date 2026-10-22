@@ -23,10 +23,13 @@ const RETRY_MAX_DELAY_MS = 60 * 60 * 1000;
 const MAX_ATTEMPTS = 30;
 /**
  * A claimed event stays hidden from the next polls, of this or another worker host, for this
- * long while it is published (a project purge can take minutes). If the dispatcher dies
- * meanwhile, the event is picked up again once the lease runs out.
+ * long while it is published. Project purges can take longer than five minutes, so `publish`
+ * renews the lease on this interval until it finishes. If the dispatcher dies meanwhile, the
+ * event is picked up again once the last lease runs out.
  */
 const CLAIM_LEASE_SQL = "NOW() + interval '5 minutes'";
+/** How often a running publish pushes `available_at` forward by another five minutes. */
+export const OUTBOX_LEASE_RENEW_MS = 2 * 60 * 1000;
 /** Events claimed per poll. */
 const CLAIM_BATCH = 20;
 /** Publishes running at once per process; a mass project deletion must not fan out unbounded. */
@@ -142,6 +145,7 @@ export class OutboxDispatcherService implements OnModuleDestroy {
 
   /** Publishes one claimed event; true when published, false when it failed (and is retried). */
   private async publish(event: OutboxEventEntity): Promise<boolean> {
+    const stopLeaseRenewal = this.renewLeaseWhilePublishing(event.id);
     try {
       if (event.eventType === 'asset.processing.requested') {
         const assetId = this.readString(event.payload.assetId);
@@ -179,8 +183,8 @@ export class OutboxDispatcherService implements OnModuleDestroy {
       } else if (event.eventType === ASSET_ANALYSIS_COMPLETED_EVENT) {
         // No consumer yet: published as is.
       } else {
-        this.logger.warn(
-          `Outbox event ${event.id} has unknown type "${event.eventType}" — marking published`,
+        throw new Error(
+          `Unknown outbox event type "${event.eventType}" — keeping pending for retry after deploy`,
         );
       }
       await this.dataSource.getRepository(OutboxEventEntity).update(event.id, {
@@ -214,7 +218,28 @@ export class OutboxDispatcherService implements OnModuleDestroy {
         lastError: message,
       });
       return false;
+    } finally {
+      stopLeaseRenewal();
     }
+  }
+
+  /**
+   * Keeps `available_at` ahead of NOW() while a long publish (project purge) is still running,
+   * so another poll cannot claim the same event. Stops when `publish` returns.
+   */
+  private renewLeaseWhilePublishing(eventId: string): () => void {
+    const timer = setInterval(() => {
+      void this.dataSource
+        .getRepository(OutboxEventEntity)
+        .update(eventId, { availableAt: () => CLAIM_LEASE_SQL })
+        .catch((error: unknown) => {
+          this.logger.error(
+            `Outbox event ${eventId} lease renew failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+    }, OUTBOX_LEASE_RENEW_MS);
+    timer.unref();
+    return () => clearInterval(timer);
   }
 
   async onModuleDestroy(): Promise<void> {

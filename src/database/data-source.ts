@@ -85,10 +85,12 @@ import { TagTimestamps2110000000000 } from './migrations/2110000000000-tag-times
 import { AssetPreps2120000000000 } from './migrations/2120000000000-asset-preps';
 import { StudioUsage2130000000000 } from './migrations/2130000000000-studio-usage';
 import { AccessGrants2140000000000 } from './migrations/2140000000000-access-grants';
+import { FarmJobRetryAttempts2140000000000 } from './migrations/2140000000000-farm-job-retry-attempts';
+import { DataRetentionIndexes2150000000000 } from './migrations/2150000000000-data-retention-indexes';
 import { UploadMetrics2150000000000 } from './migrations/2150000000000-upload-metrics';
 import { OriginalAccessBundles2160000000000 } from './migrations/2160000000000-original-access-bundles';
 
-loadEnv();
+loadEnv({ quiet: true });
 
 const { error, value: validatedEnv } = envValidationSchema.validate(process.env, {
   abortEarly: false,
@@ -188,6 +190,8 @@ export const AppDataSource = new DataSource({
     TagTimestamps2110000000000,
     AssetPreps2120000000000,
     StudioUsage2130000000000,
+    FarmJobRetryAttempts2140000000000,
+    DataRetentionIndexes2150000000000,
     AccessGrants2140000000000,
     UploadMetrics2150000000000,
     OriginalAccessBundles2160000000000,

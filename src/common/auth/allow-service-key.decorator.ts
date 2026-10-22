@@ -1,4 +1,5 @@
 import { SetMetadata } from '@nestjs/common';
+import type { AllowedServiceScope } from './service-key.constants';
 
 export const SERVICE_KEY_SCOPES_KEY = 'serviceKeyScopes';
 
@@ -13,4 +14,5 @@ export const SERVICE_KEY_SCOPES_KEY = 'serviceKeyScopes';
  *
  * Routes WITHOUT this decorator completely ignore the `X-Service-Key` header.
  */
-export const AllowServiceKey = (...scopes: string[]) => SetMetadata(SERVICE_KEY_SCOPES_KEY, scopes);
+export const AllowServiceKey = (...scopes: (AllowedServiceScope | string)[]) =>
+  SetMetadata(SERVICE_KEY_SCOPES_KEY, scopes);

@@ -1,4 +1,15 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
@@ -8,6 +19,7 @@ import { canViewUnwatermarked } from '../render/watermark-policy';
 import { BulkApproveProjectMediaDto } from './dto/bulk-approve-project-media.dto';
 import { BulkApproveProjectsDto } from './dto/bulk-approve-projects.dto';
 import { CreateProjectMediaDto } from './dto/create-project-media.dto';
+import { ListProjectMediaQueryDto } from './dto/list-project-media-query.dto';
 import { ReorderProjectMediaDto } from './dto/reorder-project-media.dto';
 import { SetProjectThumbnailDto } from './dto/set-project-thumbnail.dto';
 import { UpdateProjectMediaDto } from './dto/update-project-media.dto';
@@ -25,19 +37,17 @@ export class MediaController {
   @Get('projects/:projectId/media')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
   list(
-    @Param('projectId') projectId: string,
-    @Query('cursor') cursor: string | undefined,
-    @Query('limit') limit: string | undefined,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
+    @Query() query: ListProjectMediaQueryDto,
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
-    const parsedLimit = limit ? Number.parseInt(limit, 10) : undefined;
     return this.mediaService.list(
       projectId,
       context.userId,
       context.userType,
-      cursor,
-      Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+      query.cursor,
+      query.limit,
       canViewUnwatermarked(context.permissions, context.userType),
     );
   }
@@ -45,7 +55,7 @@ export class MediaController {
   @Post('projects/:projectId/media')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_EDIT)
   attach(
-    @Param('projectId') projectId: string,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
     @Body() dto: CreateProjectMediaDto,
     @Req() request: Request,
   ) {
@@ -55,7 +65,11 @@ export class MediaController {
 
   @Patch('project-media/:id')
   @RequireAnyPermissions(GO_PERMISSIONS.PROJECT_EDIT, GO_PERMISSIONS.PROJECT_EVALUATE)
-  update(@Param('id') id: string, @Body() dto: UpdateProjectMediaDto, @Req() request: Request) {
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateProjectMediaDto,
+    @Req() request: Request,
+  ) {
     const context = this.authContext.getContext(request);
     return this.mediaService.update(
       id,
@@ -82,14 +96,14 @@ export class MediaController {
 
   @Get('project-media/:id/evaluations')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
-  listEvaluationHistory(@Param('id') id: string, @Req() request: Request) {
+  listEvaluationHistory(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.mediaService.listEvaluationHistory(id, context.userId, context.userType);
   }
 
   @Delete('project-media/:id')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_EDIT)
-  async remove(@Param('id') id: string, @Req() request: Request) {
+  async remove(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     await this.mediaService.remove(id, context.userId, context.userType);
     return { success: true };
@@ -98,7 +112,7 @@ export class MediaController {
   @Patch('projects/:projectId/reorder-media')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_EDIT)
   async reorder(
-    @Param('projectId') projectId: string,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
     @Body() dto: ReorderProjectMediaDto,
     @Req() request: Request,
   ) {
@@ -110,7 +124,7 @@ export class MediaController {
   @Patch('projects/:projectId/thumbnail')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_EDIT)
   setThumbnail(
-    @Param('projectId') projectId: string,
+    @Param('projectId', ParseUUIDPipe) projectId: string,
     @Body() dto: SetProjectThumbnailDto,
     @Req() request: Request,
   ) {
