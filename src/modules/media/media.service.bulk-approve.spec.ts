@@ -60,7 +60,7 @@ describe('MediaService bulk approval', () => {
       assetRepository as never,
       {} as never,
       {} as never,
-      { canAccess } as unknown as FolderAccessService,
+      { canAccessProject: canAccess } as unknown as FolderAccessService,
       {} as never,
       { recordMany } as unknown as AuditService,
       {} as never,
@@ -85,7 +85,13 @@ describe('MediaService bulk approval', () => {
     );
 
     expect(lockQuery.setLock).toHaveBeenCalledWith('pessimistic_write');
-    expect(canAccess).toHaveBeenCalledWith('folder', 'alice', 'editor', 'USER', manager);
+    expect(canAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ folderId: 'folder' }),
+      'alice',
+      'editor',
+      'USER',
+      manager,
+    );
     const mediaUpdates = manager.update.mock.calls.filter(
       ([entity]: unknown[]) => entity === ProjectMediaEntity,
     );

@@ -9,6 +9,18 @@ import {
 } from 'typeorm';
 import { AssetEntity } from './asset.entity';
 
+export type UploadMetrics = {
+  client: Record<string, string | number | undefined> | null;
+  server: {
+    /** Time to assemble multipart parts on R2; absent for single PUT uploads. */
+    assembleMs?: number;
+    /** Time the complete call took in the API. */
+    completeMs: number;
+    /** From opening the session to the end of complete: what the user waited in total. */
+    sinceSessionMs: number;
+  };
+};
+
 @Entity('asset_upload_sessions')
 export class AssetUploadSessionEntity {
   @PrimaryColumn('uuid')
@@ -49,6 +61,10 @@ export class AssetUploadSessionEntity {
 
   @Column({ name: 'completed_at', type: 'timestamptz', nullable: true })
   completedAt!: Date | null;
+
+  /** Upload timings: `client` as sent by the browser, `server` measured on complete. */
+  @Column({ name: 'upload_metrics', type: 'jsonb', nullable: true })
+  uploadMetrics!: UploadMetrics | null;
 
   @Column({ name: 'created_by', type: 'varchar', length: 128 })
   createdBy!: string;

@@ -296,7 +296,7 @@ export class GoogleDriveService implements OnModuleDestroy {
 
   async summarizeSources(sources: SummarizeSourceDto[], projectId: string, userId: string) {
     const project = await this.projectRepository.findOne({ where: { id: projectId } });
-    if (!project || !(await this.folderAccess.canAccess(project.folderId, userId, 'viewer'))) {
+    if (!project || !(await this.folderAccess.canAccessProject(project, userId, 'viewer'))) {
       throw new ForbiddenException('Insufficient project permission');
     }
     const connection = await this.connectionRepository.findOne({
@@ -357,7 +357,7 @@ export class GoogleDriveService implements OnModuleDestroy {
     if (!project) {
       throw new NotFoundException('Project not found');
     }
-    if (!(await this.folderAccess.canAccess(project.folderId, userId, 'editor', userType))) {
+    if (!(await this.folderAccess.canAccessProject(project, userId, 'editor', userType))) {
       throw new ForbiddenException('Insufficient project permission');
     }
     const connection = await this.connectionRepository.findOne({

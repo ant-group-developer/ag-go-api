@@ -33,7 +33,11 @@ export class AuditService {
     if (!project) {
       throw new NotFoundException('Project not found');
     }
-    if (!(await this.folderAccess.canViewProject(project, userId, userType))) {
+    // Unlike the project itself, its history is not open to everyone once evaluated.
+    if (
+      project.ownerUserId !== userId &&
+      !(await this.folderAccess.canAccessProject(project, userId, 'viewer', userType))
+    ) {
       throw new ForbiddenException('Insufficient audit permission');
     }
 

@@ -2,7 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { isAdminUserType } from '../../common/auth/user-type';
-import { FolderAccessService } from '../folders/folder-access.service';
+import { FolderAccessService, grantReachesProjectSql } from '../folders/folder-access.service';
 
 export type AssetVisibilityContext = {
   userId: string;
@@ -17,6 +17,7 @@ export type AssetVisibilityContext = {
  * Visibility rule (from plan S5 / 2.1):
  *   A video is visible when it belongs to at least one project_media link where:
  *     - project.folder_id is in the user's accessible folders
+ *     - a `viewer` grant reaches the project (its folder, and its category when limited)
  *     - project.evaluation_status <> 'draft' OR project.owner_user_id = $userId   (ADMIN skips)
  *     - project_media.evaluation_status <> 'rejected'
  *
@@ -83,6 +84,15 @@ export class FootageScopeService {
         FROM projects p
         WHERE p.folder_id = ANY(:vp_folder_ids)
           AND (p.evaluation_status <> 'draft' OR p.owner_user_id = :vp_user_id)
+          AND ${grantReachesProjectSql(
+            {
+              folderId: 'p.folder_id',
+              categoryId: 'p.category_id',
+              evaluationStatus: 'p.evaluation_status',
+            },
+            ':vp_user_id',
+            'viewer',
+          )}
       )`,
       params: { vp_folder_ids: folderIds, vp_user_id: userId },
     };

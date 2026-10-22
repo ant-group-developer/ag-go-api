@@ -10,10 +10,8 @@ import { randomUUID } from 'node:crypto';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { AppDataSource } from '../../database/data-source';
+import { AccessGrantEntity } from '../../database/entities/access-grant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
-import { CategoryAccessGrantEntity } from '../../database/entities/category-access-grant.entity';
-import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
-import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
 import { MediaRenderJobEntity } from '../../database/entities/media-render-job.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
@@ -51,10 +49,8 @@ beforeAll(async () => {
   ds = AppDataSource;
 
   folderAccess = new FolderAccessService(
-    ds.getRepository(FolderAccessGrantEntity),
-    ds.getRepository(FolderClosureEntity),
+    ds.getRepository(AccessGrantEntity),
     ds.getRepository(FolderEntity),
-    ds.getRepository(CategoryAccessGrantEntity),
   );
 
   const actorEnrichment = {
@@ -125,9 +121,7 @@ afterEach(async () => {
     createdAssetIds.length = 0;
   }
   if (createdFolderIds.length) {
-    await ds.query(`DELETE FROM folder_access_grants WHERE folder_id = ANY($1)`, [
-      createdFolderIds,
-    ]);
+    await ds.query(`DELETE FROM access_grants WHERE folder_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folder_closure WHERE descendant_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folder_closure WHERE ancestor_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folders WHERE id = ANY($1)`, [createdFolderIds]);
@@ -164,7 +158,7 @@ async function insertFolder(
   }
   if (userId) {
     await ds.query(
-      `INSERT INTO folder_access_grants (id, folder_id, principal_type, principal_id, access_level, inherit_children)
+      `INSERT INTO access_grants (id, folder_id, principal_type, principal_id, access_level, inherit_children)
        VALUES ($1, $2, 'user', $3, $4, $5)`,
       [randomUUID(), id, userId, accessLevel, inherit],
     );

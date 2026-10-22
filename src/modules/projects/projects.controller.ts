@@ -21,6 +21,7 @@ import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
 import { RequirePermissions } from '../../common/auth/permissions.decorator';
+import { OriginalAccessService } from '../folders/original-access.service';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ListProjectsQueryDto, ProjectScopeQueryDto } from './dto/list-projects-query.dto';
 import { ProjectDto, ProjectOwnerUserDto, ProjectPageDto } from './dto/project-response.dto';
@@ -34,6 +35,7 @@ export class ProjectsController {
   constructor(
     private readonly projectsService: ProjectsService,
     private readonly authContext: AuthContextService,
+    private readonly originalAccess: OriginalAccessService,
   ) {}
 
   @Get()
@@ -42,6 +44,17 @@ export class ProjectsController {
   list(@Query() query: ListProjectsQueryDto, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.projectsService.list(query, context.userId, context.userType);
+  }
+
+  @Get('filter-scope')
+  @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
+  @ApiOperation({
+    summary:
+      'Thư mục và danh mục bộ lọc menu "Dự án" được hiện (null: tất cả, khi có go.project.read_all)',
+  })
+  filterScope(@Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.originalAccess.projectFilterScope(context.userId, context.userType);
   }
 
   @Get('owners')

@@ -1,19 +1,19 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AuthContextService } from '../../common/auth-context.service';
-import { CategoryAccessGrantEntity } from '../../database/entities/category-access-grant.entity';
+import { AccessGrantEntity } from '../../database/entities/access-grant.entity';
 import { CategoryEntity } from '../../database/entities/category.entity';
-import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
 import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
+import { OriginalAccessBundleEntity } from '../../database/entities/original-access-bundle.entity';
 import { AccountModule } from '../account/account.module';
-import { CategoryAccessController } from './category-access.controller';
-import { CategoryAccessService } from './category-access.service';
-import { FolderAccessOverviewService } from './folder-access-overview.service';
-import { FolderAccessController } from './folder-access.controller';
+import { AccessGrantsController } from './access-grants.controller';
+import { AccessGrantsService } from './access-grants.service';
 import { FolderAccessService } from './folder-access.service';
 import { FoldersController } from './folders.controller';
 import { FoldersService } from './folders.service';
+import { OriginalAccessController } from './original-access.controller';
+import { OriginalAccessService } from './original-access.service';
 
 @Module({
   imports: [
@@ -21,19 +21,19 @@ import { FoldersService } from './folders.service';
     TypeOrmModule.forFeature([
       FolderEntity,
       FolderClosureEntity,
-      FolderAccessGrantEntity,
-      CategoryAccessGrantEntity,
+      AccessGrantEntity,
       CategoryEntity,
+      OriginalAccessBundleEntity,
     ]),
   ],
-  controllers: [FoldersController, FolderAccessController, CategoryAccessController],
+  controllers: [FoldersController, AccessGrantsController, OriginalAccessController],
   providers: [
     AuthContextService,
     FolderAccessService,
-    FolderAccessOverviewService,
     FoldersService,
-    CategoryAccessService,
+    AccessGrantsService,
+    OriginalAccessService,
   ],
-  exports: [FolderAccessService],
+  exports: [FolderAccessService, OriginalAccessService],
 })
 export class FoldersModule {}
