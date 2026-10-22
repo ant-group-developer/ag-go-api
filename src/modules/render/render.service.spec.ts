@@ -148,6 +148,12 @@ function createService(
   const profileRepo = { findOne: jest.fn().mockResolvedValue(null) };
   const projectRepo = {
     findOne: jest.fn().mockResolvedValue({ id: 'proj-1', folderId: 'folder-1' }),
+    findBy: jest.fn().mockResolvedValue([{ id: 'proj-1', folderId: 'folder-1' }]),
+    createQueryBuilder: jest.fn().mockReturnValue(
+      makeQb({
+        getMany: jest.fn().mockResolvedValue([{ id: 'proj-1', folderId: 'folder-1' }]),
+      }),
+    ),
   };
   const mediaRepo = { findBy: jest.fn().mockResolvedValue([]) };
   const assetRepo = {
@@ -189,6 +195,7 @@ function createService(
 
   const folderAccess = {
     canAccess: jest.fn().mockResolvedValue(canAccess),
+    canAccessProject: jest.fn().mockResolvedValue(canAccess),
     canViewProject: jest.fn().mockResolvedValue(canViewProject),
     accessibleFolderIds: jest.fn().mockResolvedValue([]),
   };

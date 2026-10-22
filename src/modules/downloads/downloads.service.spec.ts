@@ -119,6 +119,7 @@ function createService(
 
   const folderAccess = {
     canViewProject: jest.fn().mockResolvedValue(canViewProject),
+    canSeeOriginals: jest.fn().mockResolvedValue(canViewProject),
   };
   const config = {
     getOrThrow: jest.fn().mockReturnValue(3600),

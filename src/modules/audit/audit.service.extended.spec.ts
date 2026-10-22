@@ -32,7 +32,7 @@ function createService(
   const projectRepo = {
     findOne: jest.fn().mockResolvedValue(projectExists ? { id: 'pid', folderId: 'fid' } : null),
   };
-  const folderAccess = { canViewProject: jest.fn().mockResolvedValue(canView) };
+  const folderAccess = { canAccessProject: jest.fn().mockResolvedValue(canView) };
   const actorEnrichment = {
     enrich: jest.fn().mockImplementation((items: unknown[]) => Promise.resolve(items)),
   };
