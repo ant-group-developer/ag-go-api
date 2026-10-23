@@ -60,6 +60,31 @@ export class UploadClientMetricsDto {
   @Min(0)
   concurrentUploads?: number;
 
+  @ApiPropertyOptional({
+    description: 'Slowest speed over ~1 s stretches that sent data, in Mbps',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  minMbps?: number;
+
+  @ApiPropertyOptional({
+    description: 'Fastest speed over ~1 s stretches that sent data, in Mbps',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxMbps?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Time in stretches where nothing was sent (waiting on storage or part URLs), in ms',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  idleMs?: number;
+
   @ApiPropertyOptional({ description: 'navigator.connection.effectiveType (Chromium only)' })
   @IsOptional()
   @IsString()
