@@ -208,7 +208,8 @@ export class FootageController {
   @ServiceOnly('footage:studio')
   @ApiSecurity('service-key')
   @ApiOperation({
-    summary: 'Signed URLs of videos of the given projects, originals included (AG Studio)',
+    summary:
+      'Signed URLs of videos of the given projects, originals included; others are missing (AG Studio)',
   })
   studioResolve(@Body() dto: StudioResolveAssetsDto, @Req() req: Request) {
     const ctx = this.authContext.getContext(req);

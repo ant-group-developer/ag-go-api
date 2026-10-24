@@ -1174,15 +1174,21 @@ describe('FootageService — AG Studio trusted mode', () => {
     expect(result.items[0]).toMatchObject({ sourceKind: 'original', watermarked: false });
   });
 
-  it('a video outside the given projects (or rejected in them) is refused', async () => {
-    const { added, inOther } = await seedTwoProjects();
+  it('a video outside the given projects (or rejected in them) is missing, and its prep refused', async () => {
+    const { added, inAdded, inOther } = await seedTwoProjects();
     const rejected = await insertAsset();
     await insertAnalysis(rejected);
     await linkAssetToProject(rejected, added, 'rejected');
 
-    await expect(
-      footageService.resolveStudioAssets([inOther], 'final', [added], 'service:studio'),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    const result = await footageService.resolveStudioAssets(
+      [inAdded, inOther, rejected],
+      'final',
+      [added],
+      'service:studio',
+    );
+
+    expect(result.items.map((i) => i.assetId)).toEqual([inAdded]);
+    expect(result.missing).toEqual([inOther, rejected]);
     await expect(scopeService.assertAssetsInProjects([rejected], [added])).rejects.toBeInstanceOf(
       NotFoundException,
     );

@@ -110,11 +110,11 @@ export class FootageScopeService {
   }
 
   /**
-   * Asserts that every asset has a non-rejected link in one of `projectIds` (AG Studio's trusted
-   * mode). Throws NotFoundException naming the first one that has not.
+   * Of `assetIds`, those with a non-rejected link in one of `projectIds` (AG Studio's trusted
+   * mode).
    */
-  async assertAssetsInProjects(assetIds: string[], projectIds: string[]): Promise<void> {
-    if (assetIds.length === 0) return;
+  async assetsInProjects(assetIds: string[], projectIds: string[]): Promise<Set<string>> {
+    if (assetIds.length === 0) return new Set();
     const rows = (await this.dataSource.query(
       `SELECT DISTINCT pm.asset_id AS id
        FROM project_media pm
@@ -123,7 +123,15 @@ export class FootageScopeService {
          AND pm.evaluation_status <> 'rejected'`,
       [assetIds, projectIds],
     )) as Array<{ id: string }>;
-    const found = new Set(rows.map((r) => r.id));
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * Asserts that every asset has a non-rejected link in one of `projectIds` (AG Studio's trusted
+   * mode). Throws NotFoundException naming the first one that has not.
+   */
+  async assertAssetsInProjects(assetIds: string[], projectIds: string[]): Promise<void> {
+    const found = await this.assetsInProjects(assetIds, projectIds);
     const missing = assetIds.find((id) => !found.has(id));
     if (missing) {
       throw new NotFoundException(`Video not found in the given projects: ${missing}`);

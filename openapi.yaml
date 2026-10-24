@@ -3713,8 +3713,8 @@ paths:
         - *a37
         - service-key: []
       summary:
-        Signed URLs of videos of the given projects, originals included (AG
-        Studio)
+        Signed URLs of videos of the given projects, originals included; others
+        are missing (AG Studio)
       tags: *a38
   /footage/studio/assets/prep:
     post:

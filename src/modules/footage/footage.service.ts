@@ -554,7 +554,7 @@ export class FootageService {
   /**
    * `resolveAssets` in AG Studio's trusted mode: the videos of the projects added to one of its
    * projects (someone who could download their originals added them), originals included,
-   * whoever renders.
+   * whoever renders. A video outside those projects (or rejected in them) is `missing`.
    */
   async resolveStudioAssets(
     assetIds: string[],
@@ -565,14 +565,14 @@ export class FootageService {
     prefer?: ResolvePrefer,
   ): Promise<ResolveAssetsResponse> {
     const uniqueIds = [...new Set(assetIds)];
-    await this.scopeService.assertAssetsInProjects(uniqueIds, projectIds);
-    return this.resolveFiles(uniqueIds, purpose, {
-      canAccessOriginal: true,
-      viewerClean: true,
-      userId: service,
-      requestId,
-      prefer,
-    });
+    const inProjects = await this.scopeService.assetsInProjects(uniqueIds, projectIds);
+    const resolved = await this.resolveFiles(
+      uniqueIds.filter((id) => inProjects.has(id)),
+      purpose,
+      { canAccessOriginal: true, viewerClean: true, userId: service, requestId, prefer },
+    );
+    const outside = uniqueIds.filter((id) => !inProjects.has(id));
+    return { items: resolved.items, missing: [...outside, ...resolved.missing] };
   }
 
   /** Signed URLs of videos already checked, by what the caller may see. */
