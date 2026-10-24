@@ -12,7 +12,7 @@ import { FolderEntity } from '../../database/entities/folder.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { descriptionView, type DescriptionView } from '../analysis/description-view';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-adapter';
-import { FolderAccessService } from '../folders/folder-access.service';
+import { EVALUATED_PROJECT_STATUSES, FolderAccessService } from '../folders/folder-access.service';
 import { SystemLogService } from '../logs/system-log.service';
 import { assetVariantsPrefix } from '../projects/project-asset-cleanup';
 import {
@@ -70,6 +70,19 @@ export type FootageVideo = DescriptionView & {
 };
 
 export type FacetValue = { value: string; label?: string; count: number };
+
+/** What a user may do with one project for AG Studio (`POST /footage/projects/access`). */
+export type FootageProjectAccess = {
+  projectId: string;
+  /** Listed for the user on the "Projects" page (watermarked unless the originals are open). */
+  canView: boolean;
+  /** The user may download its originals: AG Studio adds only such projects. */
+  canDownloadOriginals: boolean;
+  /** Its analysed videos (not rejected in it); 0 when the user cannot see the project. */
+  analyzedVideos: number;
+  /** Of those, the ones the analysis found usable (what a footage search lists by default). */
+  usableVideos: number;
+};
 
 /** Search filters (no paging/sorting); a facet leaves its own filter out. */
 type FootageFilters = Omit<
@@ -523,13 +536,58 @@ export class FootageService {
     prefer?: ResolvePrefer,
   ): Promise<ResolveAssetsResponse> {
     const uniqueIds = [...new Set(assetIds)];
-    const viewerClean = canViewUnwatermarked(userPermissions, userType);
     await this.scopeService.assertAssetsInScope(uniqueIds, { userId, userType });
-
-    const canAccessOriginal =
+    const canAccessOriginal = Boolean(
       isAdminUserType(userType) ||
       userPermissions?.includes(GO_PERMISSIONS.PROJECT_EVALUATE) ||
-      userPermissions?.includes(GO_PERMISSIONS.PROJECT_DOWNLOAD_ORIGINAL);
+      userPermissions?.includes(GO_PERMISSIONS.PROJECT_DOWNLOAD_ORIGINAL),
+    );
+    return this.resolveFiles(uniqueIds, purpose, {
+      canAccessOriginal,
+      viewerClean: canViewUnwatermarked(userPermissions, userType),
+      userId,
+      requestId,
+      prefer,
+    });
+  }
+
+  /**
+   * `resolveAssets` in AG Studio's trusted mode: the videos of the projects added to one of its
+   * projects (someone who could download their originals added them), originals included,
+   * whoever renders.
+   */
+  async resolveStudioAssets(
+    assetIds: string[],
+    purpose: ResolvePurpose,
+    projectIds: string[],
+    service: string,
+    requestId?: string,
+    prefer?: ResolvePrefer,
+  ): Promise<ResolveAssetsResponse> {
+    const uniqueIds = [...new Set(assetIds)];
+    await this.scopeService.assertAssetsInProjects(uniqueIds, projectIds);
+    return this.resolveFiles(uniqueIds, purpose, {
+      canAccessOriginal: true,
+      viewerClean: true,
+      userId: service,
+      requestId,
+      prefer,
+    });
+  }
+
+  /** Signed URLs of videos already checked, by what the caller may see. */
+  private async resolveFiles(
+    uniqueIds: string[],
+    purpose: ResolvePurpose,
+    opts: {
+      canAccessOriginal: boolean;
+      viewerClean: boolean;
+      userId: string;
+      requestId?: string;
+      prefer?: ResolvePrefer;
+    },
+  ): Promise<ResolveAssetsResponse> {
+    const { canAccessOriginal, viewerClean, userId, requestId, prefer } = opts;
     const ttl = this.config.get<number>('FARM_URL_TTL_SECONDS') ?? 3600;
     const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
 
@@ -635,6 +693,74 @@ export class FootageService {
   }
 
   // ---------------------------------------------------------------------------
+  // POST /footage/projects/access
+  // ---------------------------------------------------------------------------
+
+  /**
+   * What the user may do with each project for AG Studio: see it (the "Projects" page rule) and
+   * download its originals (the rule of an original download: the role's
+   * `go.project.download_original` and the originals of that project), with how many of its
+   * videos are analysed and usable (counted only for a project the user sees).
+   */
+  async projectAccess(
+    projectIds: string[],
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+    permissions?: readonly string[],
+  ): Promise<{ items: FootageProjectAccess[] }> {
+    const ids = [...new Set(projectIds)];
+    const projects = await this.query<{ id: string; evaluationStatus: string }>(
+      `SELECT CAST(id AS text) AS id, evaluation_status AS "evaluationStatus"
+       FROM projects WHERE id = ANY(:ids)`,
+      { ids },
+    );
+    const withOriginals = await this.folderAccess.projectIdsWithOriginals(
+      projects.map((p) => p.id),
+      userId,
+      userType,
+    );
+    const readAll = this.folderAccess.canReadAllProjects(userType, permissions);
+    const mayDownload =
+      isAdminUserType(userType) ||
+      Boolean(permissions?.includes(GO_PERMISSIONS.PROJECT_DOWNLOAD_ORIGINAL));
+    const evaluated: readonly string[] = EVALUATED_PROJECT_STATUSES;
+    const visible = new Set(
+      projects
+        .filter(
+          (p) => withOriginals.has(p.id) || (readAll && evaluated.includes(p.evaluationStatus)),
+        )
+        .map((p) => p.id),
+    );
+    const counts = visible.size
+      ? await this.query<{ projectId: string; analyzed: string; usable: string }>(
+          `SELECT CAST(pm.project_id AS text) AS "projectId",
+             COUNT(DISTINCT aa.asset_id) AS analyzed,
+             COUNT(DISTINCT aa.asset_id) FILTER (WHERE aa.usable = true) AS usable
+           FROM project_media pm
+           JOIN asset_analyses aa ON aa.asset_id = pm.asset_id
+             AND aa.is_current = true AND aa.description IS NOT NULL
+           WHERE pm.project_id = ANY(:ids) AND pm.evaluation_status <> 'rejected'
+           GROUP BY pm.project_id`,
+          { ids: [...visible] },
+        )
+      : [];
+    const countsById = new Map(counts.map((c) => [c.projectId, c]));
+    return {
+      items: ids.map((projectId) => {
+        const canView = visible.has(projectId);
+        const c = countsById.get(projectId);
+        return {
+          projectId,
+          canView,
+          canDownloadOriginals: canView && mayDownload && withOriginals.has(projectId),
+          analyzedVideos: Number(c?.analyzed ?? 0),
+          usableVideos: Number(c?.usable ?? 0),
+        };
+      }),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // GET /footage/search
   // ---------------------------------------------------------------------------
 
@@ -642,6 +768,7 @@ export class FootageService {
     query: FootageSearchQueryDto,
     userId: string,
     userType?: 'ADMIN' | 'USER',
+    studioProjectIds?: string[],
   ): Promise<{
     items: Array<FootageVideo & { score: number }>;
     nextCursor: string | null;
@@ -649,7 +776,7 @@ export class FootageService {
   }> {
     const limit = Math.min(query.limit ?? 40, 100);
     const offset = query.page ? (query.page - 1) * limit : decodeCursor(query.cursor).offset;
-    const scope = await this.resolveScope(query.folderIds, userId, userType);
+    const scope = await this.resolveScope(query.folderIds, userId, userType, studioProjectIds);
     if (!scope) return { items: [], nextCursor: null, total: 0 };
     const { cte, params } = scope;
     const queryParams: Record<string, unknown> = { ...params };
@@ -709,6 +836,7 @@ export class FootageService {
     query: FootageFilters,
     userId: string,
     userType?: 'ADMIN' | 'USER',
+    studioProjectIds?: string[],
   ): Promise<{
     tags: FacetValue[];
     genres: FacetValue[];
@@ -731,7 +859,7 @@ export class FootageService {
       projects: [],
       authors: [],
     };
-    const scope = await this.resolveScope(query.folderIds, userId, userType);
+    const scope = await this.resolveScope(query.folderIds, userId, userType, studioProjectIds);
     if (!scope) return empty;
     const { cte, params } = scope;
     const facet = async (
@@ -835,12 +963,30 @@ export class FootageService {
   // Helpers
   // ---------------------------------------------------------------------------
 
-  /** Visible-projects CTE over the folders searched; null when the user can see no folder. */
+  /**
+   * Visible-projects CTE over the folders searched; null when the user can see no folder. With
+   * `studioProjectIds` (AG Studio's trusted mode) those projects whoever asks, in their folders.
+   */
   private async resolveScope(
     folderIds: string[] | undefined,
     userId: string,
     userType?: 'ADMIN' | 'USER',
+    studioProjectIds?: string[],
   ): Promise<{ cte: string; params: Record<string, unknown> } | null> {
+    if (studioProjectIds) {
+      const projectFolderIds = (
+        await this.query<{ id: string }>(
+          `SELECT DISTINCT CAST(folder_id AS text) AS id FROM projects WHERE id = ANY(:ids)`,
+          { ids: studioProjectIds },
+        )
+      ).map((row) => row.id);
+      const scopeFolderIds = folderIds?.length
+        ? await this.scopeService.expandToAccessibleSubtree(folderIds, projectFolderIds)
+        : projectFolderIds;
+      if (scopeFolderIds.length === 0) return null;
+      const { cte, params } = this.scopeService.buildProjectsCte(studioProjectIds);
+      return { cte, params: { ...params, scope_folder_ids: scopeFolderIds } };
+    }
     const accessibleFolderIds = await this.folderAccess.accessibleFolderIds(userId, userType);
     const scopeFolderIds = folderIds?.length
       ? await this.scopeService.expandToAccessibleSubtree(folderIds, accessibleFolderIds)
