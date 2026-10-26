@@ -87,6 +87,7 @@ import { StudioUsage2130000000000 } from './migrations/2130000000000-studio-usag
 import { AccessGrants2140000000000 } from './migrations/2140000000000-access-grants';
 import { UploadMetrics2150000000000 } from './migrations/2150000000000-upload-metrics';
 import { OriginalAccessBundles2160000000000 } from './migrations/2160000000000-original-access-bundles';
+import { UploadSpeedLogRange2170000000000 } from './migrations/2170000000000-upload-speed-log-range';
 
 loadEnv();
 
@@ -191,6 +192,7 @@ export const AppDataSource = new DataSource({
     AccessGrants2140000000000,
     UploadMetrics2150000000000,
     OriginalAccessBundles2160000000000,
+    UploadSpeedLogRange2170000000000,
   ],
   synchronize: false,
 });
