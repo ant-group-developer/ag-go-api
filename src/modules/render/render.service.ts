@@ -19,7 +19,7 @@ import { ProjectEntity } from '../../database/entities/project.entity';
 import { RenderBatchEntity } from '../../database/entities/render-batch.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { MediaQueueService } from '../../infra/queue/media-queue.service';
-import { FolderAccessService } from '../folders/folder-access.service';
+import { FolderAccessService, grantReachesProjectSql } from '../folders/folder-access.service';
 import { CreateRenderBatchDto } from './dto/create-render-batch.dto';
 import {
   RerenderMediaType,
@@ -280,7 +280,7 @@ export class RenderService {
       if (!project) {
         throw new NotFoundException('Project not found');
       }
-      if (!(await this.folderAccess.canAccess(project.folderId, userId, 'manager', userType))) {
+      if (!(await this.folderAccess.canAccessProject(project, userId, 'manager', userType))) {
         throw new ForbiddenException('Render batch requires folder manager permission');
       }
     }
@@ -484,7 +484,7 @@ export class RenderService {
         const project = await this.projectRepository.findOne({ where: { id: batch.projectId } });
         if (
           project &&
-          (await this.folderAccess.canAccess(project.folderId, userId, 'viewer', userType))
+          (await this.folderAccess.canAccessProject(project, userId, 'viewer', userType))
         ) {
           visible.push(batch);
         }
@@ -596,8 +596,17 @@ export class RenderService {
       query.andWhere(
         `EXISTS (SELECT 1 FROM project_media media
                  INNER JOIN projects project ON project.id = media.project_id
-                 WHERE media.asset_id = job.asset_id AND project.folder_id IN (:...folderIds))`,
-        { folderIds },
+                 WHERE media.asset_id = job.asset_id AND project.folder_id IN (:...folderIds)
+                   AND ${grantReachesProjectSql(
+                     {
+                       folderId: 'project.folder_id',
+                       categoryId: 'project.category_id',
+                       evaluationStatus: 'project.evaluation_status',
+                     },
+                     ':jobUserId',
+                     'viewer',
+                   )})`,
+        { folderIds, jobUserId: userId },
       );
     }
     return this.pageJobs(query, options);
@@ -984,15 +993,13 @@ export class RenderService {
     userId: string,
     userType?: 'ADMIN' | 'USER',
   ): Promise<void> {
-    const rows = (await this.dataSource.query(
-      `SELECT DISTINCT project.folder_id AS "folderId"
-       FROM project_media media
-       INNER JOIN projects project ON project.id = media.project_id
-       WHERE media.asset_id = $1`,
-      [assetId],
-    )) as Array<{ folderId: string }>;
-    for (const row of rows) {
-      if (await this.folderAccess.canAccess(row.folderId, userId, 'editor', userType)) {
+    const projects = await this.projectRepository
+      .createQueryBuilder('project')
+      .innerJoin(ProjectMediaEntity, 'media', 'media.project_id = project.id')
+      .where('media.asset_id = :assetId', { assetId })
+      .getMany();
+    for (const project of projects) {
+      if (await this.folderAccess.canAccessProject(project, userId, 'editor', userType)) {
         return;
       }
     }
@@ -1021,7 +1028,7 @@ export class RenderService {
       const project = await this.projectRepository.findOne({ where: { id: batch.projectId } });
       if (
         !project ||
-        !(await this.folderAccess.canAccess(project.folderId, userId, 'manager', userType))
+        !(await this.folderAccess.canAccessProject(project, userId, 'manager', userType))
       ) {
         throw new ForbiddenException('Insufficient render batch permission');
       }

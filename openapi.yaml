@@ -56,8 +56,8 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a1
       summary:
-        Every active folder, to filter the "Projects" page (listed by category
-        grants)
+        Every active folder, to filter the "Projects" page (it lists every
+        evaluated project)
       tags: *a2
   /folders:
     post:
@@ -119,103 +119,9 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a1
       tags: *a2
-  /folders/{id}/access-grants:
+  /access-grants/users:
     get:
-      operationId: FoldersController_grants
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
-    put:
-      operationId: FoldersController_replaceGrants
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: array
-              items:
-                type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
-  /folders/{id}/access-grants/{principalId}:
-    put:
-      operationId: FoldersController_setGrant
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-        - name: principalId
-          required: true
-          in: path
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SetFolderGrantDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
-    delete:
-      operationId: FoldersController_removeGrant
-      parameters:
-        - name: id
-          required: true
-          in: path
-          schema:
-            type: string
-        - name: principalId
-          required: true
-          in: path
-          schema:
-            type: string
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security: *a1
-      tags: *a2
-  /folder-access/users:
-    get:
-      operationId: FolderAccessController_users
+      operationId: AccessGrantsController_users
       parameters:
         - name: keyword
           required: false
@@ -230,7 +136,7 @@ paths:
             type: string
             enum:
               - user
-              - folderCount
+              - grantCount
               - highestLevel
               - updatedAt
         - name: sortOrder
@@ -265,11 +171,12 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: &a3
         - bearer: []
+      summary: Users with grants the requester manages
       tags: &a4
-        - folder-access
-  /folder-access/users/{userId}/grants:
+        - access-grants
+  /access-grants/users/{userId}:
     get:
-      operationId: FolderAccessController_userGrants
+      operationId: AccessGrantsController_userGrants
       parameters:
         - name: userId
           required: true
@@ -284,10 +191,112 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a3
+      summary: Grants of one user that the requester manages
       tags: *a4
-  /category-access/users:
+  /access-grants/folders/{folderId}:
     get:
-      operationId: CategoryAccessController_users
+      operationId: AccessGrantsController_folderGrants
+      parameters:
+        - name: folderId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      summary: Grants on a folder and those it inherits (folder managers)
+      tags: *a4
+  /access-grants/categories/{categoryId}:
+    get:
+      operationId: AccessGrantsController_categoryGrants
+      parameters:
+        - name: categoryId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      summary: Grants limited to one category that the requester manages
+      tags: *a4
+  /access-grants:
+    post:
+      operationId: AccessGrantsController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAccessGrantsDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      summary:
+        Cấp quyền làm việc cho một user trên thư mục × từng danh mục (hoặc mọi
+        danh mục)
+      tags: *a4
+  /access-grants/{id}:
+    patch:
+      operationId: AccessGrantsController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAccessGrantDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      tags: *a4
+    delete:
+      operationId: AccessGrantsController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a3
+      tags: *a4
+  /original-access/users:
+    get:
+      operationId: OriginalAccessController_users
       parameters:
         - name: keyword
           required: false
@@ -302,7 +311,8 @@ paths:
             type: string
             enum:
               - user
-              - categoryCount
+              - grantCount
+              - highestLevel
               - updatedAt
         - name: sortOrder
           required: false
@@ -336,12 +346,31 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: &a5
         - bearer: []
-      summary: Users with category grants (they decide the "Projects" page)
+      summary: "Users with bundles (admins: every one; others: those they granted)"
       tags: &a6
-        - category-access
-  /category-access/categories/{categoryId}/grants:
+        - original-access
+  /original-access/users/{userId}:
     get:
-      operationId: CategoryAccessController_categoryGrants
+      operationId: OriginalAccessController_userBundles
+      parameters:
+        - name: userId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a5
+      summary: Every bundle of one user; `canEdit` says which are the requester's
+      tags: *a6
+  /original-access/categories/{categoryId}:
+    get:
+      operationId: OriginalAccessController_categoryBundles
       parameters:
         - name: categoryId
           required: true
@@ -356,17 +385,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a5
-      summary: Users granted one category
+      summary: Bundles holding one category
       tags: *a6
-  /category-access/users/{userId}/grants:
+  /original-access/reach:
     get:
-      operationId: CategoryAccessController_userGrants
-      parameters:
-        - name: userId
-          required: true
-          in: path
-          schema:
-            type: string
+      operationId: OriginalAccessController_reach
+      parameters: []
       responses:
         "200":
           description: ""
@@ -375,11 +399,55 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a5
+      summary:
+        "Thư mục và danh mục người gọi được đưa vào gói (null: không giới hạn,
+        Admin)"
       tags: *a6
+  /original-access/preview:
     post:
-      operationId: CategoryAccessController_addGrants
+      operationId: OriginalAccessController_preview
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreviewOriginalAccessBundleDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a5
+      summary: Các cặp thư mục × danh mục nằm ngoài phần của người gọi
+      tags: *a6
+  /original-access/bundles:
+    post:
+      operationId: OriginalAccessController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveOriginalAccessBundleDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a5
+      summary: "Cấp một gói bản gốc: các thư mục × các danh mục"
+      tags: *a6
+  /original-access/bundles/{id}:
+    patch:
+      operationId: OriginalAccessController_update
       parameters:
-        - name: userId
+        - name: id
           required: true
           in: path
           schema:
@@ -389,9 +457,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AddCategoryGrantsDto"
+              $ref: "#/components/schemas/SaveOriginalAccessBundleDto"
       responses:
-        "201":
+        "200":
           description: ""
           content:
             application/json:
@@ -399,16 +467,10 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a5
       tags: *a6
-  /category-access/users/{userId}/grants/{categoryId}:
     delete:
-      operationId: CategoryAccessController_removeGrant
+      operationId: OriginalAccessController_remove
       parameters:
-        - name: userId
-          required: true
-          in: path
-          schema:
-            type: string
-        - name: categoryId
+        - name: id
           required: true
           in: path
           schema:
@@ -512,16 +574,7 @@ paths:
   /categories:
     get:
       operationId: CategoriesController_list
-      parameters:
-        - name: granted
-          required: false
-          in: query
-          description:
-            Only the categories of the "Projects" page of the current user (all
-            for admins), granted to them or of an evaluated project in their
-            folders.
-          schema:
-            type: boolean
+      parameters: []
       responses:
         "200":
           description: ""
@@ -994,6 +1047,22 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a17
+      tags: *a18
+  /projects/filter-scope:
+    get:
+      operationId: ProjectsController_filterScope
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a17
+      summary:
+        'Thư mục và danh mục bộ lọc menu "Dự án" được hiện (null: tất cả, khi
+        có go.project.read_all)'
       tags: *a18
   /projects/owners:
     get:
@@ -1543,10 +1612,38 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security:
+      security: &a22
         - bearer: []
-      tags:
+      tags: &a23
         - logs
+  /logs/upload-speed/filters:
+    get:
+      operationId: LogsController_uploadSpeedFilters
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a22
+      summary: Projects and uploaders found in the upload speed log (admins only)
+      tags: *a23
+  /logs/upload-speed:
+    get:
+      operationId: LogsController_listUploadSpeed
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a22
+      summary: Completed uploads with their transfer speed (admins only)
+      tags: *a23
   /projects/{projectId}/media:
     get:
       operationId: MediaController_list
@@ -1563,9 +1660,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a22
+      security: &a24
         - bearer: []
-      tags: &a23
+      tags: &a25
         - project-media
     post:
       operationId: MediaController_attach
@@ -1588,8 +1685,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /project-media/{id}:
     patch:
       operationId: MediaController_update
@@ -1612,8 +1709,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
     delete:
       operationId: MediaController_remove
       parameters:
@@ -1629,8 +1726,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /project-media/bulk-approve:
     post:
       operationId: MediaController_bulkApproveMedia
@@ -1648,8 +1745,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /projects/bulk-approve:
     post:
       operationId: MediaController_bulkApproveProjects
@@ -1667,8 +1764,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /project-media/{id}/evaluations:
     get:
       operationId: MediaController_listEvaluationHistory
@@ -1685,8 +1782,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /projects/{projectId}/reorder-media:
     patch:
       operationId: MediaController_reorder
@@ -1709,8 +1806,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /projects/{projectId}/thumbnail:
     patch:
       operationId: MediaController_setThumbnail
@@ -1733,8 +1830,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      tags: *a23
+      security: *a24
+      tags: *a25
   /assets/upload-session:
     post:
       operationId: AssetsController_createUploadSession
@@ -1752,9 +1849,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a24
+      security: &a26
         - bearer: []
-      tags: &a25
+      tags: &a27
         - assets
   /assets/{assetId}/upload-parts:
     post:
@@ -1778,9 +1875,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
+      security: *a26
       summary: Presigned URL để upload từng phần của phiên upload multipart
-      tags: *a25
+      tags: *a27
   /assets/{assetId}/complete:
     post:
       operationId: AssetsController_completeUpload
@@ -1803,8 +1900,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /assets/{assetId}/abort:
     post:
       operationId: AssetsController_abortUpload
@@ -1827,8 +1924,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /assets/{assetId}/variants:
     get:
       operationId: AssetsController_listVariants
@@ -1845,8 +1942,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /assets/{assetId}/original-url:
     get:
       operationId: AssetsController_originalUrl
@@ -1863,9 +1960,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
+      security: *a26
       summary: Presigned URL file gốc (không watermark) để đánh giá media
-      tags: *a25
+      tags: *a27
   /assets/{assetId}/renditions:
     get:
       operationId: AssetsController_listRenditions
@@ -1882,11 +1979,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
+      security: *a26
       summary:
         Các bản preview (độ phân giải, watermark, bitrate) người xem được chọn;
         bản không watermark chỉ cho người có quyền xem file gốc
-      tags: *a25
+      tags: *a27
   /assets/{assetId}/preview/{variantCode}:
     get:
       operationId: AssetsController_preview
@@ -1904,8 +2001,8 @@ paths:
       responses:
         "200":
           description: ""
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /assets/{assetId}/preview-url:
     get:
       operationId: AssetsController_previewUrl
@@ -1922,11 +2019,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
+      security: *a26
       summary:
         Tạo presigned URL để tải preview trực tiếp từ R2. variantCode=preview
         kèm width chọn kích thước phù hợp.
-      tags: *a25
+      tags: *a27
   /assets/{assetId}/retry:
     post:
       operationId: AssetsController_retry
@@ -1943,8 +2040,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a26
+      tags: *a27
   /render-profiles:
     get:
       operationId: RenderController_listProfiles
@@ -1956,9 +2053,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a26
+      security: &a28
         - bearer: []
-      tags: &a27
+      tags: &a29
         - render
   /render-profiles/{id}:
     patch:
@@ -1982,8 +2079,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-watermark/upload-session:
     post:
       operationId: RenderController_createWatermarkUploadSession
@@ -2001,8 +2098,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-watermark/logos/{assetId}/url:
     get:
       operationId: RenderController_getWatermarkLogoUrl
@@ -2019,8 +2116,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-watermark/assets/{assetId}/complete:
     post:
       operationId: RenderController_completeWatermarkUpload
@@ -2043,8 +2140,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-watermark/assets/{assetId}/abort:
     post:
       operationId: RenderController_abortWatermarkUpload
@@ -2067,8 +2164,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-batches:
     post:
       operationId: RenderController_createBatch
@@ -2086,8 +2183,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
     get:
       operationId: RenderController_listAllBatches
       parameters: []
@@ -2098,8 +2195,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /projects/{projectId}/render-batches:
     get:
       operationId: RenderController_listBatches
@@ -2116,8 +2213,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-batches/{id}/jobs:
     get:
       operationId: RenderController_listJobs
@@ -2134,8 +2231,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-jobs/auto:
     get:
       operationId: RenderController_listAutoJobs
@@ -2147,8 +2244,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-jobs/{id}/retry:
     post:
       operationId: RenderController_retryJob
@@ -2165,8 +2262,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-watermark/rerender:
     post:
       operationId: RenderController_rerenderWatermark
@@ -2184,8 +2281,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-batches/{id}:
     get:
       operationId: RenderController_getBatch
@@ -2202,8 +2299,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-batches/{id}/cancel:
     post:
       operationId: RenderController_cancelBatch
@@ -2220,8 +2317,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-batches/{id}/retry-failed:
     post:
       operationId: RenderController_retryFailedJobs
@@ -2238,8 +2335,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-batches/{id}/pause:
     post:
       operationId: RenderController_pauseBatch
@@ -2256,8 +2353,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /render-batches/{id}/resume:
     post:
       operationId: RenderController_resumeBatch
@@ -2274,8 +2371,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a28
+      tags: *a29
   /downloads:
     post:
       operationId: DownloadsController_create
@@ -2293,9 +2390,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a28
+      security: &a30
         - bearer: []
-      tags: &a29
+      tags: &a31
         - downloads
   /downloads/{id}:
     get:
@@ -2313,8 +2410,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a30
+      tags: *a31
   /downloads/{id}/cancel:
     post:
       operationId: DownloadsController_cancel
@@ -2331,8 +2428,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a30
+      tags: *a31
   /statistics/summary:
     get:
       operationId: StatisticsController_summary
@@ -2365,9 +2462,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a30
+      security: &a32
         - bearer: []
-      tags: &a31
+      tags: &a33
         - statistics
   /statistics/trend:
     get:
@@ -2401,8 +2498,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /statistics/project-trend:
     get:
       operationId: StatisticsController_projectTrend
@@ -2435,8 +2532,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /statistics/breakdown:
     get:
       operationId: StatisticsController_breakdown
@@ -2492,8 +2589,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /statistics/progress:
     get:
       operationId: StatisticsController_progress
@@ -2512,8 +2609,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /statistics/team:
     get:
       operationId: StatisticsController_team
@@ -2546,8 +2643,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /statistics/studio-usage:
     get:
       operationId: StatisticsController_studioUsage
@@ -2580,8 +2677,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /statistics/operations:
     get:
       operationId: StatisticsController_operations
@@ -2614,8 +2711,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /statistics/activity:
     get:
       operationId: StatisticsController_activity
@@ -2634,8 +2731,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a32
+      tags: *a33
   /google-drive/connection:
     get:
       operationId: GoogleDriveController_connection
@@ -2647,9 +2744,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a32
+      security: &a34
         - bearer: []
-      tags: &a33
+      tags: &a35
         - google-drive
     delete:
       operationId: GoogleDriveController_disconnect
@@ -2661,8 +2758,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/connection/start:
     post:
       operationId: GoogleDriveController_start
@@ -2684,8 +2781,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/connection/callback:
     get:
       operationId: GoogleDriveController_callback
@@ -2707,8 +2804,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/picker-token:
     get:
       operationId: GoogleDriveController_pickerToken
@@ -2720,8 +2817,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/sources/summary:
     post:
       operationId: GoogleDriveController_summarizeSources
@@ -2739,8 +2836,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/imports:
     post:
       operationId: GoogleDriveController_createImport
@@ -2758,8 +2855,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
     get:
       operationId: GoogleDriveController_listImports
       parameters:
@@ -2827,8 +2924,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/imports/{batchId}:
     get:
       operationId: GoogleDriveController_getImport
@@ -2845,8 +2942,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/imports/{batchId}/cancel:
     post:
       operationId: GoogleDriveController_cancel
@@ -2863,8 +2960,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/imports/{batchId}/pause:
     post:
       operationId: GoogleDriveController_pause
@@ -2881,8 +2978,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/imports/{batchId}/resume:
     post:
       operationId: GoogleDriveController_resume
@@ -2899,8 +2996,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/imports/{batchId}/items:
     get:
       operationId: GoogleDriveController_items
@@ -2966,8 +3063,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /google-drive/imports/{batchId}/items/{itemId}/retry:
     post:
       operationId: GoogleDriveController_retry
@@ -2989,8 +3086,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a34
+      tags: *a35
   /settings/public:
     get:
       operationId: SettingsController_getPublic
@@ -3002,7 +3099,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      tags: &a34
+      tags: &a36
         - settings
   /settings:
     get:
@@ -3017,7 +3114,7 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security:
         - bearer: []
-      tags: *a34
+      tags: *a36
     patch:
       operationId: SettingsController_update
       parameters: []
@@ -3036,7 +3133,7 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security:
         - bearer: []
-      tags: *a34
+      tags: *a36
   /footage/folders:
     get:
       operationId: FootageController_getFolders
@@ -3049,11 +3146,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - &a35
+        - &a37
           bearer: []
         - service-key: []
       summary: List accessible folders with analysed video counts
-      tags: &a36
+      tags: &a38
         - footage
   /footage/catalog:
     post:
@@ -3073,10 +3170,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a37
         - service-key: []
       summary: Analysed videos of the given folders with their descriptions (AI input)
-      tags: *a36
+      tags: *a38
   /footage/assets/{assetId}/media:
     get:
       operationId: FootageController_getAssetMedia
@@ -3094,10 +3191,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a37
         - service-key: []
       summary: Preview URL of the whole video, keyframes and contact sheet
-      tags: *a36
+      tags: *a38
   /footage/assets/{assetId}/preview-url:
     get:
       operationId: FootageController_getPreviewUrl
@@ -3121,10 +3218,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a37
         - service-key: []
       summary: Presigned URL of one preview offered by the footage player
-      tags: *a36
+      tags: *a38
   /footage/assets/resolve:
     post:
       operationId: FootageController_resolveAssets
@@ -3143,10 +3240,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a37
         - service-key: []
       summary: Signed URLs of whole video files for rendering (respects decision 8)
-      tags: *a36
+      tags: *a38
   /footage/assets/prep:
     post:
       operationId: FootageController_readPreps
@@ -3165,12 +3262,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a37
         - service-key: []
       summary:
         Prepared Studio inputs (shots, frames, sheets, transcript) or how far
         their prep is
-      tags: *a36
+      tags: *a38
   /footage/assets/prep/run:
     post:
       operationId: FootageController_runPreps
@@ -3189,12 +3286,480 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a37
         - service-key: []
       summary:
         Run the prep of footage now (missing or failed), or raise one waiting
         in a backfill
-      tags: *a36
+      tags: *a38
+  /footage/projects/access:
+    post:
+      operationId: FootageController_projectAccess
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FootageProjectAccessDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a37
+        - service-key: []
+      summary:
+        Whether the user sees each project and may download its originals (AG
+        Studio adds those)
+      tags: *a38
+  /footage/studio/search:
+    get:
+      operationId: FootageController_studioSearch
+      parameters:
+        - name: q
+          required: false
+          in: query
+          description: Free-text search query.
+          schema:
+            type: string
+        - name: folderIds
+          required: false
+          in: query
+          description:
+            Comma-separated folder IDs (subfolders the user can reach are
+            included).
+          schema:
+            type: array
+            items:
+              type: string
+        - name: categoryIds
+          required: false
+          in: query
+          description: Comma-separated category IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: projectIds
+          required: false
+          in: query
+          description: Comma-separated project IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: ownerUserIds
+          required: false
+          in: query
+          description: Comma-separated user IDs of project owners (authors).
+          schema:
+            type: array
+            items:
+              type: string
+        - name: resolutions
+          required: false
+          in: query
+          description: Comma-separated resolution classes (by the short edge of the frame).
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - 4k
+                - 2k
+                - 1080p
+                - 720p
+                - sd
+        - name: tags
+          required: false
+          in: query
+          description: Comma-separated tag values.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: provinceIds
+          required: false
+          in: query
+          description: Comma-separated province IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: genres
+          required: false
+          in: query
+          description: Comma-separated genres.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: timesOfDay
+          required: false
+          in: query
+          description: Comma-separated times of day.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: orientations
+          required: false
+          in: query
+          description: Comma-separated orientations.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: minDurationMs
+          required: false
+          in: query
+          description: Minimum video duration in milliseconds.
+          schema:
+            type: number
+        - name: maxDurationMs
+          required: false
+          in: query
+          description: Maximum video duration in milliseconds.
+          schema:
+            type: number
+        - name: usableOnly
+          required: false
+          in: query
+          description: Include only usable videos (default true).
+          schema:
+            default: true
+            type: boolean
+        - name: usability
+          required: false
+          in: query
+          description:
+            Usable videos, unusable ones or all; wins over `usableOnly`
+            (default usable).
+          schema:
+            type: string
+            enum:
+              - usable
+              - unusable
+              - all
+        - name: limit
+          required: false
+          in: query
+          description: Max items per page (default 40, max 100).
+          schema:
+            default: 40
+            type: number
+        - name: cursor
+          required: false
+          in: query
+          description: Opaque pagination cursor.
+          schema:
+            type: string
+        - name: page
+          required: false
+          in: query
+          description: Page number (1-based); wins over `cursor`.
+          schema:
+            type: number
+        - name: sortBy
+          required: false
+          in: query
+          description:
+            relevance = text match (with `q`), quality and approval; folder /
+            project = the first visible project of the video (by folder path, by
+            name).
+          schema:
+            default: relevance
+            type: string
+            enum:
+              - relevance
+              - analyzedAt
+              - quality
+              - duration
+              - resolution
+              - name
+              - folder
+              - project
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            default: desc
+            type: string
+            enum:
+              - asc
+              - desc
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a37
+        - service-key: []
+      summary: Footage search within the given projects (AG Studio, service key only)
+      tags: *a38
+  /footage/studio/facets:
+    get:
+      operationId: FootageController_studioFacets
+      parameters:
+        - name: q
+          required: false
+          in: query
+          description: Free-text search query.
+          schema:
+            type: string
+        - name: folderIds
+          required: false
+          in: query
+          description:
+            Comma-separated folder IDs (subfolders the user can reach are
+            included).
+          schema:
+            type: array
+            items:
+              type: string
+        - name: categoryIds
+          required: false
+          in: query
+          description: Comma-separated category IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: projectIds
+          required: false
+          in: query
+          description: Comma-separated project IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: ownerUserIds
+          required: false
+          in: query
+          description: Comma-separated user IDs of project owners (authors).
+          schema:
+            type: array
+            items:
+              type: string
+        - name: resolutions
+          required: false
+          in: query
+          description: Comma-separated resolution classes (by the short edge of the frame).
+          schema:
+            type: array
+            items:
+              type: string
+              enum:
+                - 4k
+                - 2k
+                - 1080p
+                - 720p
+                - sd
+        - name: tags
+          required: false
+          in: query
+          description: Comma-separated tag values.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: provinceIds
+          required: false
+          in: query
+          description: Comma-separated province IDs.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: genres
+          required: false
+          in: query
+          description: Comma-separated genres.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: timesOfDay
+          required: false
+          in: query
+          description: Comma-separated times of day.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: orientations
+          required: false
+          in: query
+          description: Comma-separated orientations.
+          schema:
+            type: array
+            items:
+              type: string
+        - name: minDurationMs
+          required: false
+          in: query
+          description: Minimum video duration in milliseconds.
+          schema:
+            type: number
+        - name: maxDurationMs
+          required: false
+          in: query
+          description: Maximum video duration in milliseconds.
+          schema:
+            type: number
+        - name: usableOnly
+          required: false
+          in: query
+          description: Include only usable videos (default true).
+          schema:
+            default: true
+            type: boolean
+        - name: usability
+          required: false
+          in: query
+          description:
+            Usable videos, unusable ones or all; wins over `usableOnly`
+            (default usable).
+          schema:
+            type: string
+            enum:
+              - usable
+              - unusable
+              - all
+        - name: limit
+          required: false
+          in: query
+          description: Max items per page (default 40, max 100).
+          schema:
+            default: 40
+            type: number
+        - name: cursor
+          required: false
+          in: query
+          description: Opaque pagination cursor.
+          schema:
+            type: string
+        - name: page
+          required: false
+          in: query
+          description: Page number (1-based); wins over `cursor`.
+          schema:
+            type: number
+        - name: sortBy
+          required: false
+          in: query
+          description:
+            relevance = text match (with `q`), quality and approval; folder /
+            project = the first visible project of the video (by folder path, by
+            name).
+          schema:
+            default: relevance
+            type: string
+            enum:
+              - relevance
+              - analyzedAt
+              - quality
+              - duration
+              - resolution
+              - name
+              - folder
+              - project
+        - name: sortOrder
+          required: false
+          in: query
+          schema:
+            default: desc
+            type: string
+            enum:
+              - asc
+              - desc
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a37
+        - service-key: []
+      summary: Facet counts within the given projects (AG Studio, service key only)
+      tags: *a38
+  /footage/studio/assets/resolve:
+    post:
+      operationId: FootageController_studioResolve
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StudioResolveAssetsDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a37
+        - service-key: []
+      summary:
+        Signed URLs of videos of the given projects, originals included; others
+        are missing (AG Studio)
+      tags: *a38
+  /footage/studio/assets/prep:
+    post:
+      operationId: FootageController_studioReadPreps
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StudioPrepAssetsDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a37
+        - service-key: []
+      summary: Prepared Studio inputs of videos of the given projects (AG Studio)
+      tags: *a38
+  /footage/studio/assets/prep/run:
+    post:
+      operationId: FootageController_studioRunPreps
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StudioPrepAssetsDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a37
+        - service-key: []
+      summary: Run the prep of videos of the given projects now (AG Studio)
+      tags: *a38
   /footage/search:
     get:
       operationId: FootageController_search
@@ -3379,10 +3944,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a37
         - service-key: []
       summary: Full-text + trigram search across analysed videos
-      tags: *a36
+      tags: *a38
   /footage/facets:
     get:
       operationId: FootageController_getFacets
@@ -3567,10 +4132,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a35
+        - *a37
         - service-key: []
       summary: Facet counts for search filters
-      tags: *a36
+      tags: *a38
   /usage/studio-events:
     post:
       operationId: StudioUsageController_record
@@ -3591,7 +4156,7 @@ paths:
       security:
         - service-key: []
       summary: Footage usage events from AG Studio (service key only)
-      tags: &a37
+      tags: &a39
         - usage
   /footage/assets/{assetId}/studio-usage:
     get:
@@ -3612,7 +4177,7 @@ paths:
       security:
         - bearer: []
       summary: How AG Studio used one footage, and its downloads
-      tags: *a37
+      tags: *a39
   /projects/{projectId}/studio-usage:
     get:
       operationId: StudioUsageController_projectUsage
@@ -3632,7 +4197,7 @@ paths:
       security:
         - bearer: []
       summary: How AG Studio used a project's footage, and their downloads
-      tags: *a37
+      tags: *a39
   /system/workers:
     get:
       operationId: WorkersController_list
@@ -3691,12 +4256,23 @@ components:
         sortOrder:
           type: number
           minimum: 0
-    SetFolderGrantDto:
+    CreateAccessGrantsDto:
       type: object
       properties:
+        principalId:
+          type: string
+        folderId:
+          type: string
+          format: uuid
+        categoryIds:
+          description: Danh mục; bỏ trống là mọi danh mục. Mỗi danh mục thành một quyền.
+          type: array
+          items:
+            type: string
+            format: uuid
         accessLevel:
           type: string
-          enum:
+          enum: &a40
             - viewer
             - editor
             - manager
@@ -3704,16 +4280,53 @@ components:
           type: boolean
           default: true
       required:
+        - principalId
+        - folderId
         - accessLevel
-    AddCategoryGrantsDto:
+    UpdateAccessGrantDto:
       type: object
       properties:
+        accessLevel:
+          type: string
+          enum: *a40
+        inheritChildren:
+          type: boolean
+    PreviewOriginalAccessBundleDto:
+      type: object
+      properties:
+        folderIds:
+          type: array
+          items:
+            type: string
+            format: uuid
         categoryIds:
           type: array
           items:
             type: string
             format: uuid
       required:
+        - folderIds
+        - categoryIds
+    SaveOriginalAccessBundleDto:
+      type: object
+      properties:
+        principalId:
+          type: string
+          description: Người nhận; bắt buộc khi tạo, bỏ qua khi sửa
+        folderIds:
+          description: Ít nhất một thư mục
+          type: array
+          items:
+            type: string
+            format: uuid
+        categoryIds:
+          description: Ít nhất một danh mục
+          type: array
+          items:
+            type: string
+            format: uuid
+      required:
+        - folderIds
         - categoryIds
     CreateCategoryDto:
       type: object
@@ -4009,6 +4622,55 @@ components:
       required:
         - uploadSessionId
         - partNumbers
+    UploadClientMetricsDto:
+      type: object
+      properties:
+        mode:
+          type: string
+          enum:
+            - single
+            - multipart
+        transferMs:
+          type: number
+          description: Time spent sending the file content to storage, in ms
+        partUrlWaitMs:
+          type: number
+          description: Time spent waiting for part URLs from the API, in ms
+        partSize:
+          type: number
+        partCount:
+          type: number
+        parallelParts:
+          type: number
+        retries:
+          type: number
+          description: Failed part attempts that were retried
+        concurrentUploads:
+          type: number
+          description: Files uploading at the same time in the browser
+        minMbps:
+          type: number
+          description: Slowest speed over ~1 s stretches that sent data, in Mbps
+        maxMbps:
+          type: number
+          description: Fastest speed over ~1 s stretches that sent data, in Mbps
+        idleMs:
+          type: number
+          description:
+            Time in stretches where nothing was sent (waiting on storage or
+            part URLs), in ms
+        networkType:
+          type: string
+          description: navigator.connection.effectiveType (Chromium only)
+        downlinkMbps:
+          type: number
+          description: navigator.connection.downlink in Mbps (Chromium only)
+        rttMs:
+          type: number
+          description: navigator.connection.rtt in ms (Chromium only)
+      required:
+        - mode
+        - transferMs
     CompleteUploadDto:
       type: object
       properties:
@@ -4018,6 +4680,8 @@ components:
         checksumSha256:
           type: string
           pattern: ^[a-fA-F0-9]{64}$
+        metrics:
+          $ref: "#/components/schemas/UploadClientMetricsDto"
       required:
         - uploadSessionId
     AbortUploadDto:
@@ -4205,7 +4869,7 @@ components:
             type: string
         purpose:
           type: string
-          enum:
+          enum: &a41
             - preview
             - final
         prefer:
@@ -4223,6 +4887,61 @@ components:
             type: string
       required:
         - assetIds
+    FootageProjectAccessDto:
+      type: object
+      properties:
+        projectIds:
+          description: Project IDs (1–200).
+          type: array
+          items:
+            type: string
+      required:
+        - projectIds
+    StudioResolveAssetsDto:
+      type: object
+      properties:
+        assetIds:
+          description: Asset (video) IDs to resolve (1–500).
+          type: array
+          items:
+            type: string
+        purpose:
+          type: string
+          enum: *a41
+        prefer:
+          $ref: "#/components/schemas/ResolvePreferDto"
+        projectIds:
+          description:
+            "Projects added to the AG Studio project (1–500): only their videos
+            are served."
+          type: array
+          items:
+            type: string
+      required:
+        - assetIds
+        - purpose
+        - projectIds
+    StudioPrepAssetsDto:
+      type: object
+      properties:
+        assetIds:
+          description: Asset (video) IDs (1–200).
+          type: array
+          items:
+            type: string
+        projectIds:
+          description:
+            "Projects added to the AG Studio project (1–500): only their videos
+            are served."
+          type: array
+          items:
+            type: string
+        requestedBy:
+          type: string
+          description: AG Studio user who asked for the prep (for its record).
+      required:
+        - assetIds
+        - projectIds
     StudioUsageEventDto:
       type: object
       properties:

@@ -41,7 +41,6 @@ describe('FoldersService.create', () => {
       { transaction } as unknown as DataSource,
       {} as never,
       {} as never,
-      {} as never,
       { canAccess } as unknown as FolderAccessService,
       {} as never,
     );

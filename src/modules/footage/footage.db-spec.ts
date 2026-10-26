@@ -27,12 +27,10 @@ import { randomUUID } from 'node:crypto';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { AppDataSource } from '../../database/data-source';
+import { AccessGrantEntity } from '../../database/entities/access-grant.entity';
 import { AssetAnalysisEntity } from '../../database/entities/asset-analysis.entity';
 import { AssetVariantEntity } from '../../database/entities/asset-variant.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
-import { CategoryAccessGrantEntity } from '../../database/entities/category-access-grant.entity';
-import { FolderAccessGrantEntity } from '../../database/entities/folder-access-grant.entity';
-import { FolderClosureEntity } from '../../database/entities/folder-closure.entity';
 import { FolderEntity } from '../../database/entities/folder.entity';
 import { RenderProfileEntity } from '../../database/entities/render-profile.entity';
 import { FolderAccessService } from '../folders/folder-access.service';
@@ -65,10 +63,8 @@ beforeAll(async () => {
   ds = AppDataSource;
 
   folderAccess = new FolderAccessService(
-    ds.getRepository(FolderAccessGrantEntity),
-    ds.getRepository(FolderClosureEntity),
+    ds.getRepository(AccessGrantEntity),
     ds.getRepository(FolderEntity),
-    ds.getRepository(CategoryAccessGrantEntity),
   );
   scopeService = new FootageScopeService(folderAccess, ds);
 
@@ -129,9 +125,7 @@ afterEach(async () => {
     createdAssetIds.length = 0;
   }
   if (createdFolderIds.length) {
-    await ds.query(`DELETE FROM folder_access_grants WHERE folder_id = ANY($1)`, [
-      createdFolderIds,
-    ]);
+    await ds.query(`DELETE FROM access_grants WHERE folder_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folder_closure WHERE descendant_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folder_closure WHERE ancestor_id = ANY($1)`, [createdFolderIds]);
     await ds.query(`DELETE FROM folders WHERE id = ANY($1)`, [createdFolderIds]);
@@ -183,7 +177,7 @@ async function grantFolder(
   inheritChildren = true,
 ): Promise<void> {
   await ds.query(
-    `INSERT INTO folder_access_grants (id, folder_id, principal_type, principal_id, access_level, inherit_children)
+    `INSERT INTO access_grants (id, folder_id, principal_type, principal_id, access_level, inherit_children)
      VALUES ($1,$2,'user',$3,'viewer',$4)`,
     [randomUUID(), folderId, userId, inheritChildren],
   );
@@ -1052,5 +1046,151 @@ describe('FootageService.getAssetMedia — detail', () => {
     await expect(
       footageService.getPreviewUrl(assetId, 'original', userId, 'USER'),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AG Studio: what a user may do with projects, and the trusted mode bound to projects
+// ---------------------------------------------------------------------------
+
+describe('FootageService.projectAccess', () => {
+  it('read_all sees evaluated projects watermarked: no originals without a grant', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    const projectId = await insertProject(folderId, { evaluationStatus: 'completed' });
+    const draftId = await insertProject(folderId, { evaluationStatus: 'draft' });
+    for (const usable of [true, false]) {
+      const assetId = await insertAsset();
+      await insertAnalysis(assetId, true, { usable });
+      await linkAssetToProject(assetId, projectId);
+    }
+
+    const { items } = await footageService.projectAccess([projectId, draftId], userId, 'USER', [
+      'go.project.read_all',
+      'go.project.download_original',
+    ]);
+
+    expect(items).toEqual([
+      { projectId, canView: true, canDownloadOriginals: false, analyzedVideos: 2, usableVideos: 1 },
+      {
+        projectId: draftId,
+        canView: false,
+        canDownloadOriginals: false,
+        analyzedVideos: 0,
+        usableVideos: 0,
+      },
+    ]);
+  });
+
+  it('a grant opens the originals only with the role permission to download them', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    await grantFolder(folderId, userId);
+    const projectId = await insertProject(folderId, { evaluationStatus: 'completed' });
+
+    const withRole = await footageService.projectAccess([projectId], userId, 'USER', [
+      'go.project.download_original',
+    ]);
+    const withoutRole = await footageService.projectAccess([projectId], userId, 'USER', []);
+
+    expect(withRole.items[0]).toMatchObject({ canView: true, canDownloadOriginals: true });
+    expect(withoutRole.items[0]).toMatchObject({ canView: true, canDownloadOriginals: false });
+  });
+
+  it('nothing is told about a project the user does not see', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    const projectId = await insertProject(folderId, { evaluationStatus: 'completed' });
+    const assetId = await insertAsset();
+    await insertAnalysis(assetId);
+    await linkAssetToProject(assetId, projectId);
+
+    const { items } = await footageService.projectAccess([projectId], userId, 'USER', [
+      'go.project.download_original',
+    ]);
+
+    expect(items[0]).toEqual({
+      projectId,
+      canView: false,
+      canDownloadOriginals: false,
+      analyzedVideos: 0,
+      usableVideos: 0,
+    });
+  });
+});
+
+describe('FootageService — AG Studio trusted mode', () => {
+  async function seedTwoProjects() {
+    const folderId = await insertFolder();
+    const added = await insertProject(folderId, { evaluationStatus: 'completed' });
+    const other = await insertProject(folderId, { evaluationStatus: 'completed' });
+    const inAdded = await insertAsset();
+    await insertAnalysis(inAdded);
+    await linkAssetToProject(inAdded, added);
+    const inOther = await insertAsset();
+    await insertAnalysis(inOther);
+    await linkAssetToProject(inOther, other);
+    return { added, other, inAdded, inOther };
+  }
+
+  it('search serves the videos of the given projects, with no user grant', async () => {
+    const { added, inAdded } = await seedTwoProjects();
+
+    const result = await footageService.search(
+      { projectIds: [added] },
+      'service:studio',
+      undefined,
+      [added],
+    );
+
+    expect(result.items.map((i) => i.assetId)).toEqual([inAdded]);
+    expect(result.total).toBe(1);
+  });
+
+  it('facets count within the given projects only', async () => {
+    const { added } = await seedTwoProjects();
+
+    const facets = await footageService.getFacets(
+      { projectIds: [added] },
+      'service:studio',
+      undefined,
+      [added],
+    );
+
+    expect(facets.projects).toEqual([expect.objectContaining({ value: added, count: 1 })]);
+  });
+
+  it('resolve gives the original of a final render, whoever renders', async () => {
+    const { added, inAdded } = await seedTwoProjects();
+
+    const result = await footageService.resolveStudioAssets(
+      [inAdded],
+      'final',
+      [added],
+      'service:studio',
+    );
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ sourceKind: 'original', watermarked: false });
+  });
+
+  it('a video outside the given projects (or rejected in them) is missing, and its prep refused', async () => {
+    const { added, inAdded, inOther } = await seedTwoProjects();
+    const rejected = await insertAsset();
+    await insertAnalysis(rejected);
+    await linkAssetToProject(rejected, added, 'rejected');
+
+    const result = await footageService.resolveStudioAssets(
+      [inAdded, inOther, rejected],
+      'final',
+      [added],
+      'service:studio',
+    );
+
+    expect(result.items.map((i) => i.assetId)).toEqual([inAdded]);
+    expect(result.missing).toEqual([inOther, rejected]);
+    await expect(scopeService.assertAssetsInProjects([rejected], [added])).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
   });
 });

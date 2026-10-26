@@ -50,6 +50,16 @@ it('sums Studio use and downloads of the footage in scope over the period', asyn
      VALUES ($1, NULL, $2, $3, '{}', $4, 0, 'test')`,
     [folderId, folderName, folderName, folderName],
   );
+  await ds.query(
+    `INSERT INTO folder_closure (ancestor_id, descendant_id, depth) VALUES ($1, $1, 0)`,
+    [folderId],
+  );
+  // The scope's folder list narrows the query; the grant is what lets the user count it.
+  await ds.query(
+    `INSERT INTO access_grants (id, principal_type, principal_id, folder_id, access_level)
+     VALUES ($1, 'user', 'test-user', $2, 'viewer')`,
+    [randomUUID(), folderId],
+  );
   const projectId = randomUUID();
   await ds.query(
     `INSERT INTO projects (id, owner_user_id, folder_id, name) VALUES ($1,'test-user',$2,'Hoa Lư')`,

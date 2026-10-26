@@ -1,6 +1,5 @@
 /**
- * Filter options of the "Projects" page: the categories granted to the user or of evaluated
- * projects in their folders, and every folder.
+ * Filter options of the "Projects" page: every active category and every folder.
  * Run with: yarn test:db
  */
 import { randomUUID } from 'node:crypto';
@@ -28,8 +27,6 @@ let categories: CategoriesService;
 let folders: FoldersService;
 const categoryIds: string[] = [];
 const folderIds: string[] = [];
-/** Folders holding projects, kept apart from those the folder options test lists. */
-const projectFolderIds: string[] = [];
 
 beforeAll(async () => {
   if (AppDataSource.isInitialized) await AppDataSource.destroy();
@@ -46,71 +43,32 @@ beforeAll(async () => {
     {} as never,
     {} as never,
     {} as never,
-    {} as never,
   );
 });
 
 afterAll(async () => {
-  await ds.query(`DELETE FROM projects WHERE folder_id = ANY($1)`, [projectFolderIds]);
   await ds.query(`DELETE FROM categories WHERE id = ANY($1)`, [categoryIds]);
-  await ds.query(`DELETE FROM folders WHERE id = ANY($1)`, [[...folderIds, ...projectFolderIds]]);
+  await ds.query(`DELETE FROM folders WHERE id = ANY($1)`, [folderIds]);
   if (ds?.isInitialized) await ds.destroy();
 });
 
-async function insertCategory(name: string, grantedTo?: string): Promise<string> {
+async function insertCategory(name: string): Promise<string> {
   const id = randomUUID();
   await ds.query(
     `INSERT INTO categories (id, name, slug, sort_order, is_active) VALUES ($1, $2, $3, 0, true)`,
     [id, name, `slug-${id}`],
   );
-  if (grantedTo) {
-    await ds.query(
-      `INSERT INTO category_access_grants (id, category_id, principal_type, principal_id)
-       VALUES ($1, $2, 'user', $3)`,
-      [randomUUID(), id, grantedTo],
-    );
-  }
   categoryIds.push(id);
   return id;
 }
 
-it('lists only the categories granted to the user', async () => {
-  const userId = `u-${randomUUID().slice(0, 8)}`;
-  const granted = await insertCategory(`Granted ${userId}`, userId);
-  const other = await insertCategory(`Other ${userId}`);
+it('lists every active category', async () => {
+  const first = await insertCategory(`First ${randomUUID().slice(0, 8)}`);
+  const second = await insertCategory(`Second ${randomUUID().slice(0, 8)}`);
 
-  const ids = (await categories.list(userId)).map((category) => category.id);
-  const all = (await categories.list()).map((category) => category.id);
+  const ids = (await categories.list()).map((category) => category.id);
 
-  expect(ids).toEqual([granted]);
-  expect(all).toEqual(expect.arrayContaining([granted, other]));
-});
-
-it('adds the categories of evaluated projects in the given folders', async () => {
-  const userId = `u-${randomUUID().slice(0, 8)}`;
-  const folderId = randomUUID();
-  await ds.query(
-    `INSERT INTO folders (id, parent_id, name, path_key, path_ids, path_text, depth, sort_order, is_active, created_by)
-     VALUES ($1, NULL, $2, $3, '{}', $4, 0, 0, true, 'test')`,
-    [folderId, `Folder ${folderId.slice(0, 8)}`, `/${folderId}`, `Folder ${folderId.slice(0, 8)}`],
-  );
-  projectFolderIds.push(folderId);
-  const evaluated = await insertCategory(`Evaluated ${userId}`);
-  const pending = await insertCategory(`Pending ${userId}`);
-  for (const [categoryId, status] of [
-    [evaluated, 'completed'],
-    [pending, 'pending'],
-  ]) {
-    await ds.query(
-      `INSERT INTO projects (id, owner_user_id, folder_id, category_id, name, evaluation_status)
-       VALUES ($1, 'author', $2, $3, 'Project', $4)`,
-      [randomUUID(), folderId, categoryId, status],
-    );
-  }
-
-  const ids = (await categories.list(userId, [folderId])).map((category) => category.id);
-
-  expect(ids).toEqual([evaluated]);
+  expect(ids).toEqual(expect.arrayContaining([first, second]));
 });
 
 it('lists every active folder, parents first, in natural order', async () => {
