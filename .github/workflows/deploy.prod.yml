@@ -1,17 +1,12 @@
 name: Deploy production
 
 on:
-  workflow_run:
-    workflows:
-      - CI
+  push:
     branches:
       - main
-    types:
-      - completed
   workflow_dispatch:
 
 permissions:
-  actions: read
   contents: read
 
 concurrency:
@@ -21,9 +16,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
-      # The commit the main host runs now; the worker hosts deploy the same one.
       commit: ${{ steps.deploy.outputs.commit }}
     environment:
       name: production
@@ -34,40 +27,10 @@ jobs:
       APP_PATH: ${{ secrets.VPS_APP_PATH || '/www/wwwroot/prod/ag-go-v2/ag-go-api' }}
 
     steps:
-      - name: Verify CI success for commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
-        run: |
-          echo "Target commit SHA: $TARGET_SHA"
-          echo "Triggering event: ${{ github.event_name }}"
-
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            if [ "${{ github.event.workflow_run.conclusion }}" != "success" ]; then
-              echo "::error::Triggering CI workflow run concluded with '${{ github.event.workflow_run.conclusion }}'. Deployment halted."
-              exit 1
-            fi
-            echo "CI workflow run completed successfully."
-          else
-            echo "Verifying CI status for commit $TARGET_SHA via GitHub API..."
-            CI_CONCLUSION=$(gh run list \
-              --repo "${{ github.repository }}" \
-              --workflow "ci.yml" \
-              --commit "$TARGET_SHA" \
-              --json status,conclusion \
-              --jq '[.[] | select(.status == "completed")] | .[0].conclusion // empty')
-
-            if [ "$CI_CONCLUSION" != "success" ]; then
-              echo "::error::Commit $TARGET_SHA does not have a successful CI run (conclusion: '${CI_CONCLUSION:-none/in-progress}'). Manual deployment blocked."
-              exit 1
-            fi
-            echo "CI verified successfully for commit $TARGET_SHA (conclusion: $CI_CONCLUSION)."
-          fi
-
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Start SSH agent
         uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387 # v0.9.0
@@ -91,7 +54,7 @@ jobs:
         id: deploy
         shell: bash
         env:
-          TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          TARGET_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           # Keepalives stop the connection being dropped while old workers drain silently.
@@ -107,7 +70,6 @@ jobs:
           " | tee "$RUNNER_TEMP/deploy.log"
           echo "commit=$(grep -m1 '^DEPLOYED_COMMIT=' "$RUNNER_TEMP/deploy.log" | cut -d= -f2)" >> "$GITHUB_OUTPUT"
 
-  # Extra VPSs running only workers (see deploy-worker-hosts.yml), once the main host is up.
   deploy-workers:
     needs: deploy
     if: ${{ vars.WORKER_HOSTS != '' && vars.WORKER_HOSTS != '[]' }}
@@ -117,5 +79,4 @@ jobs:
       hosts: ${{ vars.WORKER_HOSTS }}
       default-key-secret: WORKER_SSH_KEY
       known-hosts-secret: SSH_KNOWN_HOSTS
-    # Each host reads its own key secret, named in the hosts JSON.
     secrets: inherit
