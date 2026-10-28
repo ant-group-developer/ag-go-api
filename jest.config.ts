@@ -7,6 +7,8 @@ const config: Config = {
   transform: {
     '^.+\\.(t|j)s$': 'ts-jest',
   },
+  // uuid v9+ ships as ESM; transform it so Jest (CommonJS) can load it.
+  transformIgnorePatterns: ['node_modules/(?!(uuid)/)'],
   collectCoverageFrom: ['**/*.(t|j)s'],
   coverageDirectory: '../coverage',
   testEnvironment: 'node',

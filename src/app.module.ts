@@ -1,12 +1,14 @@
 import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, DiscoveryModule } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { ApiExceptionFilter } from './common/api-exception.filter';
 import { ApiResponseInterceptor } from './common/api-response.interceptor';
 import { Auth0Guard } from './common/auth/auth0.guard';
 import { PermissionsGuard } from './common/auth/permissions.guard';
+import { RouteAuthValidatorService } from './common/auth/route-auth-validator.service';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from './config/env.validation';
@@ -155,12 +157,25 @@ import { WorkersModule } from './modules/workers/workers.module';
     FootageModule,
     UsageModule,
     WorkersModule,
+    DiscoveryModule,
+    ThrottlerModule.forRoot([
+      {
+        name: 'default',
+        ttl: 60000,
+        limit: 100,
+      },
+    ]),
   ],
   controllers: [AppController, HealthController],
   providers: [
+    RouteAuthValidatorService,
     {
       provide: APP_FILTER,
       useClass: ApiExceptionFilter,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
     },
     {
       provide: APP_GUARD,

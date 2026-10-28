@@ -4,7 +4,7 @@ import {
   Get,
   Headers,
   Param,
-  ParseIntPipe,
+  ParseUUIDPipe,
   Post,
   Query,
   Req,
@@ -20,6 +20,7 @@ import { AssetsService } from './assets.service';
 import { AbortUploadDto } from './dto/abort-upload.dto';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { CreateUploadSessionDto } from './dto/create-upload-session.dto';
+import { AssetPreviewQueryDto, AssetPreviewUrlQueryDto } from './dto/preview-query.dto';
 import { UploadPartsDto } from './dto/upload-parts.dto';
 
 @ApiTags('assets')
@@ -51,7 +52,7 @@ export class AssetsController {
   @RequirePermissions(GO_PERMISSIONS.PROJECT_EDIT)
   @ApiOperation({ summary: 'Presigned URL để upload từng phần của phiên upload multipart' })
   getUploadPartUrls(
-    @Param('assetId') assetId: string,
+    @Param('assetId', ParseUUIDPipe) assetId: string,
     @Body() dto: UploadPartsDto,
     @Req() request: Request,
   ) {
@@ -62,7 +63,7 @@ export class AssetsController {
   @Post('assets/:assetId/complete')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_EDIT)
   completeUpload(
-    @Param('assetId') assetId: string,
+    @Param('assetId', ParseUUIDPipe) assetId: string,
     @Body() dto: CompleteUploadDto,
     @Req() request: Request,
   ) {
@@ -73,7 +74,7 @@ export class AssetsController {
   @Post('assets/:assetId/abort')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_EDIT)
   abortUpload(
-    @Param('assetId') assetId: string,
+    @Param('assetId', ParseUUIDPipe) assetId: string,
     @Body() dto: AbortUploadDto,
     @Req() request: Request,
   ) {
@@ -88,7 +89,7 @@ export class AssetsController {
 
   @Get('assets/:assetId/variants')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
-  listVariants(@Param('assetId') assetId: string, @Req() request: Request) {
+  listVariants(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.assetsService.listVariants(assetId, context.userId, context.userType);
   }
@@ -96,7 +97,7 @@ export class AssetsController {
   @Get('assets/:assetId/original-url')
   @RequireAnyPermissions(GO_PERMISSIONS.PROJECT_EVALUATE, GO_PERMISSIONS.PROJECT_DOWNLOAD_ORIGINAL)
   @ApiOperation({ summary: 'Presigned URL file gốc (không watermark) để đánh giá media' })
-  originalUrl(@Param('assetId') assetId: string, @Req() request: Request) {
+  originalUrl(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.assetsService.getOriginalUrl(assetId, context.userId, context.userType);
   }
@@ -107,7 +108,7 @@ export class AssetsController {
     summary:
       'Các bản preview (độ phân giải, watermark, bitrate) người xem được chọn; bản không watermark chỉ cho người có quyền xem file gốc',
   })
-  listRenditions(@Param('assetId') assetId: string, @Req() request: Request) {
+  listRenditions(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.assetsService.listRenditions(
       assetId,
@@ -120,9 +121,9 @@ export class AssetsController {
   @Get('assets/:assetId/preview/:variantCode')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
   preview(
-    @Param('assetId') assetId: string,
+    @Param('assetId', ParseUUIDPipe) assetId: string,
     @Param('variantCode') variantCode: string,
-    @Query('width', new ParseIntPipe({ optional: true })) width: number | undefined,
+    @Query() query: AssetPreviewQueryDto,
     @Req() request: Request,
     @Res() response: Response,
   ) {
@@ -133,7 +134,7 @@ export class AssetsController {
       context.userId,
       context.userType,
       response,
-      width,
+      query.width,
       canViewUnwatermarked(context.permissions, context.userType),
     );
   }
@@ -145,25 +146,24 @@ export class AssetsController {
       'Tạo presigned URL để tải preview trực tiếp từ R2. variantCode=preview kèm width chọn kích thước phù hợp.',
   })
   previewUrl(
-    @Param('assetId') assetId: string,
-    @Query('variantCode') variantCode = 'thumbnail',
-    @Query('width', new ParseIntPipe({ optional: true })) width: number | undefined,
+    @Param('assetId', ParseUUIDPipe) assetId: string,
+    @Query() query: AssetPreviewUrlQueryDto,
     @Req() request: Request,
   ) {
     const context = this.authContext.getContext(request);
     return this.assetsService.getPreviewUrl(
       assetId,
-      variantCode,
+      query.variantCode,
       context.userId,
       context.userType,
-      width,
+      query.width,
       canViewUnwatermarked(context.permissions, context.userType),
     );
   }
 
   @Post('assets/:assetId/retry')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_EDIT)
-  retry(@Param('assetId') assetId: string, @Req() request: Request) {
+  retry(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.assetsService.retry(assetId, context.userId, context.userType);
   }

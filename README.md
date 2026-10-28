@@ -127,7 +127,7 @@ Cấu hình (GitHub → Settings → Secrets and variables → Actions):
 Deploy tay (vd. host mới, sau khi host chính đã deploy cùng commit):
 
 ```bash
-git pull --ff-only origin main && sudo bash ./deploy-worker-host.sh
+git fetch origin && git checkout --detach <commit> && sudo bash ./deploy-worker-host.sh
 ```
 
 Script:
@@ -220,14 +220,18 @@ rule trên dashboard: R2 → bucket → Settings → Object lifecycle rules → 
 ZIP tạo trước thay đổi này nằm ở `projects/{projectId}/downloads/` và không khớp rule; chúng
 chỉ bị xóa khi project bị xóa.
 
-## CI/CD
+## Deployment (CD)
 
-Các workflow trong `.github/workflows` kiểm tra format, typecheck, lint, test,
-build, OpenAPI và Docker image cho nhánh `main` và `dev`. Push vào `dev` kích
-hoạt deploy development; push vào `main` kích hoạt deploy production.
+Các workflow trong `.github/workflows` tự động hóa quy trình triển khai (CD) cho nhánh `main` và `dev`:
 
-Deploy dùng các secret `VPS_SSH_KEY_DEV`, `VPS_HOST_DEV`, `VPS_USER_DEV`
+### Pipeline Deploy (`deploy.dev.yml` / `deploy.prod.yml`)
+
+- Khi có **Push** tới nhánh `dev` hoặc `main`, workflow deploy tương ứng (`deploy.dev.yml` hoặc `deploy.prod.yml`) sẽ được tự động kích hoạt.
+- Hỗ trợ kích hoạt thủ công qua `workflow_dispatch`.
+- Quá trình deploy checkout commit SHA (`git checkout --detach`), chạy script `deploy.sh` qua SSH để build và khởi chạy các dịch vụ container.
+- Sau khi host chính deploy thành công, các worker host phụ (`deploy-worker-hosts.yml`) được deploy song song nếu biến cấu hình tương ứng (`WORKER_HOSTS_DEV` / `WORKER_HOSTS`) được thiết lập.
+
+Deploy dùng các secret `VPS_SSH_KEY_DEV`, `VPS_HOST_DEV`, `VPS_USER_DEV`, `SSH_KNOWN_HOSTS_DEV` (hoặc `SSH_KNOWN_HOSTS`)
 (tùy chọn `VPS_PORT_DEV`, `VPS_APP_PATH_DEV`) cho development và
-`VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER` (tùy chọn `VPS_PORT`, `VPS_APP_PATH`)
-cho production. Thông báo Telegram dùng `TELEGRAM_CHAT_ID` và
-`TELEGRAM_TOKEN`.
+`VPS_SSH_KEY`, `VPS_HOST`, `VPS_USER`, `SSH_KNOWN_HOSTS_PROD` (hoặc `SSH_KNOWN_HOSTS`) (tùy chọn `VPS_PORT`, `VPS_APP_PATH`)
+cho production. Thông báo Telegram (`notify.yml`) được gửi tự động khi workflow deploy hoàn tất (dùng `TELEGRAM_CHAT_ID` và `TELEGRAM_TOKEN`).

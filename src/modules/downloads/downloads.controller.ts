@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, ParseUUIDPipe, Post, Req } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
@@ -42,14 +42,14 @@ export class DownloadsController {
 
   @Get(':id')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
-  get(@Param('id') id: string, @Req() request: Request) {
+  get(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.downloadsService.get(id, context.userId, context.userType);
   }
 
   @Post(':id/cancel')
   @RequirePermissions(GO_PERMISSIONS.PROJECT_READ)
-  cancel(@Param('id') id: string, @Req() request: Request) {
+  cancel(@Param('id', ParseUUIDPipe) id: string, @Req() request: Request) {
     const context = this.authContext.getContext(request);
     return this.downloadsService.cancel(id, context.userId, context.userType);
   }

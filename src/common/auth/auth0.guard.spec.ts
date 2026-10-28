@@ -344,7 +344,7 @@ describe('Auth0Guard', () => {
     const raw = 'my-key';
     const getUserAccess = jest
       .fn()
-      .mockResolvedValue({ user_type: 'ADMIN', permissions: ['go.footage.search'] });
+      .mockResolvedValue({ user_type: 'USER', permissions: ['go.footage.search'] });
     const guard = buildGuard(
       { ...baseConfig, SERVICE_KEYS: SERVICE_KEYS_JSON(raw) },
       { serviceKeyScopes: ['footage:read'] },
@@ -366,7 +366,7 @@ describe('Auth0Guard', () => {
   it('refuses to act as a deactivated user', async () => {
     const raw = 'my-key';
     const getUserAccess = jest.fn().mockResolvedValue({
-      user_type: 'ADMIN',
+      user_type: 'USER',
       permissions: ['go.footage.search'],
       is_active: false,
     });
@@ -380,6 +380,113 @@ describe('Auth0Guard', () => {
         createContext(createRequest({ 'x-service-key': raw, 'x-act-as-user': 'gone-user' })),
       ),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('matches service key sha256 case-insensitively', async () => {
+    const raw = 'case-insensitive-key';
+    const upperHex = createHash('sha256').update(raw).digest('hex').toUpperCase();
+    const guard = buildGuard(
+      {
+        ...baseConfig,
+        SERVICE_KEYS: JSON.stringify([
+          {
+            name: 'upper-studio',
+            sha256: upperHex,
+            scopes: ['footage:read'],
+          },
+        ]),
+      },
+      { serviceKeyScopes: ['footage:read'] },
+      {
+        accountApi: {
+          getUserAccess: jest
+            .fn()
+            .mockResolvedValue({ user_type: 'USER', permissions: ['go.footage.search'] }),
+        },
+      },
+    );
+
+    const request = createRequest({ 'x-service-key': raw, 'x-act-as-user': 'u1' });
+    await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
+    expect(request.authContext?.actingService).toBe('upper-studio');
+  });
+
+  it('handles invalid JSON in SERVICE_KEYS gracefully and rejects service key requests', async () => {
+    const guard = buildGuard(
+      { ...baseConfig, SERVICE_KEYS: '{not-valid-json' },
+      { serviceKeyScopes: ['footage:read'] },
+    );
+    await expect(
+      guard.canActivate(
+        createContext(createRequest({ 'x-service-key': 'any', 'x-act-as-user': 'u1' })),
+      ),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('blocks acting as ADMIN when canActAsAdmin is false or omitted (default)', async () => {
+    const raw = 'my-key';
+    const getUserAccess = jest
+      .fn()
+      .mockResolvedValue({ user_type: 'ADMIN', permissions: ['go.footage.search'] });
+    const guard = buildGuard(
+      { ...baseConfig, SERVICE_KEYS: SERVICE_KEYS_JSON(raw) }, // canActAsAdmin not set
+      { serviceKeyScopes: ['footage:read'] },
+      { accountApi: { getUserAccess } },
+    );
+    const request = createRequest({ 'x-service-key': raw, 'x-act-as-user': 'admin-user' });
+
+    await expect(guard.canActivate(createContext(request))).rejects.toBeInstanceOf(
+      ForbiddenException,
+    );
+  });
+
+  it('allows acting as ADMIN when canActAsAdmin is explicitly true', async () => {
+    const raw = 'admin-service-key';
+    const getUserAccess = jest
+      .fn()
+      .mockResolvedValue({ user_type: 'ADMIN', permissions: ['go.footage.search'] });
+    const guard = buildGuard(
+      {
+        ...baseConfig,
+        SERVICE_KEYS: JSON.stringify([
+          {
+            name: 'admin-studio',
+            sha256: createHash('sha256').update(raw).digest('hex'),
+            scopes: ['footage:read'],
+            canActAsAdmin: true,
+          },
+        ]),
+      },
+      { serviceKeyScopes: ['footage:read'] },
+      {
+        accountApi: { getUserAccess },
+        systemLog: { write: jest.fn().mockResolvedValue(undefined) },
+      },
+    );
+    const request = createRequest({ 'x-service-key': raw, 'x-act-as-user': 'admin-user' });
+
+    await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
+    expect(request.authContext).toMatchObject({
+      userId: 'admin-user',
+      userType: 'ADMIN',
+      actingService: 'admin-studio',
+    });
+  });
+
+  it('throws an error if a route combines @ServiceOnly with @RequirePermissions', async () => {
+    const raw = 'my-key';
+    const guard = buildGuard(
+      { ...baseConfig, SERVICE_KEYS: SERVICE_KEYS_JSON(raw) },
+      {
+        serviceOnlyScope: 'usage:write',
+        requiredPermissions: ['go.footage.search'],
+      },
+    );
+    const request = createRequest({ 'x-service-key': raw });
+
+    await expect(guard.canActivate(createContext(request))).rejects.toThrow(
+      'Invalid route configuration: @ServiceOnly cannot be combined with @RequirePermissions',
+    );
   });
 
   it('PermissionsGuard sees permissions from act-as context (user missing permission → 403)', async () => {

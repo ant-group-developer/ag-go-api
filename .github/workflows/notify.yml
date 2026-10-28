@@ -11,11 +11,13 @@ on:
 jobs:
   notify:
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && github.event.workflow_run.conclusion != 'skipped'
     steps:
-      - name: Calculate duration
-        id: duration
+      - name: Prepare notification payload
+        id: prep
         shell: bash
+        env:
+          COMMIT_MSG: ${{ github.event.workflow_run.head_commit.message }}
         run: |
           start_time=$(date -d '${{ github.event.workflow_run.run_started_at }}' +%s)
           end_time=$(date -d '${{ github.event.workflow_run.updated_at }}' +%s)
@@ -23,8 +25,13 @@ jobs:
           if [ "$duration" -lt 0 ]; then duration=0; fi
           echo "formatted_duration=$((duration / 60))m $((duration % 60))s" >> "$GITHUB_OUTPUT"
 
+          # Extract commit subject (first line) and escape Markdown special characters: \ _ * ` [ ]
+          commit_subject=$(printf '%s' "$COMMIT_MSG" | head -n 1)
+          escaped_subject=$(printf '%s' "$commit_subject" | sed 's/\\/\\\\/g; s/_/\\_/g; s/\*/\\*/g; s/`/\\`/g; s/\[/\\[/g; s/\]/\\]/g')
+          echo "escaped_commit=$escaped_subject" >> "$GITHUB_OUTPUT"
+
       - name: Send Telegram notification
-        uses: appleboy/telegram-action@master
+        uses: appleboy/telegram-action@214f06cfa3d3a588c1472116889437e7c6fd29b1 # v1.1.1
         with:
           to: ${{ secrets.TELEGRAM_CHAT_ID }}
           token: ${{ secrets.TELEGRAM_TOKEN }}
@@ -35,8 +42,8 @@ jobs:
             - *Repository:* [${{ github.repository }}](${{ github.server_url }}/${{ github.repository }})
             - *Workflow:* `${{ github.event.workflow_run.name }}` · Run #${{ github.event.workflow_run.run_number }}
             - *Branch:* `${{ github.event.workflow_run.head_branch }}`
-            - *Commit:* `${{ github.event.workflow_run.head_commit.message }}`
+            - *Commit:* ${{ steps.prep.outputs.escaped_commit }}
             - *Status:* ${{ github.event.workflow_run.conclusion == 'success' && '✅ Success' || github.event.workflow_run.conclusion == 'failure' && '❌ Failure' || github.event.workflow_run.conclusion == 'cancelled' && '⚪ Cancelled' || '❔ Unknown' }}
-            - *Duration:* `${{ steps.duration.outputs.formatted_duration }}`
+            - *Duration:* `${{ steps.prep.outputs.formatted_duration }}`
 
             [View workflow run →](${{ github.event.workflow_run.html_url }})

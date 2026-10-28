@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Logger,
   Optional,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -15,7 +16,13 @@ import { AccountApiService } from '../../modules/account/account-api.service';
 import { SystemLogService } from '../../modules/logs/system-log.service';
 import type { AuthContext } from '../auth-context.service';
 import { SERVICE_KEY_SCOPES_KEY } from './allow-service-key.decorator';
+import {
+  ADMIN_ONLY_KEY,
+  ANY_PERMISSIONS_KEY,
+  REQUIRED_PERMISSIONS_KEY,
+} from './permissions.decorator';
 import { IS_PUBLIC_KEY } from './public.decorator';
+import type { AllowedServiceScope, ServiceKeyEntry } from './service-key.constants';
 import { SERVICE_ONLY_SCOPE_KEY } from './service-only.decorator';
 
 type JwtHeader = {
@@ -52,22 +59,20 @@ type JwksCache = {
   keys: JsonWebKey[];
 };
 
-type ServiceKeyEntry = {
-  name: string;
-  sha256: string;
-  scopes: string[];
-};
-
 @Injectable()
 export class Auth0Guard implements CanActivate {
+  private readonly logger = new Logger(Auth0Guard.name);
   private jwksCache?: JwksCache;
+  private readonly serviceKeys: ServiceKeyEntry[];
 
   constructor(
     private readonly reflector: Reflector,
     private readonly config: ConfigService,
     @Optional() private readonly accountApi?: AccountApiService,
     @Optional() private readonly systemLog?: SystemLogService,
-  ) {}
+  ) {
+    this.serviceKeys = this.parseServiceKeys();
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
@@ -88,6 +93,23 @@ export class Auth0Guard implements CanActivate {
       [context.getHandler(), context.getClass()],
     );
     if (serviceOnlyScope) {
+      const requiredPermissions = this.reflector.getAllAndOverride<unknown>(
+        REQUIRED_PERMISSIONS_KEY,
+        [context.getHandler(), context.getClass()],
+      );
+      const anyPermissions = this.reflector.getAllAndOverride<unknown>(ANY_PERMISSIONS_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+      const adminOnly = this.reflector.getAllAndOverride<unknown>(ADMIN_ONLY_KEY, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+      if (requiredPermissions || anyPermissions || adminOnly) {
+        throw new Error(
+          'Invalid route configuration: @ServiceOnly cannot be combined with @RequirePermissions',
+        );
+      }
       this.activateServiceOnly(request, serviceOnlyScope);
       return true;
     }
@@ -213,6 +235,16 @@ export class Auth0Guard implements CanActivate {
       throw new ForbiddenException('The acted-as user is deactivated');
     }
 
+    // A service key cannot act as ADMIN unless canActAsAdmin is true
+    if (access.user_type === 'ADMIN' && !entry.canActAsAdmin) {
+      this.logger.warn(
+        `Service "${entry.name}" attempted to act as ADMIN user "${userId}", but canActAsAdmin is false`,
+      );
+      throw new ForbiddenException(
+        `Service "${entry.name}" is not permitted to act as an admin user`,
+      );
+    }
+
     // Populate auth context
     const authContext: AuthContext = {
       userId,
@@ -245,51 +277,73 @@ export class Auth0Guard implements CanActivate {
     }
   }
 
-  /**
-   * Parses the SERVICE_KEYS env var (`[{"name":"...","sha256":"<hex>","scopes":[...]}]`),
-   * hashes the incoming key with SHA-256, and finds a matching entry using constant-time
-   * comparison to prevent timing attacks.
-   */
-  private resolveServiceKey(rawKey: string): ServiceKeyEntry | null {
+  private parseServiceKeys(): ServiceKeyEntry[] {
     const rawJson = this.config.get<string>('SERVICE_KEYS');
     if (!rawJson?.trim()) {
-      return null;
+      return [];
     }
 
     let entries: unknown[];
     try {
       entries = JSON.parse(rawJson) as unknown[];
-    } catch {
-      return null;
+    } catch (error) {
+      this.logger.error(
+        `Failed to parse SERVICE_KEYS JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return [];
     }
 
     if (!Array.isArray(entries)) {
-      return null;
+      this.logger.error('SERVICE_KEYS must be a JSON array');
+      return [];
     }
 
-    const incomingHash = createHash('sha256').update(rawKey).digest('hex');
-    const incomingBuf = Buffer.from(incomingHash, 'utf8');
-
+    const result: ServiceKeyEntry[] = [];
     for (const entry of entries) {
       if (
         typeof entry !== 'object' ||
         entry === null ||
-        typeof (entry as Record<string, unknown>)['name'] !== 'string' ||
-        typeof (entry as Record<string, unknown>)['sha256'] !== 'string' ||
-        !Array.isArray((entry as Record<string, unknown>)['scopes'])
+        typeof (entry as Record<string, unknown>).name !== 'string' ||
+        typeof (entry as Record<string, unknown>).sha256 !== 'string' ||
+        !Array.isArray((entry as Record<string, unknown>).scopes)
       ) {
+        this.logger.warn(`Skipping invalid SERVICE_KEYS entry: ${JSON.stringify(entry)}`);
         continue;
       }
-      const e = entry as ServiceKeyEntry;
-      // Constant-time compare — pad both buffers to the same length
-      const storedBuf = Buffer.from(e.sha256, 'utf8');
+
+      const rec = entry as Record<string, unknown>;
+      result.push({
+        name: String(rec.name),
+        sha256: String(rec.sha256).trim().toLowerCase(),
+        scopes: (rec.scopes as unknown[]).map(String) as AllowedServiceScope[],
+        canActAsAdmin: Boolean(rec.canActAsAdmin),
+      });
+    }
+
+    return result;
+  }
+
+  /**
+   * Hashes the incoming key with SHA-256 and finds a matching entry in pre-parsed
+   * service keys using constant-time, case-insensitive comparison.
+   */
+  private resolveServiceKey(rawKey: string): ServiceKeyEntry | null {
+    if (!this.serviceKeys.length) {
+      return null;
+    }
+
+    const incomingHash = createHash('sha256').update(rawKey).digest('hex').toLowerCase();
+    const incomingBuf = Buffer.from(incomingHash, 'utf8');
+
+    for (const entry of this.serviceKeys) {
+      const storedBuf = Buffer.from(entry.sha256, 'utf8');
       if (storedBuf.length !== incomingBuf.length) {
-        // Different length: still do a fake compare to avoid early exit
+        // Different length: still do a fake compare to avoid early exit timing attack
         timingSafeEqual(incomingBuf, incomingBuf);
         continue;
       }
       if (timingSafeEqual(incomingBuf, storedBuf)) {
-        return e;
+        return entry;
       }
     }
 

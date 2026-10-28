@@ -76,6 +76,7 @@ const STUB_JOB: AnalysisFarmJobEntity = {
   submittedAt: new Date(),
   ingestedAt: null,
   lockedUntil: null,
+  attemptCount: 0,
 };
 
 describe('FarmTicketGuard', () => {
@@ -105,6 +106,7 @@ describe('FarmTicketGuard', () => {
       submittedAt: new Date(),
       ingestedAt: null,
       lockedUntil: null,
+      attemptCount: 0,
     };
     const token = makeTicket(privateKey, { job_id: jobId, type: 'scan.prep' });
     const guard = makeGuard(null, PUBLIC_KEY_PEM, prepJob);
@@ -128,6 +130,7 @@ describe('FarmTicketGuard', () => {
       submittedAt: new Date(),
       ingestedAt: new Date(),
       lockedUntil: null,
+      attemptCount: 0,
     });
     await expect(guard.canActivate(makeContext(`Ticket ${token}`))).rejects.toThrow(
       ForbiddenException,

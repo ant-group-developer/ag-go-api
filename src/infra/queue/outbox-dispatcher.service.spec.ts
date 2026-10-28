@@ -6,7 +6,7 @@ import type { AnalysisOutboxService } from '../../modules/analysis/analysis-outb
 import type { PrepPipelineService } from '../../modules/analysis/prep/prep-pipeline.service';
 import type { StorageAdapter } from '../../modules/assets/storage/storage-adapter';
 import type { MediaQueueService } from './media-queue.service';
-import { OutboxDispatcherService } from './outbox-dispatcher.service';
+import { OUTBOX_LEASE_RENEW_MS, OutboxDispatcherService } from './outbox-dispatcher.service';
 
 jest.mock('@nestjs/typeorm', () => ({
   InjectDataSource: () => () => undefined,
@@ -161,6 +161,26 @@ describe('OutboxDispatcherService', () => {
     expect(values.availableAt()).toBe("NOW() + interval '5 minutes'");
   });
 
+  it('renews the claim lease while a long purge is still publishing', async () => {
+    jest.useFakeTimers();
+    const deletePrefix = jest.fn(() => new Promise(() => undefined));
+    const { service, update } = setup([purgeEvent(0)], deletePrefix);
+
+    void service.dispatchPending();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(update).not.toHaveBeenCalled();
+
+    await jest.advanceTimersByTimeAsync(OUTBOX_LEASE_RENEW_MS);
+
+    expect(update).toHaveBeenCalledWith(purgeEvent(0).id, {
+      availableAt: expect.any(Function),
+    });
+    const [, values] = update.mock.calls[0] as [string, { availableAt: () => string }];
+    expect(values.availableAt()).toBe("NOW() + interval '5 minutes'");
+  });
+
   it('backs off exponentially on the database clock when R2 denies access', async () => {
     const deletePrefix = jest.fn().mockRejectedValue(new Error('AccessDenied'));
     const { service, update } = setup([purgeEvent(3)], deletePrefix);
@@ -274,6 +294,51 @@ describe('OutboxDispatcherService', () => {
     expect(update).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ status: 'published' }),
+    );
+  });
+
+  it('keeps an unknown event type pending for retry instead of discarding it', async () => {
+    const unknownEvent: OutboxEventEntity = {
+      ...renderEvent(),
+      eventType: 'asset.something.new_from_future_deploy',
+      payload: { assetId: 'a1' },
+    };
+    const { service, update } = setup([unknownEvent], jest.fn());
+
+    await service.dispatchPending();
+
+    // Must NOT be marked published — that would discard it during a rolling deploy.
+    expect(update).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ status: 'published' }),
+    );
+    // Instead it enters the retry path with exponential backoff.
+    expect(update).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        status: 'failed',
+        lastError: expect.stringContaining('Unknown outbox event type'),
+      }),
+    );
+  });
+
+  it('parks an unknown event type as dead after MAX_ATTEMPTS so it does not retry forever', async () => {
+    const unknownEvent: OutboxEventEntity = {
+      ...renderEvent(),
+      attemptCount: 29, // MAX_ATTEMPTS = 30, claimDue already incremented to 30
+      eventType: 'asset.something.new_from_future_deploy',
+      payload: { assetId: 'a1' },
+    };
+    const { service, update } = setup([unknownEvent], jest.fn());
+
+    await service.dispatchPending();
+
+    expect(update).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        status: 'dead',
+        lastError: expect.stringContaining('Unknown outbox event type'),
+      }),
     );
   });
 

@@ -27,6 +27,9 @@ import { PrepIngestService } from './prep/prep-ingest.service';
 /** How long one outbox host may hold a farm result while ingesting it. */
 const PROCESSING_LOCK_SECONDS = 300;
 
+/** Maximum times a failed farm result is retried before dead-lettering / marking failed. */
+export const DEFAULT_MAX_INGEST_ATTEMPTS = 5;
+
 /**
  * `<analysisId>:extract` or `<analysisId>:ai` — the correlation ids this module submits (v1 used
  * `:ai:<chunk>`; such leftovers are still recognised and ignored because their analysis is closed).
@@ -106,18 +109,7 @@ export class FarmResultPollerService implements OnModuleDestroy {
           }
           this.loggedJobErrors.delete(job.id);
         } catch (error) {
-          // Not acked: the result shows up again next poll and is processed again.
-          const message = errorMessage(error);
-          this.logger.error(`Failed to process farm job ${job.id}: ${message}`);
-          if (this.loggedJobErrors.get(job.id) !== message) {
-            this.loggedJobErrors.set(job.id, message);
-            await this.analysisLog.write({
-              level: 'error',
-              action: 'analysis.ingest_failed',
-              message: `Could not process farm result ${job.type} (${job.correlation_id}): ${message} (retrying)`,
-              metadata: { farmJobId: job.id, correlationId: job.correlation_id, type: job.type },
-            });
-          }
+          await this.handleJobFailure(job, error);
         }
       }
     } catch (error) {
@@ -305,14 +297,92 @@ export class FarmResultPollerService implements OnModuleDestroy {
       ? `Farm job ${job.status}: ${job.error.code} — ${job.error.message}`
       : `Farm job ${job.status}`;
     await this.markAnalysisFailed(row, reason);
+    await this.cancelPendingFarmJobs(row.analysisId);
+  }
 
-    // The analysis cannot complete any more: stop what is still waiting at the farm.
+  private async cancelPendingFarmJobs(analysisId: string): Promise<void> {
     const pending = await this.farmJobRepo.find({
-      where: { analysisId: row.analysisId, ingestedAt: IsNull() },
+      where: { analysisId, ingestedAt: IsNull() },
     });
     for (const sibling of pending) {
       await this.farmClient.cancelJob(sibling.farmJobId).catch((error: unknown) => {
         this.logger.warn(`Could not cancel farm job ${sibling.farmJobId}: ${errorMessage(error)}`);
+      });
+    }
+  }
+
+  private async handleJobFailure(job: ListedJob, error: unknown): Promise<void> {
+    const message = errorMessage(error);
+    this.logger.error(`Failed to process farm job ${job.id}: ${message}`);
+    const maxAttempts =
+      this.config.get<number>('FARM_INGEST_MAX_ATTEMPTS') ?? DEFAULT_MAX_INGEST_ATTEMPTS;
+
+    // 1. Try analysis farm job
+    const row = await this.findOrAdoptFarmJob(job).catch(() => null);
+    if (row) {
+      await this.farmJobRepo
+        .createQueryBuilder()
+        .update(AnalysisFarmJobEntity)
+        .set({ attemptCount: () => 'attempt_count + 1' })
+        .where('farm_job_id = :farmJobId', { farmJobId: row.farmJobId })
+        .execute();
+      const updated = await this.farmJobRepo.findOne({ where: { farmJobId: row.farmJobId } });
+      const attempts =
+        updated && updated.attemptCount > (row.attemptCount ?? 0)
+          ? updated.attemptCount
+          : (row.attemptCount ?? 0) + 1;
+      row.attemptCount = attempts;
+
+      if (attempts >= maxAttempts) {
+        const reason = `Exceeded max ingest attempts (${attempts}/${maxAttempts}): ${message}`;
+        await this.markAnalysisFailed(row, reason);
+        await this.cancelPendingFarmJobs(row.analysisId);
+        await this.farmClient.ackJob(job.id);
+        this.loggedJobErrors.delete(job.id);
+        return;
+      }
+
+      if (this.loggedJobErrors.get(job.id) !== message) {
+        this.loggedJobErrors.set(job.id, message);
+        await this.analysisLog.write({
+          level: 'error',
+          action: 'analysis.ingest_failed',
+          message: `Could not process farm result ${job.type} (${job.correlation_id}): ${message} (retrying)`,
+          metadata: {
+            farmJobId: job.id,
+            correlationId: job.correlation_id,
+            type: job.type,
+            attempts,
+            maxAttempts,
+          },
+        });
+      }
+      return;
+    }
+
+    // 2. Try prep farm job
+    if (this.prepIngest) {
+      const shouldAck = await this.prepIngest
+        .handleJobFailure(job, error, maxAttempts)
+        .catch((err: unknown) => {
+          this.logger.error(`Failed to handle prep job failure ${job.id}: ${errorMessage(err)}`);
+          return false;
+        });
+      if (shouldAck) {
+        await this.farmClient.ackJob(job.id);
+        this.loggedJobErrors.delete(job.id);
+        return;
+      }
+    }
+
+    // 3. Fallback: unknown job or unrecorded row
+    if (this.loggedJobErrors.get(job.id) !== message) {
+      this.loggedJobErrors.set(job.id, message);
+      await this.analysisLog.write({
+        level: 'error',
+        action: 'analysis.ingest_failed',
+        message: `Could not process farm result ${job.type} (${job.correlation_id}): ${message} (retrying)`,
+        metadata: { farmJobId: job.id, correlationId: job.correlation_id, type: job.type },
       });
     }
   }

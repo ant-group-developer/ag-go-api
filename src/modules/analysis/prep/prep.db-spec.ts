@@ -420,6 +420,56 @@ describe('prep pipeline', () => {
     expect(failed.error).toContain('prep.json');
   });
 
+  it('bounds retry attempts for poison prep jobs and marks prep failed after max attempts', async () => {
+    const asset = await insertAsset();
+    const prepId = await enqueue(asset);
+    await pipeline.handlePrepRequested(prepId);
+    const farmJobId = farm.jobIdOf(`${prepId}:prep`);
+
+    const prefix = prefixOf(asset, prepId);
+    storage.objects.set(`${prefix}prep.json`, JSON.stringify(prepManifest(asset.id)));
+
+    // Simulate failure during ingest when submitTranscribe calls farm.submitJob
+    const spy = jest.spyOn(farm, 'submitJob').mockRejectedValue(new Error('farm down'));
+    try {
+      farm.queue = [jobView(farmJobId, 'scan.prep', 'completed', `${prepId}:prep`)];
+      await poller.poll();
+
+      expect(farm.acked).not.toContain(farmJobId);
+      let [farmJobRow] = await ds.query<Array<Record<string, unknown>>>(
+        `SELECT attempt_count, status, ingested_at FROM asset_prep_farm_jobs WHERE farm_job_id=$1`,
+        [farmJobId],
+      );
+      expect(farmJobRow['attempt_count']).toBe(1);
+      expect(farmJobRow['ingested_at']).toBeNull();
+
+      // Fast-forward to 4 attempts
+      await ds.query(`UPDATE asset_prep_farm_jobs SET attempt_count = 4 WHERE farm_job_id=$1`, [
+        farmJobId,
+      ]);
+
+      // 5th attempt
+      farm.queue = [jobView(farmJobId, 'scan.prep', 'completed', `${prepId}:prep`)];
+      await poller.poll();
+
+      expect(farm.acked).toContain(farmJobId);
+      [farmJobRow] = await ds.query<Array<Record<string, unknown>>>(
+        `SELECT attempt_count, status, ingested_at, error FROM asset_prep_farm_jobs WHERE farm_job_id=$1`,
+        [farmJobId],
+      );
+      expect(farmJobRow['attempt_count']).toBe(5);
+      expect(farmJobRow['status']).toBe('failed');
+      expect(farmJobRow['ingested_at']).not.toBeNull();
+      expect(JSON.stringify(farmJobRow['error'])).toContain('Exceeded max ingest attempts');
+
+      const prepRow = await prep(prepId);
+      expect(prepRow.status).toBe('failed');
+      expect(prepRow.error).toContain('Exceeded max ingest attempts');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it('adopts a prep result whose farm job row was never saved', async () => {
     const asset = await insertAsset();
     const prepId = await enqueue(asset);

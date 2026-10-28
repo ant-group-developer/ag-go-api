@@ -35,4 +35,7 @@ export class AssetPrepFarmJobEntity {
   /** Set while an outbox worker ingests the result, so other outbox hosts skip it. */
   @Column({ name: 'locked_until', type: 'timestamptz', nullable: true })
   lockedUntil!: Date | null;
+
+  @Column({ name: 'attempt_count', type: 'integer', default: 0 })
+  attemptCount!: number;
 }

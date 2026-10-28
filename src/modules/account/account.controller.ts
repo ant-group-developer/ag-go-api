@@ -1,10 +1,11 @@
 import { Controller, Get, Query, Req } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
-import { RequireAnyPermissions } from '../../common/auth/permissions.decorator';
+import { AdminOnly, RequireAnyPermissions } from '../../common/auth/permissions.decorator';
 import { AccountApiService } from './account-api.service';
+import { AccountApplicationDto } from './dto/account-application.dto';
 import { AccountUserQueryDto } from './dto/account-user-query.dto';
 import { SearchAccountUsersDto } from './dto/search-account-users.dto';
 
@@ -40,7 +41,9 @@ export class AccountController {
   }
 
   @Get('applications')
-  @ApiOperation({ summary: 'Lấy danh sách application từ Account API' })
+  @AdminOnly()
+  @ApiOkResponse({ type: AccountApplicationDto, isArray: true })
+  @ApiOperation({ summary: 'Lấy danh sách application từ Account API (admins only)' })
   getApplications() {
     return this.accountApi.getApplications();
   }

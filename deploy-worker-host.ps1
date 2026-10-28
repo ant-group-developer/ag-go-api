@@ -14,8 +14,8 @@ First time on a new machine (Docker Desktop with the WSL 2 backend, Git for Wind
   WORKER_MEDIA_MEMORY_LIMIT + WORKER_IO_MEMORY_LIMIT must fit in the memory Docker Desktop
   gets (by default half of the RAM; raise it with memory= in %UserProfile%\.wslconfig).
 
-Every deploy, in PowerShell (no admin needed), on the commit the main host runs:
-  git pull --ff-only origin main; if ($?) { powershell -ExecutionPolicy Bypass -File .\deploy-worker-host.ps1 }
+# Every deploy, in PowerShell (no admin needed), on the commit the main host runs:
+#   git fetch origin; git checkout --detach <commit>; if ($?) { powershell -ExecutionPolicy Bypass -File .\deploy-worker-host.ps1 }
 Keep the window open and the machine awake until it ends: the old workers finish their
 running jobs first (up to WORKER_STOP_GRACE_PERIOD), and the machine has no workers if the
 script is cut off meanwhile.
