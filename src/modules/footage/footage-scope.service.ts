@@ -99,6 +99,46 @@ export class FootageScopeService {
   }
 
   /**
+   * The visible-projects CTE of AG Studio's trusted mode: exactly the given projects (those added
+   * to one of its projects), whoever asks.
+   */
+  buildProjectsCte(projectIds: string[]): { cte: string; params: Record<string, unknown> } {
+    return {
+      cte: `visible_projects AS (SELECT id FROM projects WHERE id = ANY(:vp_project_ids))`,
+      params: { vp_project_ids: projectIds },
+    };
+  }
+
+  /**
+   * Of `assetIds`, those with a non-rejected link in one of `projectIds` (AG Studio's trusted
+   * mode).
+   */
+  async assetsInProjects(assetIds: string[], projectIds: string[]): Promise<Set<string>> {
+    if (assetIds.length === 0) return new Set();
+    const rows = (await this.dataSource.query(
+      `SELECT DISTINCT pm.asset_id AS id
+       FROM project_media pm
+       WHERE pm.asset_id = ANY($1::uuid[])
+         AND pm.project_id = ANY($2::uuid[])
+         AND pm.evaluation_status <> 'rejected'`,
+      [assetIds, projectIds],
+    )) as Array<{ id: string }>;
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * Asserts that every asset has a non-rejected link in one of `projectIds` (AG Studio's trusted
+   * mode). Throws NotFoundException naming the first one that has not.
+   */
+  async assertAssetsInProjects(assetIds: string[], projectIds: string[]): Promise<void> {
+    const found = await this.assetsInProjects(assetIds, projectIds);
+    const missing = assetIds.find((id) => !found.has(id));
+    if (missing) {
+      throw new NotFoundException(`Video not found in the given projects: ${missing}`);
+    }
+  }
+
+  /**
    * Returns a parameterized EXISTS sub-query that is TRUE when the row alias (any table with an
    * `asset_id` column) has at least one non-rejected project_media in a visible project.
    *

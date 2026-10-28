@@ -1,15 +1,31 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query, Req } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthContextService } from '../../common/auth-context.service';
 import { AllowServiceKey } from '../../common/auth/allow-service-key.decorator';
 import { GO_PERMISSIONS } from '../../common/auth/permissions.constants';
-import { RequirePermissions } from '../../common/auth/permissions.decorator';
+import { RequireAnyPermissions, RequirePermissions } from '../../common/auth/permissions.decorator';
+import { ServiceOnly } from '../../common/auth/service-only.decorator';
 import { PrepStudioService } from '../analysis/prep/prep-studio.service';
 import { FootageCatalogBodyDto } from './dto/catalog-query.dto';
 import { PrepAssetsDto } from './dto/prep-assets.dto';
 import { ResolveAssetsDto } from './dto/resolve-assets.dto';
 import { FootagePreviewUrlQueryDto, FootageSearchQueryDto } from './dto/search-query.dto';
+import {
+  FootageProjectAccessDto,
+  StudioPrepAssetsDto,
+  StudioResolveAssetsDto,
+} from './dto/studio-footage.dto';
 import { FootageScopeService } from './footage-scope.service';
 import { FootageService } from './footage.service';
 
@@ -139,6 +155,93 @@ export class FootageController {
   }
 
   // ---------------------------------------------------------------------------
+  // POST /footage/projects/access
+  // ---------------------------------------------------------------------------
+
+  @Post('projects/access')
+  @RequireAnyPermissions(GO_PERMISSIONS.FOOTAGE_SEARCH, GO_PERMISSIONS.PROJECT_READ)
+  @AllowServiceKey('footage:read')
+  @ApiSecurity('service-key')
+  @ApiOperation({
+    summary:
+      'Whether the user sees each project and may download its originals (AG Studio adds those)',
+  })
+  projectAccess(@Body() dto: FootageProjectAccessDto, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    return this.footageService.projectAccess(
+      dto.projectIds,
+      ctx.userId,
+      ctx.userType,
+      ctx.permissions,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // AG Studio's trusted mode (/footage/studio/*): the videos of the projects added to one of its
+  // projects, whoever asks. Someone who could download their originals added them; Studio checks
+  // nothing more and neither does ag-go (decision 2026-10-24).
+  // ---------------------------------------------------------------------------
+
+  @Get('studio/search')
+  @ServiceOnly('footage:studio')
+  @ApiSecurity('service-key')
+  @ApiOperation({
+    summary: 'Footage search within the given projects (AG Studio, service key only)',
+  })
+  studioSearch(@Query() query: FootageSearchQueryDto, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    return this.footageService.search(query, ctx.userId, undefined, studioProjects(query));
+  }
+
+  @Get('studio/facets')
+  @ServiceOnly('footage:studio')
+  @ApiSecurity('service-key')
+  @ApiOperation({ summary: 'Facet counts within the given projects (AG Studio, service key only)' })
+  studioFacets(@Query() query: FootageSearchQueryDto, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { limit: _l, cursor: _c, page: _p, sortBy: _sb, sortOrder: _so, ...facetQuery } = query;
+    return this.footageService.getFacets(facetQuery, ctx.userId, undefined, studioProjects(query));
+  }
+
+  @Post('studio/assets/resolve')
+  @ServiceOnly('footage:studio')
+  @ApiSecurity('service-key')
+  @ApiOperation({
+    summary:
+      'Signed URLs of videos of the given projects, originals included; others are missing (AG Studio)',
+  })
+  studioResolve(@Body() dto: StudioResolveAssetsDto, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    return this.footageService.resolveStudioAssets(
+      dto.assetIds,
+      dto.purpose,
+      dto.projectIds,
+      ctx.userId,
+      (req as Request & { requestId?: string }).requestId,
+      dto.prefer,
+    );
+  }
+
+  @Post('studio/assets/prep')
+  @ServiceOnly('footage:studio')
+  @ApiSecurity('service-key')
+  @ApiOperation({ summary: 'Prepared Studio inputs of videos of the given projects (AG Studio)' })
+  async studioReadPreps(@Body() dto: StudioPrepAssetsDto) {
+    await this.scopeService.assertAssetsInProjects([...new Set(dto.assetIds)], dto.projectIds);
+    return this.prepStudio.read(dto.assetIds);
+  }
+
+  @Post('studio/assets/prep/run')
+  @ServiceOnly('footage:studio')
+  @ApiSecurity('service-key')
+  @ApiOperation({ summary: 'Run the prep of videos of the given projects now (AG Studio)' })
+  async studioRunPreps(@Body() dto: StudioPrepAssetsDto) {
+    await this.scopeService.assertAssetsInProjects([...new Set(dto.assetIds)], dto.projectIds);
+    return this.prepStudio.run(dto.assetIds, studioUserId(dto.requestedBy));
+  }
+
+  // ---------------------------------------------------------------------------
   // GET /footage/search
   // ---------------------------------------------------------------------------
 
@@ -168,4 +271,19 @@ export class FootageController {
     const { limit: _l, cursor: _c, page: _p, sortBy: _sb, sortOrder: _so, ...facetQuery } = query;
     return this.footageService.getFacets(facetQuery, ctx.userId, ctx.userType);
   }
+}
+
+/** The projects a trusted AG Studio search looks in: required, they bound what it serves. */
+function studioProjects(query: FootageSearchQueryDto): string[] {
+  if (!query.projectIds?.length) {
+    throw new BadRequestException('projectIds is required');
+  }
+  return query.projectIds;
+}
+
+/** AG Studio sends the full Auth0 subject; ag-go keys users without `auth0|`. */
+function studioUserId(subject: string | undefined): string | null {
+  const value = subject?.trim();
+  if (!value) return null;
+  return value.startsWith('auth0|') ? value.slice('auth0|'.length) : value;
 }
