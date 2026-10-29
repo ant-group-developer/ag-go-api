@@ -72,7 +72,7 @@ const DISCOVERY_CONCURRENCY = 3;
 const DISCOVERY_LOCK_MS = 60_000;
 /** How often the import job checks whether the discovery job released the batch. */
 const DISCOVERY_LOCK_POLL_MS = 2_000;
-/** How long an import job waits before checking again whether the batch ahead of it finished. */
+/** How long an import job waits before checking again whether a batch slot is free. */
 const BATCH_AHEAD_POLL_MS = 5_000;
 const RENEW_LOCK_SCRIPT =
   "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('PEXPIRE', KEYS[1], ARGV[2]) end; return 0";
@@ -293,9 +293,8 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
     if (!batch || ['completed', 'cancelled', 'paused'].includes(batch.status)) {
       return;
     }
-    // After a restart the job of the interrupted batch only becomes runnable once BullMQ sees it
-    // stalled, so the next waiting job would start first and two batches would run side by side.
-    if (await this.hasBatchAhead(batch)) {
+    // At most IMPORT_MAX_PARALLEL_BATCHES batches run at once; the rest wait for a free slot.
+    if (!(await this.claimBatchSlot(batch))) {
       await this.postpone(job, token, BATCH_AHEAD_POLL_MS);
     }
     const heartbeat = this.startHeartbeat('import_batches', batch.id);
@@ -306,27 +305,49 @@ export class GoogleDriveImportWorkerService implements OnModuleDestroy {
       clearInterval(heartbeat);
     }
     if (interrupted) {
-      // The batch stays `processing`, so the next worker continues it before any other batch.
+      // The batch stays `processing`, so it keeps its slot ahead of batches not started yet.
       this.logger.log(`Import batch ${batch.id} stopped for shutdown; its job resumes on restart`);
       await this.postpone(job, token, 0);
     }
   }
 
   /**
-   * Another batch was started and has not finished, e.g. one cut off by a restart whose job is
-   * waiting to run again. It goes first, so imports keep running one at a time. Between two
-   * started batches the older one goes first, so they never keep deferring to each other.
+   * Marks the batch `processing` when fewer than IMPORT_MAX_PARALLEL_BATCHES other batches are
+   * (always when it is unset).
+   * A batch already started, e.g. one cut off by a restart whose job only becomes runnable once
+   * BullMQ sees it stalled, counts only the older started batches: it keeps its slot ahead of
+   * batches not started yet, and two started batches never keep deferring to each other. The
+   * count and the update run under one advisory lock, so workers starting batches at once never
+   * go over the limit.
    */
-  private async hasBatchAhead(batch: ImportBatchEntity): Promise<boolean> {
-    const query = this.batchRepository
-      .createQueryBuilder('batch')
-      .where("batch.status = 'processing' AND batch.id <> :id", { id: batch.id });
-    if (batch.status === 'processing') {
-      query.andWhere('(batch.created_at, batch.id) < (:createdAt, :id)', {
-        createdAt: batch.createdAt,
-      });
+  private async claimBatchSlot(batch: ImportBatchEntity): Promise<boolean> {
+    // Unset: no cap, so every import worker (one batch each) can run a batch.
+    const limit = this.config.get<number>('IMPORT_MAX_PARALLEL_BATCHES');
+    if (!limit) {
+      await this.batchRepository.update(
+        { id: batch.id, status: Not(In(['cancelled', 'paused'])) },
+        { status: 'processing' },
+      );
+      return true;
     }
-    return query.getExists();
+    return this.dataSource.transaction(async (manager) => {
+      await manager.query('SELECT pg_advisory_xact_lock(hashtext($1))', ['import-batch-slots']);
+      const [{ running }] = await manager.query(
+        `SELECT COUNT(*)::int AS running FROM import_batches
+          WHERE status = 'processing' AND id <> $1
+            AND ($2::boolean OR (created_at, id) < ($3, $1))`,
+        [batch.id, batch.status !== 'processing', batch.createdAt],
+      );
+      if (running >= limit) {
+        return false;
+      }
+      await manager.update(
+        ImportBatchEntity,
+        { id: batch.id, status: Not(In(['cancelled', 'paused'])) },
+        { status: 'processing' },
+      );
+      return true;
+    });
   }
 
   /** Hands the job back to the queue without using up an attempt. */
