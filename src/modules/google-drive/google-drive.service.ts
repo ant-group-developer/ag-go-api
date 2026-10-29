@@ -626,8 +626,12 @@ export class GoogleDriveService implements OnModuleDestroy {
         `COUNT(*) FILTER (WHERE ${IMPORT_HISTORY_STATUS_CONDITIONS.failed})::int`,
         'failed',
       )
+      .addSelect(
+        `COUNT(*) FILTER (WHERE ${IMPORT_HISTORY_STATUS_CONDITIONS.cancelled})::int`,
+        'cancelled',
+      )
       .getRawOne<ImportHistoryCounts>();
-    const counts = countRow ?? { all: 0, active: 0, completed: 0, failed: 0 };
+    const counts = countRow ?? { all: 0, active: 0, completed: 0, failed: 0, cancelled: 0 };
 
     if (status !== 'all') {
       query.andWhere(IMPORT_HISTORY_STATUS_CONDITIONS[status]);
@@ -783,8 +787,12 @@ export class GoogleDriveService implements OnModuleDestroy {
         'completed',
       )
       .addSelect(`COUNT(*) FILTER (WHERE ${IMPORT_ITEM_STATUS_CONDITIONS.failed})::int`, 'failed')
+      .addSelect(
+        `COUNT(*) FILTER (WHERE ${IMPORT_ITEM_STATUS_CONDITIONS.cancelled})::int`,
+        'cancelled',
+      )
       .getRawOne<ImportItemCounts>();
-    const counts = countRow ?? { all: 0, active: 0, completed: 0, failed: 0 };
+    const counts = countRow ?? { all: 0, active: 0, completed: 0, failed: 0, cancelled: 0 };
 
     if (status !== 'all') {
       query.andWhere(IMPORT_ITEM_STATUS_CONDITIONS[status]);
@@ -854,6 +862,38 @@ export class GoogleDriveService implements OnModuleDestroy {
     return updated;
   }
 
+  /**
+   * Runs a cancelled or (partly) failed batch again: its cancelled and failed files, and folders
+   * not listed yet, go back to the queue; files already imported are kept.
+   */
+  async retryImport(id: string, userId: string, userType?: 'ADMIN' | 'USER') {
+    const batch = await this.assertBatchOwner(id, userId, userType);
+    const requeued = await this.batchRepository.update(
+      { id, status: In(['cancelled', 'failed', 'partial']) },
+      { status: 'queued', errorMessage: null },
+    );
+    if (requeued.affected) {
+      await this.itemRepository.update(
+        { batchId: id, status: In(['cancelled', 'failed']) },
+        {
+          status: 'queued',
+          resolution: null,
+          errorCode: null,
+          errorMessage: null,
+          attemptCount: 0,
+          finishedAt: null,
+        },
+      );
+      const queueJobId = await this.importQueue.addJob({ batchId: id, userId: batch.createdBy });
+      await this.batchRepository.update(id, { queueJobId });
+    }
+    const updated = await this.batchRepository.findOneOrFail({ where: { id } });
+    if (requeued.affected) {
+      await this.recordBatchAction(updated, userId, IMPORT_AUDIT_ACTIONS.resumed);
+    }
+    return updated;
+  }
+
   /** Audit entry for a user action on a batch, with its progress at that moment. */
   private recordBatchAction(
     batch: ImportBatchEntity,
@@ -886,7 +926,12 @@ export class GoogleDriveService implements OnModuleDestroy {
     await this.itemRepository.save(item);
     // `processing` is set by the worker once the job starts; other batches wait for such a batch.
     await this.batchRepository.update({ id, status: Not('processing') }, { status: 'queued' });
-    const queueJobId = await this.importQueue.addJob({ batchId: batch.id, userId });
+    // The worker loads the batch by its creator, so an admin retrying another user's file
+    // queues the job as that user.
+    const queueJobId = await this.importQueue.addJob({
+      batchId: batch.id,
+      userId: batch.createdBy,
+    });
     await this.batchRepository.update(id, { queueJobId });
     return item;
   }

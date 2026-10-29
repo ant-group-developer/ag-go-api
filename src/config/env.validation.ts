@@ -56,6 +56,9 @@ export const envValidationSchema = Joi.object({
   MEDIA_WORKER_ENABLED: Joi.boolean().truthy('true').falsy('false').required(),
   QUEUE_PREFIX: requiredString,
   MEDIA_WORKER_CONCURRENCY: Joi.number().integer().min(1).max(32).required(),
+  // Cap on Drive import batches running at once across all workers, e.g. to spare the Drive API
+  // quota. Unset: one batch per running import worker.
+  IMPORT_MAX_PARALLEL_BATCHES: Joi.number().integer().min(1).max(256).optional(),
   // Threads per FFmpeg/sharp run; keep it near WORKER_CPUS. Defaulted so existing .env files keep working.
   MEDIA_FFMPEG_THREADS: Joi.number().integer().min(1).max(64).default(2),
   OUTBOX_POLL_INTERVAL_MS: Joi.number().integer().min(100).required(),
