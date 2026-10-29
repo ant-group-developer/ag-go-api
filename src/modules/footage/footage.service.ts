@@ -825,6 +825,40 @@ export class FootageService {
   }
 
   // ---------------------------------------------------------------------------
+  // GET /footage/assets/:assetId
+  // ---------------------------------------------------------------------------
+
+  /**
+   * One analysed video as a search lists it, usable or not (a link opens it by id). 404 when it
+   * is not analysed yet or not visible to the user, as everywhere in footage.
+   */
+  async getVideo(
+    assetId: string,
+    userId: string,
+    userType?: 'ADMIN' | 'USER',
+  ): Promise<FootageVideo> {
+    const scope = await this.resolveScope(undefined, userId, userType);
+    const notFound = new NotFoundException(`Video not found or not in scope: ${assetId}`);
+    if (!scope) throw notFound;
+    const { cte, params } = scope;
+    const queryParams: Record<string, unknown> = { ...params, asset_id: assetId };
+    const where = filterClauses({ usability: 'all' }, queryParams);
+    const approvedExists = this.scopeService.approvedExistsClause('aa');
+    const [row] = await this.query<VideoRow>(
+      `
+      WITH ${cte}
+      SELECT ${videoSelect(approvedExists)}
+      ${VIDEO_FROM}
+      WHERE ${where.join(' AND ')} AND aa.asset_id = :asset_id
+      GROUP BY aa.id, asst.id
+      `,
+      queryParams,
+    );
+    if (!row) throw notFound;
+    return this.toVideo(row);
+  }
+
+  // ---------------------------------------------------------------------------
   // GET /footage/facets
   // ---------------------------------------------------------------------------
 

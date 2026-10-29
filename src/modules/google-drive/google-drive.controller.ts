@@ -199,6 +199,14 @@ export class GoogleDriveController {
     return this.googleDrive.resumeImport(batchId, context.userId, context.userType);
   }
 
+  /** Runs a cancelled or failed batch again, keeping the files already imported. */
+  @Post('imports/:batchId/retry')
+  @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)
+  retryImport(@Param('batchId') batchId: string, @Req() request: Request) {
+    const context = this.authContext.getContext(request);
+    return this.googleDrive.retryImport(batchId, context.userId, context.userType);
+  }
+
   /** One page of the batch's files, as `{ items, total, page, pageSize, counts }`. */
   @Get('imports/:batchId/items')
   @RequirePermissions(GO_PERMISSIONS.DRIVE_IMPORT)

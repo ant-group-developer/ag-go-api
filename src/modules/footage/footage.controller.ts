@@ -85,6 +85,20 @@ export class FootageController {
   }
 
   // ---------------------------------------------------------------------------
+  // GET /footage/assets/:assetId
+  // ---------------------------------------------------------------------------
+
+  @Get('assets/:assetId')
+  @RequirePermissions(GO_PERMISSIONS.FOOTAGE_SEARCH)
+  @AllowServiceKey('footage:read')
+  @ApiSecurity('service-key')
+  @ApiOperation({ summary: 'One analysed video as the search lists it (links open it by id)' })
+  getVideo(@Param('assetId', ParseUUIDPipe) assetId: string, @Req() req: Request) {
+    const ctx = this.authContext.getContext(req);
+    return this.footageService.getVideo(assetId, ctx.userId, ctx.userType);
+  }
+
+  // ---------------------------------------------------------------------------
   // GET /footage/assets/:assetId/preview-url
   // ---------------------------------------------------------------------------
 

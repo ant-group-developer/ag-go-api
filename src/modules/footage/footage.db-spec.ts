@@ -1049,6 +1049,43 @@ describe('FootageService.getAssetMedia — detail', () => {
   });
 });
 
+describe('FootageService.getVideo — one video by id', () => {
+  it('returns a visible video, usable or not, and 404 when hidden or not analysed', async () => {
+    const userId = `u-${randomUUID().slice(0, 8)}`;
+    const folderId = await insertFolder();
+    await grantFolder(folderId, userId);
+    const projectId = await insertProject(folderId);
+    const usable = await insertVideo(projectId, { width: 1920, height: 1080, durationMs: 8_000 });
+    const unusable = await insertAsset();
+    await insertAnalysis(unusable, true, { usable: false });
+    await linkAssetToProject(unusable, projectId);
+    const unanalysed = await insertAsset();
+    await linkAssetToProject(unanalysed, projectId);
+    const hidden = await insertVideo(await insertProject(await insertFolder()), {
+      width: 1280,
+      height: 720,
+      durationMs: 1_000,
+    });
+
+    const video = await footageService.getVideo(usable, userId, 'USER');
+    expect(video).toMatchObject({
+      assetId: usable,
+      projectIds: [projectId],
+      folderIds: [folderId],
+      width: 1920,
+      durationMs: 8_000,
+    });
+    expect((await footageService.getVideo(unusable, userId, 'USER')).usable).toBe(false);
+    await expect(footageService.getVideo(hidden, userId, 'USER')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    await expect(footageService.getVideo(unanalysed, userId, 'USER')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+    expect((await footageService.getVideo(hidden, 'admin', 'ADMIN')).assetId).toBe(hidden);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // AG Studio: what a user may do with projects, and the trusted mode bound to projects
 // ---------------------------------------------------------------------------

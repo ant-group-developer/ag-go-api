@@ -44,7 +44,13 @@ export function containsPattern(search: string) {
  * Status tabs of the history: 'active' groups batches not finished yet (queued, processing,
  * paused), 'failed' also holds the batches where only some files failed.
  */
-export const IMPORT_HISTORY_STATUS_FILTERS = ['all', 'active', 'completed', 'failed'] as const;
+export const IMPORT_HISTORY_STATUS_FILTERS = [
+  'all',
+  'active',
+  'completed',
+  'failed',
+  'cancelled',
+] as const;
 export type ImportHistoryStatusFilter = (typeof IMPORT_HISTORY_STATUS_FILTERS)[number];
 export type ImportHistoryCounts = Record<ImportHistoryStatusFilter, number>;
 
@@ -60,6 +66,7 @@ export const IMPORT_HISTORY_STATUS_CONDITIONS: Record<
   active: "batch.status NOT IN ('completed', 'partial', 'failed', 'cancelled')",
   completed: "batch.status = 'completed'",
   failed: "batch.status IN ('failed', 'partial')",
+  cancelled: "batch.status = 'cancelled'",
 };
 
 export const IMPORT_HISTORY_SORT_FIELDS = [
@@ -97,7 +104,13 @@ export const IMPORT_HISTORY_SORT_EXPRESSIONS: Record<ImportHistorySortField, str
 };
 
 /** Files of a batch (`GET /google-drive/imports/:batchId/items`); folders are left out. */
-export const IMPORT_ITEM_STATUS_FILTERS = ['all', 'active', 'completed', 'failed'] as const;
+export const IMPORT_ITEM_STATUS_FILTERS = [
+  'all',
+  'active',
+  'completed',
+  'failed',
+  'cancelled',
+] as const;
 export type ImportItemStatusFilter = (typeof IMPORT_ITEM_STATUS_FILTERS)[number];
 export type ImportItemCounts = Record<ImportItemStatusFilter, number>;
 
@@ -113,6 +126,7 @@ export const IMPORT_ITEM_STATUS_CONDITIONS: Record<
   active: "item.status IN ('queued', 'importing')",
   completed: "item.status = 'completed'",
   failed: "item.status = 'failed'",
+  cancelled: "item.status = 'cancelled'",
 };
 
 export const IMPORT_ITEM_SORT_FIELDS = [

@@ -2890,6 +2890,7 @@ paths:
               - active
               - completed
               - failed
+              - cancelled
             type: string
         - name: search
           required: false
@@ -2998,6 +2999,24 @@ paths:
                 $ref: "#/components/schemas/ApiResponse"
       security: *a34
       tags: *a35
+  /google-drive/imports/{batchId}/retry:
+    post:
+      operationId: GoogleDriveController_retryImport
+      parameters:
+        - name: batchId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a34
+      tags: *a35
   /google-drive/imports/{batchId}/items:
     get:
       operationId: GoogleDriveController_items
@@ -3029,6 +3048,7 @@ paths:
               - active
               - completed
               - failed
+              - cancelled
             type: string
         - name: search
           required: false
@@ -3194,6 +3214,27 @@ paths:
         - *a37
         - service-key: []
       summary: Preview URL of the whole video, keyframes and contact sheet
+      tags: *a38
+  /footage/assets/{assetId}:
+    get:
+      operationId: FootageController_getVideo
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - *a37
+        - service-key: []
+      summary: One analysed video as the search lists it (links open it by id)
       tags: *a38
   /footage/assets/{assetId}/preview-url:
     get:
