@@ -4,6 +4,7 @@ import type { DataSource, Repository } from 'typeorm';
 import type { OutboxService } from '../../common/outbox.service';
 import type { AssetUploadSessionEntity } from '../../database/entities/asset-upload-session.entity';
 import type { FolderAccessService } from '../folders/folder-access.service';
+import type { SettingsService } from '../settings/settings.service';
 import { AssetsService } from './assets.service';
 import type { StorageAdapter } from './storage/storage-adapter';
 
@@ -16,8 +17,8 @@ jest.mock('uuid', () => ({ v7: () => `id-${(nextId += 1)}` }));
 
 const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
+const MAX_UPLOAD_SIZE_BYTES = 20 * GIB;
 const CONFIG: Record<string, unknown> = {
-  MAX_UPLOAD_SIZE_BYTES: 20 * GIB,
   UPLOAD_SESSION_TTL_SECONDS: 3600,
   R2_PRESIGNED_URL_TTL_SECONDS: 900,
   R2_BUCKET: 'bucket',
@@ -67,6 +68,7 @@ function createService() {
     storage as unknown as StorageAdapter,
     {} as OutboxService,
     {} as never,
+    { getMaxUploadSizeBytes: async () => MAX_UPLOAD_SIZE_BYTES } as unknown as SettingsService,
   );
   return { service, storage, sessionRepository, dataSource };
 }
@@ -104,6 +106,15 @@ describe('AssetsService multipart uploads', () => {
 
     expect(session.uploadUrl).toBe('https://r2.test/put');
     expect(session.multipart).toBeNull();
+    expect(storage.createMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it('rejects files above the configured upload limit', async () => {
+    const { service, storage } = createService();
+
+    await expect(
+      service.createUploadSession(uploadDto(MAX_UPLOAD_SIZE_BYTES + 1), 'user-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(storage.createMultipartUpload).not.toHaveBeenCalled();
   });
 

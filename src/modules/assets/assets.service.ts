@@ -40,6 +40,7 @@ import {
   isVariantServable,
   WATERMARK_LOGO_PURPOSE,
 } from '../render/watermark-policy';
+import { SettingsService } from '../settings/settings.service';
 import { CompleteUploadDto } from './dto/complete-upload.dto';
 import { CreateUploadSessionDto } from './dto/create-upload-session.dto';
 import { UploadPartsDto } from './dto/upload-parts.dto';
@@ -74,6 +75,7 @@ export class AssetsService implements OnModuleDestroy {
     @Inject(STORAGE_ADAPTER) private readonly storage: StorageAdapter,
     private readonly outboxService: OutboxService,
     private readonly auditService: AuditService,
+    private readonly settingsService: SettingsService,
   ) {}
 
   /**
@@ -112,7 +114,7 @@ export class AssetsService implements OnModuleDestroy {
     userType?: 'ADMIN' | 'USER',
     idempotencyKey?: string,
   ) {
-    this.ensureUploadSize(dto.fileSizeBytes);
+    await this.ensureUploadSize(dto.fileSizeBytes);
     const project = await this.getProject(dto.targetProjectId);
     await this.requireProjectAccess(project, userId, 'editor', userType);
     return this.openUploadSession(
@@ -137,7 +139,7 @@ export class AssetsService implements OnModuleDestroy {
     dto: Omit<CreateUploadSessionDto, 'assetType' | 'targetProjectId'>,
     userId: string,
   ) {
-    this.ensureUploadSize(dto.fileSizeBytes);
+    await this.ensureUploadSize(dto.fileSizeBytes);
     return this.openUploadSession({ ...dto, assetType: 'image' }, userId, {
       targetProjectId: null,
       keyPrefix: 'settings/watermark',
@@ -145,8 +147,8 @@ export class AssetsService implements OnModuleDestroy {
     });
   }
 
-  private ensureUploadSize(fileSizeBytes: number) {
-    const maxUploadBytes = this.config.getOrThrow<number>('MAX_UPLOAD_SIZE_BYTES');
+  private async ensureUploadSize(fileSizeBytes: number) {
+    const maxUploadBytes = await this.settingsService.getMaxUploadSizeBytes();
     if (fileSizeBytes > maxUploadBytes) {
       throw new BadRequestException(`File exceeds the ${maxUploadBytes} byte upload limit`);
     }
