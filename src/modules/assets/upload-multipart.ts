@@ -6,6 +6,12 @@ const MIN_PART_BYTES = 16 * MIB;
 /** R2 and S3 accept at most 10,000 parts per upload. */
 const MAX_PARTS = 10_000;
 
+/**
+ * How long the parts of an unfinished large upload are kept after its session ran out, so the
+ * same file can carry on from there (after a failure, a closed tab or a computer that slept).
+ */
+export const MULTIPART_RESUME_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export type MultipartLayout = { partSize: number; partCount: number };
 
 /**
@@ -17,17 +23,43 @@ export function multipartLayout(sizeBytes: number): MultipartLayout {
   return { partSize, partCount: Math.ceil(sizeBytes / partSize) };
 }
 
+function expectedPartSize(layout: MultipartLayout, partNumber: number, sizeBytes: number) {
+  return partNumber < layout.partCount
+    ? layout.partSize
+    : sizeBytes - layout.partSize * (layout.partCount - 1);
+}
+
+/**
+ * Parts already in storage with the size the layout expects, so a resumed upload skips them.
+ * A part with any other size is sent again.
+ */
+export function completedPartNumbers(
+  parts: Array<{ partNumber: number; sizeBytes: number }>,
+  sizeBytes: number,
+): number[] {
+  const layout = multipartLayout(sizeBytes);
+  return parts
+    .filter(
+      (part) =>
+        part.partNumber <= layout.partCount &&
+        part.sizeBytes === expectedPartSize(layout, part.partNumber, sizeBytes),
+    )
+    .map((part) => part.partNumber)
+    .sort((a, b) => a - b);
+}
+
 /** Why the uploaded parts do not add up to the declared file, or null when they do. */
 export function describePartMismatch(
   parts: Array<{ partNumber: number; sizeBytes: number }>,
   sizeBytes: number,
 ): string | null {
-  const { partSize, partCount } = multipartLayout(sizeBytes);
+  const layout = multipartLayout(sizeBytes);
+  const { partCount } = layout;
   const sizes = new Map(parts.map((part) => [part.partNumber, part.sizeBytes]));
   const missing: number[] = [];
   const wrongSize: number[] = [];
   for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
-    const expected = partNumber < partCount ? partSize : sizeBytes - partSize * (partCount - 1);
+    const expected = expectedPartSize(layout, partNumber, sizeBytes);
     const actual = sizes.get(partNumber);
     if (actual === undefined) {
       missing.push(partNumber);

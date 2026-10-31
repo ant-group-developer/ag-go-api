@@ -35,7 +35,9 @@ export class LogsController {
 
   @Get('upload-speed')
   @AdminOnly()
-  @ApiOperation({ summary: 'Completed uploads with their transfer speed (admins only)' })
+  @ApiOperation({
+    summary: 'Uploads with their transfer speed, failed and expired ones included (admins only)',
+  })
   listUploadSpeed(@Query() query: UploadSpeedQueryDto) {
     return this.uploadSpeed.list(query);
   }

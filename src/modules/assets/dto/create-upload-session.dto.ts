@@ -56,4 +56,16 @@ export class CreateUploadSessionDto {
   })
   @IsUUID()
   uploadBatchId?: string;
+
+  @IsOptional()
+  @ApiPropertyOptional({
+    description:
+      'The file’s last-modified time (File.lastModified, ms). With the name and size it tells ' +
+      'the same file chosen again, so an unfinished large upload of it carries on instead of ' +
+      'starting over.',
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  fileLastModified?: number;
 }

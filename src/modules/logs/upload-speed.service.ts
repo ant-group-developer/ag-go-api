@@ -4,7 +4,7 @@ import { DataSource } from 'typeorm';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { UploadSpeedQueryDto } from './dto/upload-speed-query.dto';
 
-/** Completed uploads with their timings, read from the `upload_speed_log` view. */
+/** Uploads (completed, failed or expired) with their timings, read from the `upload_speed_log` view. */
 @Injectable()
 export class UploadSpeedService {
   constructor(
@@ -17,11 +17,11 @@ export class UploadSpeedService {
     const filters = ['TRUE'];
     if (query.from) {
       values.push(query.from);
-      filters.push(`u.completed_at >= $${values.length}`);
+      filters.push(`u.ended_at >= $${values.length}`);
     }
     if (query.to) {
       values.push(query.to);
-      filters.push(`u.completed_at <= $${values.length}`);
+      filters.push(`u.ended_at <= $${values.length}`);
     }
     if (query.assetType) {
       values.push(query.assetType);
@@ -30,6 +30,14 @@ export class UploadSpeedService {
     if (query.mode) {
       values.push(query.mode);
       filters.push(`u.mode = $${values.length}`);
+    }
+    if (query.status === 'completed') {
+      filters.push(`u.status = 'completed'`);
+    } else if (query.status === 'failed') {
+      // A large upload that failed stays open so it can be resumed.
+      filters.push(
+        `(u.status IN ('aborted', 'expired') OR (u.status <> 'completed' AND u.failure IS NOT NULL))`,
+      );
     }
     if (query.projectId) {
       values.push(query.projectId);
@@ -49,17 +57,20 @@ export class UploadSpeedService {
     const where = filters.join(' AND ');
 
     // Speeds cover only uploads the browser timed (watermark logos send no client timings), and
-    // the slowest/fastest stretch only uploads made since it was recorded.
+    // the slowest/fastest stretch only uploads made since it was recorded. Sizes and times count
+    // only completed uploads; a failed one stopped part way.
     const summaryRows = await this.dataSource.query(
       `SELECT
           COUNT(*)::int AS total,
-          COALESCE(SUM(u.size_bytes), 0)::bigint AS "totalBytes",
+          (COUNT(*) FILTER (WHERE u.status <> 'completed'))::int AS failed,
+          COALESCE(SUM(u.size_bytes) FILTER (WHERE u.status = 'completed'), 0)::bigint
+            AS "totalBytes",
           round(AVG(u.transfer_mbps), 2)::float AS "avgMbps",
           round(percentile_cont(0.5) WITHIN GROUP (ORDER BY u.transfer_mbps)::numeric, 2)::float
             AS "medianMbps",
           MIN(u.min_mbps)::float AS "minMbps",
           MAX(u.max_mbps)::float AS "maxMbps",
-          round(AVG(u.transfer_ms))::int AS "avgTransferMs",
+          round(AVG(u.transfer_ms) FILTER (WHERE u.status = 'completed'))::int AS "avgTransferMs",
           round(AVG(u.total_ms))::int AS "avgTotalMs"
        FROM upload_speed_log u
        WHERE ${where}`,
@@ -78,6 +89,8 @@ export class UploadSpeedService {
           u.size_bytes::bigint AS "sizeBytes",
           u.created_by AS "createdBy",
           u.completed_at AS "completedAt",
+          u.status,
+          u.ended_at AS "endedAt",
           u.project_id AS "projectId",
           u.project_name AS "projectName",
           u.mode,
@@ -96,10 +109,12 @@ export class UploadSpeedService {
           u.rtt_ms AS "rttMs",
           u.assemble_ms AS "assembleMs",
           u.complete_ms AS "completeMs",
-          u.total_ms AS "totalMs"
+          u.total_ms AS "totalMs",
+          u.failure,
+          u.resumed_bytes AS "resumedBytes"
        FROM upload_speed_log u
        WHERE ${where}
-       ORDER BY u.completed_at DESC NULLS LAST
+       ORDER BY u.ended_at DESC
        OFFSET $${values.length - 1} LIMIT $${values.length}`,
       values,
     );
@@ -111,6 +126,7 @@ export class UploadSpeedService {
       items,
       summary: {
         total,
+        failed: Number(summary.failed ?? 0),
         totalBytes: Number(summary.totalBytes ?? 0),
         avgMbps: summary.avgMbps ?? null,
         medianMbps: summary.medianMbps ?? null,
