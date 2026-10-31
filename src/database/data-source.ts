@@ -88,6 +88,7 @@ import { AccessGrants2140000000000 } from './migrations/2140000000000-access-gra
 import { UploadMetrics2150000000000 } from './migrations/2150000000000-upload-metrics';
 import { OriginalAccessBundles2160000000000 } from './migrations/2160000000000-original-access-bundles';
 import { UploadSpeedLogRange2170000000000 } from './migrations/2170000000000-upload-speed-log-range';
+import { UploadFailureLog2180000000000 } from './migrations/2180000000000-upload-failure-log';
 
 loadEnv();
 
@@ -193,6 +194,7 @@ export const AppDataSource = new DataSource({
     UploadMetrics2150000000000,
     OriginalAccessBundles2160000000000,
     UploadSpeedLogRange2170000000000,
+    UploadFailureLog2180000000000,
   ],
   synchronize: false,
 });

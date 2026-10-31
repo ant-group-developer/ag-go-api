@@ -9,5 +9,6 @@ import { SettingsService } from './settings.service';
   imports: [TypeOrmModule.forFeature([SystemSettingEntity])],
   controllers: [SettingsController],
   providers: [AuthContextService, SettingsService],
+  exports: [SettingsService],
 })
 export class SettingsModule {}

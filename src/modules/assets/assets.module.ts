@@ -13,6 +13,7 @@ import { QueueModule } from '../../infra/queue/queue.module';
 import { AnalysisModule } from '../analysis/analysis.module';
 import { AuditModule } from '../audit/audit.module';
 import { FoldersModule } from '../folders/folders.module';
+import { SettingsModule } from '../settings/settings.module';
 import { AssetsController } from './assets.controller';
 import { AssetsService } from './assets.service';
 import { MediaProcessingService } from './media-processing.service';
@@ -25,6 +26,7 @@ import { StorageModule } from './storage/storage.module';
     FoldersModule,
     StorageModule,
     QueueModule,
+    SettingsModule,
     forwardRef(() => AnalysisModule),
     TypeOrmModule.forFeature([
       AssetEntity,
