@@ -1,4 +1,4 @@
-import { describePartMismatch, multipartLayout } from './upload-multipart';
+import { completedPartNumbers, describePartMismatch, multipartLayout } from './upload-multipart';
 
 const MIB = 1024 * 1024;
 const GIB = 1024 * MIB;
@@ -45,5 +45,34 @@ describe('describePartMismatch', () => {
     expect(describePartMismatch([...complete, { partNumber: 4, sizeBytes: 1 }], size)).toBe(
       'unexpected parts 4',
     );
+  });
+});
+
+describe('completedPartNumbers', () => {
+  const MIB = 1024 * 1024;
+  const size = 40 * MIB;
+
+  it('lists the parts with the expected size, last part included', () => {
+    expect(
+      completedPartNumbers(
+        [
+          { partNumber: 3, sizeBytes: 8 * MIB },
+          { partNumber: 1, sizeBytes: 16 * MIB },
+        ],
+        size,
+      ),
+    ).toEqual([1, 3]);
+  });
+
+  it('leaves out parts cut short and parts beyond the file', () => {
+    expect(
+      completedPartNumbers(
+        [
+          { partNumber: 2, sizeBytes: MIB },
+          { partNumber: 4, sizeBytes: 16 * MIB },
+        ],
+        size,
+      ),
+    ).toEqual([]);
   });
 });

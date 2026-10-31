@@ -48,6 +48,14 @@ export class UploadClientMetricsDto {
   @Min(0)
   parallelParts?: number;
 
+  @ApiPropertyOptional({
+    description: 'Bytes already in storage from an earlier attempt, so not sent this time',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  resumedBytes?: number;
+
   @ApiPropertyOptional({ description: 'Failed part attempts that were retried' })
   @IsOptional()
   @IsInt()

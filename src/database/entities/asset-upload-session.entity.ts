@@ -11,7 +11,8 @@ import { AssetEntity } from './asset.entity';
 
 export type UploadMetrics = {
   client: Record<string, string | number | undefined> | null;
-  server: {
+  /** Measured on complete; absent for a failed upload. */
+  server?: {
     /** Time to assemble multipart parts on R2; absent for single PUT uploads. */
     assembleMs?: number;
     /** Time the complete call took in the API. */
@@ -19,6 +20,20 @@ export type UploadMetrics = {
     /** From opening the session to the end of complete: what the user waited in total. */
     sinceSessionMs: number;
   };
+  /** Why the upload failed, as reported by the browser when it gave up on the upload. */
+  failure?: UploadFailureRecord;
+};
+
+/** See `UploadFailureDto`. */
+export type UploadFailureRecord = {
+  stage: string;
+  message: string;
+  httpStatus?: number;
+  partNumber?: number;
+  bytesSent?: number;
+  partsDone?: number;
+  elapsedMs?: number;
+  errors?: Array<{ atMs: number; partNumber?: number; httpStatus?: number; message: string }>;
 };
 
 @Entity('asset_upload_sessions')

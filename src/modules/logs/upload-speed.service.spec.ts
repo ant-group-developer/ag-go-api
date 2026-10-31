@@ -14,6 +14,7 @@ function buildService(rows: Array<Record<string, unknown>> = []) {
     .mockResolvedValueOnce([
       {
         total: 3,
+        failed: 1,
         totalBytes: '3000',
         avgMbps: 12.5,
         medianMbps: 10,
@@ -52,8 +53,8 @@ describe('UploadSpeedService', () => {
     );
 
     const [summarySql] = query.mock.calls[0];
-    expect(summarySql).toContain('u.completed_at >= $1');
-    expect(summarySql).toContain('u.completed_at <= $2');
+    expect(summarySql).toContain('u.ended_at >= $1');
+    expect(summarySql).toContain('u.ended_at <= $2');
     expect(summarySql).toContain('u.asset_type = $3');
     expect(summarySql).toContain('u.mode = $4');
     const [pageSql, pageValues] = query.mock.calls[1];
@@ -93,6 +94,15 @@ describe('UploadSpeedService', () => {
     ]);
   });
 
+  it('filters failed uploads to aborted and expired sessions', async () => {
+    const { service, query } = buildService();
+
+    await service.list(dto({ status: 'failed' }));
+
+    const [summarySql] = query.mock.calls[0];
+    expect(summarySql).toContain(`u.status IN ('aborted', 'expired')`);
+  });
+
   it('returns the summary and enriches rows with the uploader', async () => {
     const { service, enrich } = buildService([{ uploadSessionId: 's-1', createdBy: 'user-1' }]);
 
@@ -104,6 +114,7 @@ describe('UploadSpeedService', () => {
     );
     expect(result.summary).toEqual({
       total: 3,
+      failed: 1,
       totalBytes: 3000,
       avgMbps: 12.5,
       medianMbps: 10,

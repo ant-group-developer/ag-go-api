@@ -12,16 +12,17 @@ jest.mock('@nestjs/typeorm', () => ({
 jest.mock('uuid', () => ({ v7: () => 'generated-uuid' }));
 
 describe('AssetsService expired upload session cleanup', () => {
-  function createService(sessions: Array<{ id: string; stillOpen: boolean }>) {
-    const expiresAt = new Date(Date.now() - 60_000);
+  function createService(
+    sessions: Array<{ id: string; stillOpen: boolean; multipart?: boolean; expiredMsAgo?: number }>,
+  ) {
     const sessionRepository = {
       find: jest.fn().mockResolvedValue(
-        sessions.map(({ id }) => ({
+        sessions.map(({ id, multipart, expiredMsAgo }) => ({
           id,
           assetId: `asset-of-${id}`,
           storageKey: `projects/p1/originals/${id}.mp4`,
-          multipartUploadId: null,
-          expiresAt,
+          multipartUploadId: multipart ? `upload-of-${id}` : null,
+          expiresAt: new Date(Date.now() - (expiredMsAgo ?? 60_000)),
         })),
       ),
       // Only a session still open matches the conditional expire.
@@ -68,5 +69,20 @@ describe('AssetsService expired upload session cleanup', () => {
     });
     expect(storage.deleteObject).toHaveBeenCalledTimes(1);
     expect(storage.deleteObject).toHaveBeenCalledWith('projects/p1/originals/abandoned.mp4');
+  });
+
+  it('keeps the parts of a large upload for a day so it can be resumed', async () => {
+    const { service, storage } = createService([
+      { id: 'resumable', stillOpen: true, multipart: true, expiredMsAgo: 2 * 60 * 60 * 1000 },
+      { id: 'too-old', stillOpen: true, multipart: true, expiredMsAgo: 25 * 60 * 60 * 1000 },
+    ]);
+
+    await expect(service.cleanupExpiredSessions()).resolves.toBe(1);
+
+    expect(storage.abortMultipartUpload).toHaveBeenCalledTimes(1);
+    expect(storage.abortMultipartUpload).toHaveBeenCalledWith(
+      'projects/p1/originals/too-old.mp4',
+      'upload-of-too-old',
+    );
   });
 });

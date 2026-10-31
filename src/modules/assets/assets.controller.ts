@@ -83,6 +83,28 @@ export class AssetsController {
       dto.uploadSessionId,
       context.userId,
       context.userType,
+      { failure: dto.failure, metrics: dto.metrics },
+    );
+  }
+
+  @Post('assets/:assetId/upload-failed')
+  @RequirePermissions(GO_PERMISSIONS.PROJECT_EDIT)
+  @ApiOperation({
+    summary:
+      'Báo upload lỗi: upload lớn giữ lại các phần đã gửi để chọn lại file thì upload tiếp; upload nhỏ bị hủy',
+  })
+  recordUploadFailure(
+    @Param('assetId') assetId: string,
+    @Body() dto: AbortUploadDto,
+    @Req() request: Request,
+  ) {
+    const context = this.authContext.getContext(request);
+    return this.assetsService.recordUploadFailure(
+      assetId,
+      dto.uploadSessionId,
+      context.userId,
+      context.userType,
+      { failure: dto.failure, metrics: dto.metrics },
     );
   }
 

@@ -46,7 +46,8 @@ function createService() {
   const dataSource = {
     transaction: jest.fn(async (work: (m: typeof manager) => Promise<unknown>) => work(manager)),
   };
-  const sessionRepository = { findOne: jest.fn(), update: jest.fn() };
+  const sessionRepository = { findOne: jest.fn(), find: jest.fn(), update: jest.fn() };
+  const assetRepository = { update: jest.fn() };
   const projectRepository = {
     findOne: jest.fn().mockResolvedValue({ id: 'project-1', folderId: 'folder-1' }),
   };
@@ -57,7 +58,7 @@ function createService() {
 
   const service = new AssetsService(
     dataSource as unknown as DataSource,
-    {} as Repository<never>,
+    assetRepository as unknown as Repository<never>,
     sessionRepository as unknown as Repository<AssetUploadSessionEntity>,
     {} as Repository<never>,
     {} as Repository<never>,
@@ -70,7 +71,7 @@ function createService() {
     {} as never,
     { getMaxUploadSizeBytes: async () => MAX_UPLOAD_SIZE_BYTES } as unknown as SettingsService,
   );
-  return { service, storage, sessionRepository, dataSource };
+  return { service, storage, sessionRepository, assetRepository, dataSource, manager };
 }
 
 function uploadDto(fileSizeBytes: number) {
@@ -235,5 +236,168 @@ describe('AssetsService multipart uploads', () => {
       'upload-1',
     );
     expect(storage.deleteObject).toHaveBeenCalled();
+  });
+
+  it('keeps what the browser reported about a failed upload', async () => {
+    const { service, sessionRepository, manager } = createService();
+    sessionRepository.findOne.mockResolvedValue(multipartSession());
+    const failure = {
+      stage: 'transfer' as const,
+      message: 'Network Error',
+      httpStatus: 0,
+      partNumber: 7,
+      bytesSent: 16 * 1024 * 1024,
+      errors: [{ atMs: 1200, partNumber: 7, httpStatus: 0, message: 'Network Error' }],
+    };
+    const metrics = { mode: 'multipart' as const, transferMs: 1500, retries: 2 };
+
+    await service.abortUpload('asset-1', 'session-1', 'user-1', undefined, { failure, metrics });
+
+    expect(manager.update).toHaveBeenCalledWith(expect.anything(), 'session-1', {
+      status: 'aborted',
+      uploadMetrics: { client: metrics, failure },
+    });
+  });
+
+  it('aborts without touching the metrics when nothing was reported', async () => {
+    const { service, sessionRepository, manager } = createService();
+    sessionRepository.findOne.mockResolvedValue(multipartSession());
+
+    await service.abortUpload('asset-1', 'session-1', 'user-1');
+
+    expect(manager.update).toHaveBeenCalledWith(expect.anything(), 'session-1', {
+      status: 'aborted',
+    });
+  });
+
+  describe('resuming', () => {
+    const LAST_MODIFIED = 1_761_800_000_000;
+
+    function resumableSession(overrides: Partial<AssetUploadSessionEntity> = {}) {
+      return multipartSession({
+        targetProjectId: 'project-1',
+        expectedSizeBytes: String(400 * MIB),
+        asset: {
+          originalFilename: 'clip.mp4',
+          mimeType: 'video/mp4',
+          sourceMetadata: { uploadBatchId: 'old-batch', fileLastModified: LAST_MODIFIED },
+        },
+        ...overrides,
+      } as Partial<AssetUploadSessionEntity>);
+    }
+
+    it('carries on an unfinished upload of the same file, listing the parts already in', async () => {
+      const { service, storage, sessionRepository, assetRepository } = createService();
+      sessionRepository.find.mockResolvedValue([resumableSession()]);
+      storage.listMultipartParts.mockResolvedValue([
+        { partNumber: 1, etag: 'a', sizeBytes: 16 * MIB },
+        // Cut short: sent again.
+        { partNumber: 2, etag: 'b', sizeBytes: MIB },
+      ]);
+
+      const session = await service.createUploadSession(
+        {
+          ...uploadDto(400 * MIB),
+          fileLastModified: LAST_MODIFIED,
+          uploadBatchId: '01a1aaaa-0000-7000-8000-000000000001',
+        },
+        'user-1',
+      );
+
+      expect(session).toMatchObject({ uploadSessionId: 'session-1', uploadedParts: [1] });
+      expect(storage.createMultipartUpload).not.toHaveBeenCalled();
+      expect(sessionRepository.update).toHaveBeenCalledWith('session-1', {
+        status: 'uploading',
+        expiresAt: expect.any(Date),
+      });
+      expect(assetRepository.update).toHaveBeenCalledWith('asset-1', {
+        sourceMetadata: {
+          uploadBatchId: '01a1aaaa-0000-7000-8000-000000000001',
+          fileLastModified: LAST_MODIFIED,
+        },
+      });
+    });
+
+    it('starts over for a file modified since', async () => {
+      const { service, storage, sessionRepository } = createService();
+      sessionRepository.find.mockResolvedValue([resumableSession()]);
+
+      await service.createUploadSession(
+        { ...uploadDto(400 * MIB), fileLastModified: LAST_MODIFIED + 1 },
+        'user-1',
+      );
+
+      expect(storage.listMultipartParts).not.toHaveBeenCalled();
+      expect(storage.createMultipartUpload).toHaveBeenCalled();
+    });
+
+    it('starts over once the parts are no longer kept', async () => {
+      const { service, storage, sessionRepository } = createService();
+      sessionRepository.find.mockResolvedValue([
+        resumableSession({ expiresAt: new Date(Date.now() - 25 * 60 * 60 * 1000) }),
+      ]);
+
+      await service.createUploadSession(
+        { ...uploadDto(400 * MIB), fileLastModified: LAST_MODIFIED },
+        'user-1',
+      );
+
+      expect(storage.createMultipartUpload).toHaveBeenCalled();
+    });
+
+    it('starts over when storage no longer has the parts', async () => {
+      const { service, storage, sessionRepository } = createService();
+      sessionRepository.find.mockResolvedValue([resumableSession()]);
+      storage.listMultipartParts.mockRejectedValue(new Error('NoSuchUpload'));
+
+      const session = await service.createUploadSession(
+        { ...uploadDto(400 * MIB), fileLastModified: LAST_MODIFIED },
+        'user-1',
+      );
+
+      expect(storage.createMultipartUpload).toHaveBeenCalled();
+      expect(session).not.toHaveProperty('uploadedParts');
+    });
+
+    it('keeps the parts of a large upload that failed', async () => {
+      const { service, storage, sessionRepository } = createService();
+      sessionRepository.findOne.mockResolvedValue(multipartSession());
+      const failure = { stage: 'transfer' as const, message: 'Network Error', httpStatus: 0 };
+
+      await expect(
+        service.recordUploadFailure('asset-1', 'session-1', 'user-1', undefined, { failure }),
+      ).resolves.toEqual({ success: true, resumable: true });
+
+      expect(sessionRepository.update).toHaveBeenCalledWith('session-1', {
+        uploadMetrics: { client: null, failure },
+      });
+      expect(storage.abortMultipartUpload).not.toHaveBeenCalled();
+    });
+
+    it('aborts a small upload that failed', async () => {
+      const { service, storage, sessionRepository } = createService();
+      sessionRepository.findOne.mockResolvedValue(multipartSession({ multipartUploadId: null }));
+
+      await expect(
+        service.recordUploadFailure('asset-1', 'session-1', 'user-1', undefined, {}),
+      ).resolves.toEqual({ success: true, resumable: false });
+
+      expect(storage.deleteObject).toHaveBeenCalled();
+    });
+
+    it('still hands out part URLs for a large upload whose session ran out', async () => {
+      const { service, sessionRepository } = createService();
+      sessionRepository.findOne.mockResolvedValue(
+        multipartSession({ expiresAt: new Date(Date.now() - 2 * 60 * 60 * 1000) }),
+      );
+
+      await expect(
+        service.getUploadPartUrls(
+          'asset-1',
+          { uploadSessionId: 'session-1', partNumbers: [1] },
+          'user-1',
+        ),
+      ).resolves.toEqual({ parts: [{ partNumber: 1, url: 'https://r2.test/part-1' }] });
+    });
   });
 });

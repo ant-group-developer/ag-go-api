@@ -28,6 +28,11 @@ export class UploadSpeedQueryDto {
   @IsIn(['single', 'multipart'])
   mode?: 'single' | 'multipart';
 
+  /** `failed` covers uploads the browser aborted and uploads left to expire. */
+  @IsOptional()
+  @IsIn(['completed', 'failed'])
+  status?: 'completed' | 'failed';
+
   @IsOptional()
   @IsUUID()
   projectId?: string;

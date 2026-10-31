@@ -41,12 +41,15 @@ import {
   WATERMARK_LOGO_PURPOSE,
 } from '../render/watermark-policy';
 import { SettingsService } from '../settings/settings.service';
-import { CompleteUploadDto } from './dto/complete-upload.dto';
+import type { UploadFailureDto } from './dto/abort-upload.dto';
+import { CompleteUploadDto, type UploadClientMetricsDto } from './dto/complete-upload.dto';
 import { CreateUploadSessionDto } from './dto/create-upload-session.dto';
 import { UploadPartsDto } from './dto/upload-parts.dto';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage/storage-adapter';
 import {
+  completedPartNumbers,
   describePartMismatch,
+  MULTIPART_RESUME_WINDOW_MS,
   MULTIPART_THRESHOLD_BYTES,
   multipartLayout,
 } from './upload-multipart';
@@ -124,8 +127,12 @@ export class AssetsService implements OnModuleDestroy {
         targetProjectId: project.id,
         keyPrefix: `projects/${project.id}/originals`,
         allowMultipart: true,
-        // Read back when the upload completes to group the audit entry (see recordUploadAudit).
-        ...(dto.uploadBatchId ? { sourceMetadata: { uploadBatchId: dto.uploadBatchId } } : {}),
+        sourceMetadata: {
+          // Read back when the upload completes to group the audit entry (see recordUploadAudit).
+          ...(dto.uploadBatchId ? { uploadBatchId: dto.uploadBatchId } : {}),
+          // Tells the same file chosen again (see findResumableSession).
+          ...(dto.fileLastModified !== undefined ? { fileLastModified: dto.fileLastModified } : {}),
+        },
       },
       idempotencyKey,
     );
@@ -194,6 +201,20 @@ export class AssetsService implements OnModuleDestroy {
     if (multipart && dto.expectedChecksumSha256) {
       // R2 has no whole-file SHA-256 for an object assembled from parts.
       throw new BadRequestException('Checksum verification is not supported for large uploads');
+    }
+    const fileLastModified = target.sourceMetadata?.fileLastModified;
+    if (multipart && target.targetProjectId && typeof fileLastModified === 'number') {
+      const resumed = await this.resumeUploadSession(
+        userId,
+        target.targetProjectId,
+        originalFilename,
+        dto.fileSizeBytes,
+        fileLastModified,
+        target.sourceMetadata,
+      );
+      if (resumed) {
+        return resumed;
+      }
     }
     const multipartUploadId = multipart
       ? await this.storage.createMultipartUpload(storageKey, dto.mimeType.trim())
@@ -374,13 +395,10 @@ export class AssetsService implements OnModuleDestroy {
     if (mediaCreated && session.targetProjectId) {
       await this.recordUploadAudit(session.targetProjectId, userId, asset, session.id);
     }
-    await this.recordUploadMetrics(session, {
-      client: dto.metrics ? { ...dto.metrics } : null,
-      server: {
-        assembleMs,
-        completeMs: Date.now() - startedAt,
-        sinceSessionMs: Date.now() - session.createdAt.getTime(),
-      },
+    await this.recordUploadMetrics(session, dto.metrics ? { ...dto.metrics } : null, {
+      assembleMs,
+      completeMs: Date.now() - startedAt,
+      sinceSessionMs: Date.now() - session.createdAt.getTime(),
     });
     return {
       ...(await this.getAsset(session.assetId)),
@@ -427,17 +445,25 @@ export class AssetsService implements OnModuleDestroy {
    * Keeps the upload timings on the session (see the `upload_speed_log` view) and logs them.
    * Best effort: the upload already succeeded, so a failed write is only logged.
    */
-  private async recordUploadMetrics(session: AssetUploadSessionEntity, metrics: UploadMetrics) {
+  private async recordUploadMetrics(
+    session: AssetUploadSessionEntity,
+    client: UploadMetrics['client'],
+    server: NonNullable<UploadMetrics['server']>,
+  ) {
     const sizeBytes = Number(session.expectedSizeBytes) || 0;
-    const transferMs = Number(metrics.client?.transferMs) || 0;
+    const transferMs = Number(client?.transferMs) || 0;
     const mbps = transferMs > 0 ? ((sizeBytes * 8) / 1000 / transferMs).toFixed(2) : '?';
     this.logger.log(
       `Upload ${session.id} (asset ${session.assetId}): ${sizeBytes} bytes, ` +
         `transfer ${transferMs || '?'} ms (${mbps} Mbps), ` +
-        `complete ${metrics.server.completeMs} ms, total ${metrics.server.sinceSessionMs} ms`,
+        `complete ${server.completeMs} ms, total ${server.sinceSessionMs} ms`,
     );
     try {
-      await this.sessionRepository.update(session.id, { uploadMetrics: metrics });
+      // An upload resumed after a failure keeps what went wrong the first time.
+      const failure = session.uploadMetrics?.failure;
+      await this.sessionRepository.update(session.id, {
+        uploadMetrics: { client, server, ...(failure ? { failure } : {}) },
+      });
     } catch (error) {
       this.logger.warn(
         `Could not record upload metrics for session ${session.id}: ${
@@ -447,23 +473,182 @@ export class AssetsService implements OnModuleDestroy {
     }
   }
 
+  /**
+   * `report` is what the browser knew when the upload failed; it is kept on the session (see the
+   * `upload_speed_log` view) so failed uploads can be reviewed.
+   */
   async abortUpload(
     assetId: string,
     uploadSessionId: string,
     userId: string,
     userType?: 'ADMIN' | 'USER',
+    report?: { failure?: UploadFailureDto; metrics?: UploadClientMetricsDto },
   ) {
     const session = await this.findUploadSession(assetId, uploadSessionId, userId, userType);
     if (session.status === 'completed') {
       throw new ConflictException('Completed upload cannot be aborted');
     }
+    const failure = report?.failure;
+    if (failure) {
+      this.logUploadFailure(session, failure);
+    }
 
     await this.dataSource.transaction(async (manager) => {
-      await manager.update(AssetUploadSessionEntity, session.id, { status: 'aborted' });
+      await manager.update(AssetUploadSessionEntity, session.id, {
+        status: 'aborted',
+        ...(failure || report?.metrics
+          ? {
+              uploadMetrics: {
+                client: report?.metrics ? { ...report.metrics } : null,
+                ...(failure ? { failure: { ...failure } } : {}),
+              },
+            }
+          : {}),
+      });
       await manager.update(AssetEntity, session.assetId, { processingStatus: 'cancelled' });
     });
     await this.discardUploadedData(session);
     return { success: true };
+  }
+
+  /**
+   * The browser gave up on an upload. A large upload keeps its session and the parts already
+   * sent, so choosing the same file again carries on from there (see `resumeUploadSession`);
+   * they are discarded once the resume window has passed (see `cleanupExpiredSessions`). A
+   * small upload is aborted: sending it again costs little.
+   */
+  async recordUploadFailure(
+    assetId: string,
+    uploadSessionId: string,
+    userId: string,
+    userType: 'ADMIN' | 'USER' | undefined,
+    report: { failure?: UploadFailureDto; metrics?: UploadClientMetricsDto },
+  ) {
+    const session = await this.findUploadSession(assetId, uploadSessionId, userId, userType);
+    if (session.status === 'completed') {
+      throw new ConflictException('Upload session is already completed');
+    }
+    if (
+      !session.multipartUploadId ||
+      session.status === 'aborted' ||
+      session.status === 'expired'
+    ) {
+      const result = await this.abortUpload(assetId, uploadSessionId, userId, userType, report);
+      return { ...result, resumable: false };
+    }
+    if (report.failure) {
+      this.logUploadFailure(session, report.failure);
+    }
+    await this.sessionRepository.update(session.id, {
+      uploadMetrics: {
+        client: report.metrics ? { ...report.metrics } : null,
+        ...(report.failure ? { failure: { ...report.failure } } : {}),
+      },
+    });
+    return { success: true, resumable: true };
+  }
+
+  private logUploadFailure(session: AssetUploadSessionEntity, failure: UploadFailureDto) {
+    this.logger.warn(
+      `Upload ${session.id} (asset ${session.assetId}) failed at ${failure.stage}` +
+        `${failure.partNumber ? ` (part ${failure.partNumber})` : ''}` +
+        `${failure.httpStatus !== undefined ? `, HTTP ${failure.httpStatus}` : ''}: ` +
+        `${failure.message}; sent ${failure.bytesSent ?? '?'} of ${session.expectedSizeBytes ?? '?'} bytes`,
+    );
+  }
+
+  /**
+   * An unfinished large upload of the same file (same user, project, name, size and
+   * last-modified time) whose parts are still kept, reopened to carry on. `uploadedParts` lists
+   * the parts already in storage. Null when there is none, or its parts are gone.
+   */
+  private async resumeUploadSession(
+    userId: string,
+    targetProjectId: string,
+    originalFilename: string,
+    sizeBytes: number,
+    fileLastModified: number,
+    sourceMetadata: Record<string, unknown> | undefined,
+  ) {
+    const session = await this.findResumableSession(
+      userId,
+      targetProjectId,
+      originalFilename,
+      sizeBytes,
+      fileLastModified,
+    );
+    if (!session?.multipartUploadId) {
+      return null;
+    }
+    let uploadedParts: number[];
+    try {
+      const parts = await this.storage.listMultipartParts(
+        session.storageKey,
+        session.multipartUploadId,
+      );
+      uploadedParts = completedPartNumbers(parts, sizeBytes);
+    } catch (error) {
+      // The multipart upload is gone from storage; cleanup closes the session.
+      this.logger.warn(
+        `Could not resume upload ${session.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    }
+    const expiresAt = new Date(
+      Date.now() + this.config.getOrThrow<number>('UPLOAD_SESSION_TTL_SECONDS') * 1000,
+    );
+    await this.sessionRepository.update(session.id, { status: 'uploading', expiresAt });
+    // The file now belongs to the batch it was chosen again in.
+    await this.assetRepository.update(session.assetId, {
+      sourceMetadata: { ...session.asset.sourceMetadata, ...sourceMetadata } as Record<
+        string,
+        string | number
+      >,
+    });
+    session.status = 'uploading';
+    session.expiresAt = expiresAt;
+    this.logger.log(
+      `Resuming upload ${session.id} (asset ${session.assetId}): ` +
+        `${uploadedParts.length} of ${multipartLayout(sizeBytes).partCount} parts already uploaded`,
+    );
+    return { ...(await this.toUploadSessionResponse(session)), uploadedParts };
+  }
+
+  private async findResumableSession(
+    userId: string,
+    targetProjectId: string,
+    originalFilename: string,
+    sizeBytes: number,
+    fileLastModified: number,
+  ) {
+    const candidates = await this.sessionRepository.find({
+      where: {
+        createdBy: userId,
+        targetProjectId,
+        expectedSizeBytes: String(sizeBytes),
+        status: In(['initiated', 'uploading']),
+        asset: { originalFilename },
+      },
+      relations: { asset: true },
+      order: { createdAt: 'DESC' },
+    });
+    const now = Date.now();
+    return candidates.find(
+      (session) =>
+        session.multipartUploadId &&
+        session.asset?.sourceMetadata?.fileLastModified === fileLastModified &&
+        this.sessionDeadline(session) >= now,
+    );
+  }
+
+  /**
+   * When a session is closed for good. The parts of a large upload are kept for a while after
+   * its session ran out, so it can be resumed.
+   */
+  private sessionDeadline(session: AssetUploadSessionEntity) {
+    return (
+      session.expiresAt.getTime() + (session.multipartUploadId ? MULTIPART_RESUME_WINDOW_MS : 0)
+    );
   }
 
   /** Presigned URLs for parts of a multipart upload, requested in batches as the upload goes. */
@@ -658,7 +843,7 @@ export class AssetsService implements OnModuleDestroy {
     const now = Date.now();
     let count = 0;
     for (const session of expired) {
-      if (session.expiresAt.getTime() >= now) {
+      if (this.sessionDeadline(session) >= now) {
         continue;
       }
       // Only while still open: a session completed since the read keeps its upload.
@@ -871,13 +1056,14 @@ export class AssetsService implements OnModuleDestroy {
     await this.storage.deleteObject(session.storageKey);
   }
 
+  /** A large upload whose session ran out stays open while its parts are kept (see `sessionDeadline`). */
   private ensureSessionOpen(session: AssetUploadSessionEntity) {
-    if (session.expiresAt.getTime() < Date.now()) {
-      void this.sessionRepository.update(session.id, { status: 'expired' });
-      throw new ConflictException('Upload session has expired');
-    }
     if (session.status === 'aborted' || session.status === 'expired') {
       throw new ConflictException('Upload session is closed');
+    }
+    if (this.sessionDeadline(session) < Date.now()) {
+      // Cleanup closes it and discards what was uploaded.
+      throw new ConflictException('Upload session has expired');
     }
   }
 
