@@ -34,6 +34,14 @@ export class ContractFixtures {
     const [{ acceptances }] = (await this.ds.query(
       `SELECT to_regclass('acceptance_records') IS NOT NULL AS acceptances`,
     )) as Array<{ acceptances: boolean }>;
+    const [{ payments }] = (await this.ds.query(
+      `SELECT to_regclass('payments') IS NOT NULL AS payments`,
+    )) as Array<{ payments: boolean }>;
+    if (payments) {
+      await this.ds.query(`DELETE FROM payments WHERE partner_id = ANY($1::uuid[])`, [
+        this.partnerIds,
+      ]);
+    }
     if (acceptances) {
       await this.ds.query(
         `DELETE FROM acceptance_records WHERE contract_id IN
@@ -115,6 +123,17 @@ export class ContractFixtures {
         managerUserId,
         options.lastAppendixNumber ?? 0,
       ],
+    );
+    return id;
+  }
+
+  /** An advance actually paid under the contract (payments, kind `advance`). */
+  async advancePaid(contractId: string, amount: number, paidDate = '2026-08-05') {
+    const id = randomUUID();
+    await this.ds.query(
+      `INSERT INTO payments (id, contract_id, partner_id, kind, amount, paid_date, created_by)
+       SELECT $1, id, partner_id, 'advance', $3, $4, 'test' FROM contracts WHERE id = $2`,
+      [id, contractId, amount, paidDate],
     );
     return id;
   }

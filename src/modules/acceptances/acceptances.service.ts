@@ -25,6 +25,8 @@ import { DocumentsService } from '../documents/documents.service';
 import { SystemLogService } from '../logs/system-log.service';
 import { hasPermission, type PartnerActor } from '../partners/partner-actor';
 import { PartnersService } from '../partners/partners.service';
+import { loadAdvanceFacts } from '../payments/advance-facts';
+import { advanceBalance, paymentStatus } from '../payments/payment-ledger';
 import { advanceOffsetFor, calculateAmounts, lineAmount } from '../pricing-engine/amounts';
 import { addBusinessDays } from '../pricing-engine/business-days';
 import { PricingError } from '../pricing-engine/pricing-error';
@@ -64,6 +66,7 @@ export const ACCEPTANCE_ERROR_CODES = {
   UNPRICED_LINES: 'ACCEPTANCE_UNPRICED_LINES',
   SOURCE_TAKEN: 'ACCEPTANCE_SOURCE_TAKEN',
   PROFILE_INCOMPLETE: 'PARTNER_PROFILE_INCOMPLETE',
+  ADVANCE_OFFSET_EXCEEDS_BALANCE: 'ACCEPTANCE_ADVANCE_OFFSET_EXCEEDS_BALANCE',
 } as const;
 
 /** Warnings that only inform; the others need the approver's note (Q-R3). */
@@ -527,6 +530,16 @@ export class AcceptancesService {
         });
       }
       await this.assertCap(manager, locked);
+      // The advance actually paid may have changed since the draft was priced (payments).
+      const available = await this.advanceAvailable(manager, locked);
+      if (locked.advanceOffsetAmount > available) {
+        throw new ConflictException({
+          code: ACCEPTANCE_ERROR_CODES.ADVANCE_OFFSET_EXCEEDS_BALANCE,
+          message:
+            'The advance offset is more than the advance paid and not yet offset: return the record and recalculate',
+          details: { advanceOffsetAmount: locked.advanceOffsetAmount, available },
+        });
+      }
       const appendix = Number(contract.last) + 1;
       await manager.query(
         `UPDATE contracts SET last_appendix_number = $2, updated_at = now() WHERE id = $1`,
@@ -557,7 +570,10 @@ export class AcceptancesService {
     return issued;
   }
 
-  /** issued → signed: signed copy and payment due date (BR-34, weekends skipped). */
+  /**
+   * issued → signed: signed copy and payment due date (BR-34, weekends skipped). A record with
+   * nothing to pay (the advance offset covers it, TC-4) is `paid` at once (FR-$-02).
+   */
   async sign(id: string, dto: SignAcceptanceDto, actor: PartnerActor) {
     if (dto.signedFileId) {
       await this.documents.assertSignedFile('acceptance', id, dto.signedFileId);
@@ -569,6 +585,7 @@ export class AcceptancesService {
       )) as Array<{ days: number }>;
       const signedDay = dto.signedDate ?? today();
       return {
+        status: paymentStatus(record.netPayable, 0),
         signedAt: new Date(`${signedDay}T00:00:00+07:00`),
         signedFileId: dto.signedFileId ?? record.signedFileId,
         dueDate: addBusinessDays(signedDay, Number(contract.days)),
@@ -777,6 +794,12 @@ export class AcceptancesService {
         code: 'ADVANCE_OVERRIDE_DROPPED',
         message: 'Đối trừ tạm ứng nhập tay lớn hơn tổng trừ thuế nên đã tính lại',
       });
+    } else if (advanceOverridden && record.advanceOffsetAmount > contract.advanceRemaining) {
+      advanceOverridden = false;
+      warnings.push({
+        code: 'ADVANCE_OVERRIDE_DROPPED',
+        message: 'Đối trừ tạm ứng nhập tay lớn hơn số dư tạm ứng đã chi nên đã tính lại',
+      });
     }
     const advanceOffset = advanceOverridden
       ? record.advanceOffsetAmount
@@ -826,29 +849,42 @@ export class AcceptancesService {
 
   /** Advance still to offset and the money terms of the contract (on the period's last day). */
   private async contractMoney(manager: EntityManager, record: AcceptanceRecordEntity) {
-    const [row] = (await manager.query(
-      `SELECT contract.advance_amount::bigint AS "advanceAmount",
-              contract.legacy_advance_balance::bigint AS "legacyAdvanceBalance", contract.source,
-              contract.advance_offset_rule AS "advanceOffsetRule",
-              (SELECT COALESCE(sum(other.advance_offset_amount), 0)::bigint FROM acceptance_records other
-               WHERE other.contract_id = contract.id AND other.status <> 'cancelled' AND other.id <> $2)
-                AS "offsetElsewhere"
-       FROM contracts contract WHERE contract.id = $1`,
-      [record.contractId, record.id],
-    )) as Array<Record<string, string | null>>;
-    const advanceAmount = Number(row.advanceAmount);
-    // Imported contracts carry the advance left before AG Go (FR-C-11).
-    const advance =
-      row.source === 'legacy_import' && row.legacyAdvanceBalance !== null
-        ? Number(row.legacyAdvanceBalance)
-        : advanceAmount;
+    const facts = await loadAdvanceFacts(manager, record.contractId, record.id);
     const cap = record.termsSnapshot?.cap_amount;
     return {
-      advanceAmount,
-      advanceRemaining: Math.max(0, advance - Number(row.offsetElsewhere)),
-      advanceOffsetRule: row.advanceOffsetRule as 'full_first' | 'proportional',
+      advanceAmount: facts.advanceAmount,
+      advanceRemaining: Math.max(
+        0,
+        advanceBalance({ ...facts, offsets: facts.offsetsIssued + facts.offsetsPending }),
+      ),
+      advanceOffsetRule: facts.advanceOffsetRule,
       capAmount: cap === null || cap === undefined ? null : Number(cap),
     };
+  }
+
+  /**
+   * Advance a record can offset (BR-32): advances actually paid (payments) plus the balance of an
+   * imported contract, minus refunds and the offsets of the other records not cancelled (issued
+   * ones are final, drafts in progress reserve theirs so the advance is never offset twice).
+   */
+  private async advanceAvailable(manager: EntityManager, record: AcceptanceRecordEntity) {
+    return (await this.contractMoney(manager, record)).advanceRemaining;
+  }
+
+  /**
+   * Totals of the draft records of a contract computed again, oldest first, after its advance
+   * changed (an advance or refund recorded or cancelled). Runs in the caller's transaction.
+   */
+  async recomputeDrafts(manager: EntityManager, contractId: string) {
+    const drafts = (await manager.query(
+      `SELECT id FROM acceptance_records WHERE contract_id = $1 AND status = 'draft'
+       ORDER BY created_at, id FOR UPDATE`,
+      [contractId],
+    )) as Array<{ id: string }>;
+    for (const draft of drafts) {
+      await this.recomputeTotals(manager, draft.id);
+    }
+    return drafts.map((draft) => draft.id);
   }
 
   /** BR-15 / FR-C-09: the contract ceiling (terms on the period's last day) against every record. */
@@ -906,7 +942,8 @@ export class AcceptancesService {
       this.assertLevel(action, record, actor);
       const status = this.assertTransition(record, action);
       const changes = await apply(record, manager);
-      await patchRecord(manager, id, { ...changes, status });
+      // `apply` may settle on another status of the same step (sign → paid when nothing to pay).
+      await patchRecord(manager, id, { status, ...changes });
       return record.status;
     });
     const detail = await this.get(id, actor);
