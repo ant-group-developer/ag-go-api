@@ -60,6 +60,7 @@ import { AnalysisModule } from './modules/analysis/analysis.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { ContractsModule } from './modules/contracts/contracts.module';
 import { CountriesModule } from './modules/countries/countries.module';
 import { DownloadsModule } from './modules/downloads/downloads.module';
 import { FoldersModule } from './modules/folders/folders.module';
@@ -164,6 +165,7 @@ import { WorkersModule } from './modules/workers/workers.module';
     UsageModule,
     WorkersModule,
     PartnersModule,
+    ContractsModule,
     AccountWebhooksModule,
   ],
   controllers: [AppController, HealthController],
