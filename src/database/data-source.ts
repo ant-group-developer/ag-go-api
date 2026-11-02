@@ -39,6 +39,11 @@ import { ProjectMediaEvaluationEntity } from './entities/project-media-evaluatio
 import { ProjectMediaEntity } from './entities/project-media.entity';
 import { ProjectEntity } from './entities/project.entity';
 import { ProvinceEntity } from './entities/province.entity';
+import {
+  RateCardEntity,
+  RateCardItemEntity,
+  RateCardLevelRuleEntity,
+} from './entities/rate-card.entity';
 import { RenderBatchEntity } from './entities/render-batch.entity';
 import { RenderProfileEntity } from './entities/render-profile.entity';
 import { StudioUsageEventEntity } from './entities/studio-usage-event.entity';
@@ -95,6 +100,7 @@ import { UploadSpeedLogRange2170000000000 } from './migrations/2170000000000-upl
 import { UploadFailureLog2180000000000 } from './migrations/2180000000000-upload-failure-log';
 import { PartnersContracts2190000000000 } from './migrations/2190000000000-partners-contracts';
 import { ProjectContractChecks2200000000000 } from './migrations/2200000000000-project-contract-checks';
+import { RateCards2210000000000 } from './migrations/2210000000000-rate-cards';
 
 loadEnv();
 
@@ -155,6 +161,9 @@ export const AppDataSource = new DataSource({
     ContractEntity,
     ContractAmendmentEntity,
     MediaSpecCheckEntity,
+    RateCardEntity,
+    RateCardItemEntity,
+    RateCardLevelRuleEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -207,6 +216,7 @@ export const AppDataSource = new DataSource({
     UploadFailureLog2180000000000,
     PartnersContracts2190000000000,
     ProjectContractChecks2200000000000,
+    RateCards2210000000000,
   ],
   synchronize: false,
 });

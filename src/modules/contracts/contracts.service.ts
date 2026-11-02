@@ -877,6 +877,16 @@ export class ContractsService {
           `pricingConfig.category_ids: unknown categories ${missing.join(', ')}`,
         ];
       }
+      const code = result.value.pricingConfig.rate_card_id as string;
+      const cards = (await this.contracts.manager.query(
+        `SELECT 1 FROM rate_cards WHERE code = $1 AND status <> 'archived' LIMIT 1`,
+        [code],
+      )) as unknown[];
+      if (cards.length === 0) {
+        (fieldErrors.pricingConfig ??= []).push(
+          `pricingConfig.rate_card_id: unknown rate card ${code}`,
+        );
+      }
     }
     if (!result.ok || Object.keys(fieldErrors).length > 0) {
       throw new BadRequestException({

@@ -47,6 +47,11 @@ import { ProjectMediaEvaluationEntity } from './database/entities/project-media-
 import { ProjectMediaEntity } from './database/entities/project-media.entity';
 import { ProjectEntity } from './database/entities/project.entity';
 import { ProvinceEntity } from './database/entities/province.entity';
+import {
+  RateCardEntity,
+  RateCardItemEntity,
+  RateCardLevelRuleEntity,
+} from './database/entities/rate-card.entity';
 import { RenderBatchEntity } from './database/entities/render-batch.entity';
 import { RenderProfileEntity } from './database/entities/render-profile.entity';
 import { StudioUsageEventEntity } from './database/entities/studio-usage-event.entity';
@@ -73,6 +78,7 @@ import { PartnersModule } from './modules/partners/partners.module';
 import { ProjectContractsModule } from './modules/project-contracts/project-contracts.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { ProvincesModule } from './modules/provinces/provinces.module';
+import { RateCardsModule } from './modules/rate-cards/rate-cards.module';
 import { RenderModule } from './modules/render/render.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
@@ -141,6 +147,9 @@ import { WorkersModule } from './modules/workers/workers.module';
           ContractEntity,
           ContractAmendmentEntity,
           MediaSpecCheckEntity,
+          RateCardEntity,
+          RateCardItemEntity,
+          RateCardLevelRuleEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -171,6 +180,7 @@ import { WorkersModule } from './modules/workers/workers.module';
     ContractsModule,
     ProjectContractsModule,
     AccountWebhooksModule,
+    RateCardsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
