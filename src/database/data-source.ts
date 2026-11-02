@@ -2,6 +2,11 @@ import { config as loadEnv } from 'dotenv';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from '../config/env.validation';
+import {
+  AcceptanceItemEntity,
+  AcceptanceItemSourceEntity,
+  AcceptanceRecordEntity,
+} from './entities/acceptance.entity';
 import { AccessGrantEntity } from './entities/access-grant.entity';
 import { AnalysisBatchEntity } from './entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './entities/analysis-farm-job.entity';
@@ -103,6 +108,7 @@ import { PartnersContracts2190000000000 } from './migrations/2190000000000-partn
 import { ProjectContractChecks2200000000000 } from './migrations/2200000000000-project-contract-checks';
 import { RateCards2210000000000 } from './migrations/2210000000000-rate-cards';
 import { ProductPackages2220000000000 } from './migrations/2220000000000-product-packages';
+import { Acceptances2230000000000 } from './migrations/2230000000000-acceptances';
 
 loadEnv();
 
@@ -167,6 +173,9 @@ export const AppDataSource = new DataSource({
     RateCardItemEntity,
     RateCardLevelRuleEntity,
     ProductPackageEntity,
+    AcceptanceRecordEntity,
+    AcceptanceItemEntity,
+    AcceptanceItemSourceEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -221,6 +230,7 @@ export const AppDataSource = new DataSource({
     ProjectContractChecks2200000000000,
     RateCards2210000000000,
     ProductPackages2220000000000,
+    Acceptances2230000000000,
   ],
   synchronize: false,
 });

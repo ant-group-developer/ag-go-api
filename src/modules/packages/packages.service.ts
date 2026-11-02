@@ -288,6 +288,13 @@ export class PackagesService {
       if (project.acceptedOutsideAt) {
         throw invalid('The project was accepted outside AG Go');
       }
+      const counted = (await manager.query(
+        `SELECT 1 FROM acceptance_item_sources WHERE project_id = $1 AND is_active LIMIT 1`,
+        [projectId],
+      )) as unknown[];
+      if (counted.length > 0) {
+        throw invalid('The project is already counted on an acceptance record');
+      }
       await manager.query(
         `UPDATE projects SET package_id = $2, contract_id = $3, updated_at = now() WHERE id = $1`,
         [projectId, id, row.contractId],

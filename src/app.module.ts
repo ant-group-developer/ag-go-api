@@ -10,6 +10,11 @@ import { PermissionsGuard } from './common/auth/permissions.guard';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from './config/env.validation';
+import {
+  AcceptanceItemEntity,
+  AcceptanceItemSourceEntity,
+  AcceptanceRecordEntity,
+} from './database/entities/acceptance.entity';
 import { AccessGrantEntity } from './database/entities/access-grant.entity';
 import { AnalysisBatchEntity } from './database/entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './database/entities/analysis-farm-job.entity';
@@ -61,6 +66,7 @@ import { SystemSettingEntity } from './database/entities/system-setting.entity';
 import { TagEntity } from './database/entities/tag.entity';
 import { HealthController } from './health/health.controller';
 import { QueueModule } from './infra/queue/queue.module';
+import { AcceptancesModule } from './modules/acceptances/acceptances.module';
 import { AccountWebhooksModule } from './modules/account-webhooks/account-webhooks.module';
 import { AccountModule } from './modules/account/account.module';
 import { AnalysisModule } from './modules/analysis/analysis.module';
@@ -153,6 +159,9 @@ import { WorkersModule } from './modules/workers/workers.module';
           RateCardItemEntity,
           RateCardLevelRuleEntity,
           ProductPackageEntity,
+          AcceptanceRecordEntity,
+          AcceptanceItemEntity,
+          AcceptanceItemSourceEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -185,6 +194,7 @@ import { WorkersModule } from './modules/workers/workers.module';
     AccountWebhooksModule,
     RateCardsModule,
     PackagesModule,
+    AcceptancesModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
