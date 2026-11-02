@@ -6917,6 +6917,593 @@ paths:
         cùng template), bản đã có thì tạo lại PDF. HĐ / phụ lục cần
         go.contract.manage, BBNT cần go.acceptance.approve"
       tags: *a57
+  /contracts/{id}/payments:
+    post:
+      operationId: PaymentsController_create
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a58
+        - bearer: []
+      summary:
+        Ghi nhận chi tạm ứng (advance, HĐ active/suspended, không vượt tạm ứng
+        thoả thuận), chi trả BBNT đã ký (settlement + acceptanceId, một hoặc
+        nhiều lần; đủ thực lĩnh → paid, chưa đủ → partially_paid) hoặc đối tác
+        hoàn tạm ứng (refund, không vượt số dư). Tạm ứng/hoàn đổi thì BBNT nháp
+        của HĐ được tính lại. Ghi audit
+      tags: &a59
+        - payments
+  /contracts/{id}/ledger:
+    get:
+      operationId: PaymentsController_ledger
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary:
+        "Sổ công nợ HĐ (FR-$-04): đã nghiệm thu, thuế, đối trừ, thực lĩnh, đã
+        chi, tạm ứng đã chi / số dư, còn phải trả, quá hạn, % trần và cảnh báo
+        80%/100%, số phải hoàn khi HĐ đóng (FR-C-10); BBNT đã phát hành và các
+        khoản chi"
+      tags: *a59
+  /payments:
+    get:
+      operationId: PaymentsController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: acceptanceId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: kind
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - advance
+              - settlement
+              - refund
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - recorded
+              - cancelled
+        - name: from
+          required: false
+          in: query
+          description: Ngày chi từ (gồm)
+          schema:
+            example: 2026-08-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Ngày chi đến (gồm)
+          schema:
+            example: 2026-08-31
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary:
+        "Danh sách khoản chi (lọc HĐ, đối tác, BBNT, loại, trạng thái, ngày
+        chi). Không có go.contract.read_all: chỉ HĐ mình phụ trách"
+      tags: *a59
+  /payments/overdue:
+    get:
+      operationId: PaymentsController_overdue
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: asOf
+          required: false
+          in: query
+          description: Ngày xét quá hạn, mặc định hôm nay
+          schema:
+            example: 2026-11-03
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary:
+        BBNT đã ký quá hạn thanh toán (hạn theo ngày làm việc, BR-34) còn phải
+        trả, kèm số ngày quá hạn (FR-$-03, FR-R-05)
+      tags: *a59
+  /payments/export:
+    get:
+      operationId: PaymentsController_exportPayouts
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: dueTo
+          required: false
+          in: query
+          description: Chỉ BBNT có hạn thanh toán đến ngày này (gồm)
+          schema:
+            example: 2026-11-30
+            type: string
+        - name: reveal
+          required: false
+          in: query
+          description:
+            "true: số tài khoản, MST đầy đủ (cần go.partner.pii_read, ghi
+            audit); mặc định che như màn hình"
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary:
+        "Xuất Excel danh sách chi trả cho kế toán (FR-$-05): BBNT đã ký còn
+        phải trả, đối tác, MST, số tài khoản, ngân hàng (từ hồ sơ chụp khi phát
+        hành), gộp / thuế / đối trừ / thực lĩnh / đã chi / còn lại / hạn. MST và
+        STK bị che trừ khi reveal=true (cần go.partner.pii_read). Ghi audit"
+      tags: *a59
+  /payments/{id}:
+    get:
+      operationId: PaymentsController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary: Chi tiết một khoản chi
+      tags: *a59
+  /payments/{id}/cancel:
+    post:
+      operationId: PaymentsController_cancel
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelPaymentDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary: Huỷ khoản chi kèm lý do (không xoá). Chi trả BBNT huỷ → BBNT về
+        partially_paid / signed; không huỷ được tạm ứng đã đối trừ ở BBNT đã
+        phát hành (409 PAYMENT_ADVANCE_ALREADY_OFFSET). Ghi audit
+      tags: *a59
+  /payments/{id}/proof:
+    post:
+      operationId: PaymentsController_uploadProof
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: "Chứng từ chuyển khoản: PDF, JPG hoặc PNG, tối đa 10 MB"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary: Upload chứng từ chuyển khoản (lưu R2, thay bản trước nếu có). Ghi audit
+      tags: *a59
+    get:
+      operationId: PaymentsController_proof
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary: Xem chứng từ chuyển khoản (inline, đọc từ R2 qua API). 404
+        PAYMENT_PROOF_MISSING. Ghi audit
+      tags: *a59
+  /payment-reports/payables:
+    get:
+      operationId: PaymentReportsController_payables
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: managerUserId
+          required: false
+          in: query
+          description: Người phụ trách HĐ
+          schema:
+            type: string
+        - name: from
+          required: false
+          in: query
+          description: Từ ngày (gồm)
+          schema:
+            example: 2026-01-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Đến ngày (gồm)
+          schema:
+            example: 2026-12-31
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a60
+        - bearer: []
+      summary:
+        "Công nợ hiện tại theo HĐ và theo đối tác (sổ công nợ của nhiều HĐ):
+        nghiệm thu, thuế, thực lĩnh, đã chi, tạm ứng, số dư tạm ứng, còn phải
+        trả, quá hạn, % trần; capAlerts: HĐ đạt 80%/100% trần (FR-C-09,
+        FR-R-05). from/to không áp dụng"
+      tags: &a61
+        - payment-reports
+  /payment-reports/payments:
+    get:
+      operationId: PaymentReportsController_payments
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: managerUserId
+          required: false
+          in: query
+          description: Người phụ trách HĐ
+          schema:
+            type: string
+        - name: from
+          required: false
+          in: query
+          description: Từ ngày (gồm)
+          schema:
+            example: 2026-01-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Đến ngày (gồm)
+          schema:
+            example: 2026-12-31
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a60
+      summary:
+        "Thanh toán theo kỳ (ngày chi trong from–to): tổng theo tháng và loại
+        (tạm ứng, thanh toán BBNT, hoàn tạm ứng, chi ròng) và danh sách khoản
+        chi (FR-R-01)"
+      tags: *a61
+  /payment-reports/acceptances:
+    get:
+      operationId: PaymentReportsController_acceptances
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: managerUserId
+          required: false
+          in: query
+          description: Người phụ trách HĐ
+          schema:
+            type: string
+        - name: from
+          required: false
+          in: query
+          description: Từ ngày (gồm)
+          schema:
+            example: 2026-01-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Đến ngày (gồm)
+          schema:
+            example: 2026-12-31
+            type: string
+        - name: status
+          required: false
+          in: query
+          description: Chỉ liệt kê BBNT ở trạng thái này
+          schema:
+            type: string
+            enum:
+              - draft
+              - submitted
+              - approved
+              - issued
+              - signed
+              - partially_paid
+              - paid
+              - cancelled
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a60
+      summary:
+        "BBNT theo trạng thái (ngày lập trong from–to): số lượng, gộp, thuế,
+        thực lĩnh, đã chi, còn phải trả theo trạng thái và danh sách (lọc
+        status)"
+      tags: *a61
+  /payment-reports/tax:
+    get:
+      operationId: PaymentReportsController_tax
+      parameters:
+        - name: year
+          required: true
+          in: query
+          description: Năm (theo ngày lập BBNT), FR-R-04
+          schema:
+            example: 2026
+            type: number
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a60
+      summary:
+        Thuế TNCN đã khấu trừ theo đối tác trong năm (BBNT đã phát hành, theo
+        ngày lập), hỗ trợ quyết toán (FR-R-04)
+      tags: *a61
+  /payment-reports/export:
+    get:
+      operationId: PaymentReportsController_export
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: managerUserId
+          required: false
+          in: query
+          description: Người phụ trách HĐ
+          schema:
+            type: string
+        - name: from
+          required: false
+          in: query
+          description: Từ ngày (gồm)
+          schema:
+            example: 2026-01-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Đến ngày (gồm)
+          schema:
+            example: 2026-12-31
+            type: string
+        - name: status
+          required: false
+          in: query
+          description: Chỉ liệt kê BBNT ở trạng thái này
+          schema:
+            type: string
+            enum:
+              - draft
+              - submitted
+              - approved
+              - issued
+              - signed
+              - partially_paid
+              - paid
+              - cancelled
+        - name: report
+          required: true
+          in: query
+          schema:
+            type: string
+            enum:
+              - payables
+              - payments
+              - acceptances
+              - tax
+        - name: year
+          required: false
+          in: query
+          description: Bắt buộc với report=tax
+          schema:
+            example: 2026
+            type: number
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a60
+      summary:
+        "Xuất Excel một báo cáo: report=payables (2 sheet: theo HĐ, theo đối
+        tác) | payments (theo tháng, chi tiết) | acceptances (theo trạng thái,
+        danh sách) | tax (cần year). Ghi audit"
+      tags: *a61
 info:
   title: AG Go API
   description: AG Go backend API
@@ -6975,7 +7562,7 @@ components:
             format: uuid
         accessLevel:
           type: string
-          enum: &a58
+          enum: &a62
             - viewer
             - editor
             - manager
@@ -6991,7 +7578,7 @@ components:
       properties:
         accessLevel:
           type: string
-          enum: *a58
+          enum: *a62
         inheritChildren:
           type: boolean
     PreviewOriginalAccessBundleDto:
@@ -7193,7 +7780,7 @@ components:
       properties:
         contractType:
           type: string
-          enum: &a59
+          enum: &a63
             - content_production
           default: content_production
         contractNumber:
@@ -7222,7 +7809,7 @@ components:
           description: Hạn tạm ứng (ngày làm việc), bắt buộc khi có tạm ứng
         advanceOffsetRule:
           type: string
-          enum: &a60
+          enum: &a64
             - full_first
             - proportional
           default: full_first
@@ -7239,7 +7826,7 @@ components:
           additionalProperties: true
         techSpecPreset:
           type: string
-          enum: &a61
+          enum: &a65
             - footage_4k60
             - topic_video
             - shot_4k
@@ -7277,7 +7864,7 @@ components:
           example: 2026-08-01
         pricingModel:
           type: string
-          enum: &a62
+          enum: &a66
             - per_topic
             - per_unit
             - package_tier
@@ -7289,7 +7876,7 @@ components:
           additionalProperties: true
         acceptanceCycle:
           type: string
-          enum: &a63
+          enum: &a67
             - on_demand
             - weekly
             - monthly
@@ -7309,7 +7896,7 @@ components:
       properties:
         contractType:
           type: string
-          enum: *a59
+          enum: *a63
           default: content_production
         contractNumber:
           type: string
@@ -7337,7 +7924,7 @@ components:
           description: Hạn tạm ứng (ngày làm việc), bắt buộc khi có tạm ứng
         advanceOffsetRule:
           type: string
-          enum: *a60
+          enum: *a64
           default: full_first
         deliveryRule:
           type: object
@@ -7352,7 +7939,7 @@ components:
           additionalProperties: true
         techSpecPreset:
           type: string
-          enum: *a61
+          enum: *a65
           default: footage_4k60
         penaltyPercent:
           type: number
@@ -7384,13 +7971,13 @@ components:
           example: 2026-08-01
         pricingModel:
           type: string
-          enum: *a62
+          enum: *a66
         pricingConfig:
           type: object
           additionalProperties: true
         acceptanceCycle:
           type: string
-          enum: *a63
+          enum: *a67
         paymentTermBusinessDays:
           type: number
           example: 10
@@ -8091,7 +8678,7 @@ components:
             type: string
         purpose:
           type: string
-          enum: &a64
+          enum: &a68
             - preview
             - final
         prefer:
@@ -8129,7 +8716,7 @@ components:
             type: string
         purpose:
           type: string
-          enum: *a64
+          enum: *a68
         prefer:
           $ref: "#/components/schemas/ResolvePreferDto"
         projectIds:
@@ -8418,7 +9005,7 @@ components:
           description: Ngày lập ghi trên biên bản
         deliveryMethod:
           type: string
-          enum: &a65
+          enum: &a69
             - ag_go
             - hard_drive
             - google_drive
@@ -8449,7 +9036,7 @@ components:
           nullable: true
         deliveryMethod:
           type: string
-          enum: *a65
+          enum: *a69
         deliveryNote:
           type: object
           nullable: true
@@ -8529,6 +9116,57 @@ components:
           type: string
           example: 2026-08-05
           description: Ngày ký, mặc định hôm nay; tính hạn thanh toán (BR-34)
+    CreatePaymentDto:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum:
+            - advance
+            - settlement
+            - refund
+          description:
+            "advance: chi tạm ứng (FR-$-01); settlement: chi trả BBNT đã ký
+            (cần acceptanceId, FR-$-02); refund: đối tác hoàn tạm ứng (FR-C-10)"
+        acceptanceId:
+          type: string
+          format: uuid
+          description: BBNT được chi trả (bắt buộc với settlement)
+        amount:
+          type: number
+          example: 50000000
+          description: Số tiền (đồng), > 0
+        paidDate:
+          type: string
+          example: 2026-08-05
+          description: Ngày chi / ngày nhận hoàn, không sau hôm nay
+        method:
+          type: string
+          enum:
+            - bank_transfer
+            - cash
+            - other
+          default: bank_transfer
+        reference:
+          type: string
+          maxLength: 200
+          description: Mã giao dịch ngân hàng
+        note:
+          type: string
+          maxLength: 2000
+      required:
+        - kind
+        - amount
+        - paidDate
+    CancelPaymentDto:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required:
+        - reason
     ApiError:
       type: object
       required:
