@@ -13,6 +13,7 @@
     "lint": "eslint \"src/**/*.ts\"",
     "test": "jest --runInBand",
     "test:db": "jest --config jest.db.config.ts --runInBand",
+    "test:pricing": "jest --config jest.pricing.config.ts --runInBand --coverage",
     "test:watch": "jest --watch",
     "typecheck": "tsc --noEmit",
     "dataset:scan": "node dist/scripts/export-scan-dataset.js",

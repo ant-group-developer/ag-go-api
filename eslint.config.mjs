@@ -21,4 +21,11 @@ export default [
       ...tsPlugin.configs.recommended.rules,
     },
   },
+  {
+    // The pricing engine stays pure (NFR-04): no framework, no database, nothing outside its folder.
+    files: ['src/modules/pricing-engine/**/*.ts'],
+    rules: {
+      'no-restricted-imports': ['error', { patterns: ['@nestjs/*', 'typeorm', 'pg', '../*'] }],
+    },
+  },
 ];
