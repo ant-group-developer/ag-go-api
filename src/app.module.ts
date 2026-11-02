@@ -22,6 +22,8 @@ import { AssetUploadSessionEntity } from './database/entities/asset-upload-sessi
 import { AssetVariantEntity } from './database/entities/asset-variant.entity';
 import { AssetEntity } from './database/entities/asset.entity';
 import { CategoryEntity } from './database/entities/category.entity';
+import { ContractAmendmentEntity } from './database/entities/contract-amendment.entity';
+import { ContractEntity } from './database/entities/contract.entity';
 import { CountryEntity } from './database/entities/country.entity';
 import { DownloadJobItemEntity } from './database/entities/download-job-item.entity';
 import { DownloadJobEntity } from './database/entities/download-job.entity';
@@ -37,6 +39,7 @@ import {
   OriginalAccessBundleFolderEntity,
 } from './database/entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './database/entities/outbox-event.entity';
+import { PartnerEntity } from './database/entities/partner.entity';
 import { ProjectAuditLogEntity } from './database/entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from './database/entities/project-media-evaluation.entity';
@@ -51,6 +54,7 @@ import { SystemSettingEntity } from './database/entities/system-setting.entity';
 import { TagEntity } from './database/entities/tag.entity';
 import { HealthController } from './health/health.controller';
 import { QueueModule } from './infra/queue/queue.module';
+import { AccountWebhooksModule } from './modules/account-webhooks/account-webhooks.module';
 import { AccountModule } from './modules/account/account.module';
 import { AnalysisModule } from './modules/analysis/analysis.module';
 import { AssetsModule } from './modules/assets/assets.module';
@@ -63,6 +67,7 @@ import { FootageModule } from './modules/footage/footage.module';
 import { GoogleDriveModule } from './modules/google-drive/google-drive.module';
 import { LogsModule } from './modules/logs/logs.module';
 import { MediaModule } from './modules/media/media.module';
+import { PartnersModule } from './modules/partners/partners.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { ProvincesModule } from './modules/provinces/provinces.module';
 import { RenderModule } from './modules/render/render.module';
@@ -129,6 +134,9 @@ import { WorkersModule } from './modules/workers/workers.module';
           AssetPrepBatchEntity,
           AssetPrepFarmJobEntity,
           StudioUsageEventEntity,
+          PartnerEntity,
+          ContractEntity,
+          ContractAmendmentEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -155,6 +163,8 @@ import { WorkersModule } from './modules/workers/workers.module';
     FootageModule,
     UsageModule,
     WorkersModule,
+    PartnersModule,
+    AccountWebhooksModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

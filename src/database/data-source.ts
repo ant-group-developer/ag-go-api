@@ -14,6 +14,8 @@ import { AssetUploadSessionEntity } from './entities/asset-upload-session.entity
 import { AssetVariantEntity } from './entities/asset-variant.entity';
 import { AssetEntity } from './entities/asset.entity';
 import { CategoryEntity } from './entities/category.entity';
+import { ContractAmendmentEntity } from './entities/contract-amendment.entity';
+import { ContractEntity } from './entities/contract.entity';
 import { CountryEntity } from './entities/country.entity';
 import { DownloadJobItemEntity } from './entities/download-job-item.entity';
 import { DownloadJobEntity } from './entities/download-job.entity';
@@ -29,6 +31,7 @@ import {
   OriginalAccessBundleFolderEntity,
 } from './entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './entities/outbox-event.entity';
+import { PartnerEntity } from './entities/partner.entity';
 import { ProjectAuditLogEntity } from './entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from './entities/project-media-evaluation.entity';
@@ -89,6 +92,7 @@ import { UploadMetrics2150000000000 } from './migrations/2150000000000-upload-me
 import { OriginalAccessBundles2160000000000 } from './migrations/2160000000000-original-access-bundles';
 import { UploadSpeedLogRange2170000000000 } from './migrations/2170000000000-upload-speed-log-range';
 import { UploadFailureLog2180000000000 } from './migrations/2180000000000-upload-failure-log';
+import { PartnersContracts2190000000000 } from './migrations/2190000000000-partners-contracts';
 
 loadEnv();
 
@@ -145,6 +149,9 @@ export const AppDataSource = new DataSource({
     AssetPrepBatchEntity,
     AssetPrepFarmJobEntity,
     StudioUsageEventEntity,
+    PartnerEntity,
+    ContractEntity,
+    ContractAmendmentEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -195,6 +202,7 @@ export const AppDataSource = new DataSource({
     OriginalAccessBundles2160000000000,
     UploadSpeedLogRange2170000000000,
     UploadFailureLog2180000000000,
+    PartnersContracts2190000000000,
   ],
   synchronize: false,
 });
