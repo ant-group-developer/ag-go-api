@@ -69,6 +69,7 @@ function contract(overrides: Partial<ContractEntity> = {}): ContractEntity {
     managerUserId: 'manager-1',
     partnerSnapshotEnc: undefined as unknown as null,
     partnerSnapshotAt: null,
+    companySnapshot: null,
     lastAppendixNumber: 0,
     source: 'system',
     legacyAcceptedAmount: null,

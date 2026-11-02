@@ -131,7 +131,7 @@ export class AcceptanceRecordEntity {
   @Column({ name: 'partner_snapshot_at', type: 'timestamptz', nullable: true })
   partnerSnapshotAt!: Date | null;
 
-  /** Party A details when issued (documents, later). */
+  /** Party A details captured when issued (FR-D-05). */
   @Column({ name: 'company_snapshot', type: 'jsonb', nullable: true })
   companySnapshot!: Record<string, unknown> | null;
 
@@ -185,7 +185,7 @@ export class AcceptanceRecordEntity {
   @Column({ name: 'signed_at', type: 'timestamptz', nullable: true })
   signedAt!: Date | null;
 
-  /** Signed copy (→ generated_documents once acceptance documents exist). */
+  /** Signed copy uploaded (generated_documents, kind `signed`). */
   @Column({ name: 'signed_file_id', type: 'uuid', nullable: true })
   signedFileId!: string | null;
 
@@ -193,7 +193,7 @@ export class AcceptanceRecordEntity {
   @Column({ name: 'due_date', type: 'date', nullable: true })
   dueDate!: string | null;
 
-  /** Template the document is generated from (documents, later). */
+  /** Template version the record file was issued from (FR-D-01). */
   @Column({ name: 'template_version_id', type: 'uuid', nullable: true })
   templateVersionId!: string | null;
 

@@ -30,11 +30,13 @@ import { CategoryEntity } from './database/entities/category.entity';
 import { ContractAmendmentEntity } from './database/entities/contract-amendment.entity';
 import { ContractEntity } from './database/entities/contract.entity';
 import { CountryEntity } from './database/entities/country.entity';
+import { DocumentTemplateEntity } from './database/entities/document-template.entity';
 import { DownloadJobItemEntity } from './database/entities/download-job-item.entity';
 import { DownloadJobEntity } from './database/entities/download-job.entity';
 import { DownloadLogEntity } from './database/entities/download-log.entity';
 import { FolderClosureEntity } from './database/entities/folder-closure.entity';
 import { FolderEntity } from './database/entities/folder.entity';
+import { GeneratedDocumentEntity } from './database/entities/generated-document.entity';
 import { GoogleDriveConnectionEntity } from './database/entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from './database/entities/media-render-job.entity';
@@ -75,6 +77,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { ContractsModule } from './modules/contracts/contracts.module';
 import { CountriesModule } from './modules/countries/countries.module';
+import { DocumentsModule } from './modules/documents/documents.module';
 import { DownloadsModule } from './modules/downloads/downloads.module';
 import { FoldersModule } from './modules/folders/folders.module';
 import { FootageModule } from './modules/footage/footage.module';
@@ -162,6 +165,8 @@ import { WorkersModule } from './modules/workers/workers.module';
           AcceptanceRecordEntity,
           AcceptanceItemEntity,
           AcceptanceItemSourceEntity,
+          DocumentTemplateEntity,
+          GeneratedDocumentEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -195,6 +200,7 @@ import { WorkersModule } from './modules/workers/workers.module';
     RateCardsModule,
     PackagesModule,
     AcceptancesModule,
+    DocumentsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
