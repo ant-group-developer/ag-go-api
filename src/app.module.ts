@@ -41,6 +41,7 @@ import {
 } from './database/entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './database/entities/outbox-event.entity';
 import { PartnerEntity } from './database/entities/partner.entity';
+import { ProductPackageEntity } from './database/entities/product-package.entity';
 import { ProjectAuditLogEntity } from './database/entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from './database/entities/project-media-evaluation.entity';
@@ -74,6 +75,7 @@ import { FootageModule } from './modules/footage/footage.module';
 import { GoogleDriveModule } from './modules/google-drive/google-drive.module';
 import { LogsModule } from './modules/logs/logs.module';
 import { MediaModule } from './modules/media/media.module';
+import { PackagesModule } from './modules/packages/packages.module';
 import { PartnersModule } from './modules/partners/partners.module';
 import { ProjectContractsModule } from './modules/project-contracts/project-contracts.module';
 import { ProjectsModule } from './modules/projects/projects.module';
@@ -150,6 +152,7 @@ import { WorkersModule } from './modules/workers/workers.module';
           RateCardEntity,
           RateCardItemEntity,
           RateCardLevelRuleEntity,
+          ProductPackageEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -181,6 +184,7 @@ import { WorkersModule } from './modules/workers/workers.module';
     ProjectContractsModule,
     AccountWebhooksModule,
     RateCardsModule,
+    PackagesModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

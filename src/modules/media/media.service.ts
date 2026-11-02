@@ -23,6 +23,7 @@ import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-
 import { diffAuditSnapshots, type AuditChange } from '../audit/audit-changes';
 import { AuditService } from '../audit/audit.service';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
+import { refreshProjectPackage } from '../packages/package-progress';
 import { recordProjectDelivery } from '../project-contracts/project-delivery';
 import {
   comparePreviews,
@@ -772,6 +773,7 @@ export class MediaService {
 
     await manager.update(ProjectEntity, projectId, { evaluationStatus });
     await recordProjectDelivery(manager, projectId, evaluationStatus);
+    await refreshProjectPackage(manager, projectId);
     await manager.upsert(
       ProjectEvaluationSummaryEntity,
       {
