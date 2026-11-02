@@ -33,6 +33,7 @@ import { FolderEntity } from './database/entities/folder.entity';
 import { GoogleDriveConnectionEntity } from './database/entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from './database/entities/media-render-job.entity';
+import { MediaSpecCheckEntity } from './database/entities/media-spec-check.entity';
 import {
   OriginalAccessBundleCategoryEntity,
   OriginalAccessBundleEntity,
@@ -69,6 +70,7 @@ import { GoogleDriveModule } from './modules/google-drive/google-drive.module';
 import { LogsModule } from './modules/logs/logs.module';
 import { MediaModule } from './modules/media/media.module';
 import { PartnersModule } from './modules/partners/partners.module';
+import { ProjectContractsModule } from './modules/project-contracts/project-contracts.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { ProvincesModule } from './modules/provinces/provinces.module';
 import { RenderModule } from './modules/render/render.module';
@@ -138,6 +140,7 @@ import { WorkersModule } from './modules/workers/workers.module';
           PartnerEntity,
           ContractEntity,
           ContractAmendmentEntity,
+          MediaSpecCheckEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -166,6 +169,7 @@ import { WorkersModule } from './modules/workers/workers.module';
     WorkersModule,
     PartnersModule,
     ContractsModule,
+    ProjectContractsModule,
     AccountWebhooksModule,
   ],
   controllers: [AppController, HealthController],

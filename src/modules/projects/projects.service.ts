@@ -28,6 +28,8 @@ import {
   originalsReachProjectSql,
   type AccessLevel,
 } from '../folders/folder-access.service';
+import { contractSummaries, specCheckCounts } from '../project-contracts/contract-summaries';
+import { autoLinkProject, contractDay } from '../project-contracts/project-delivery';
 import { CreateProjectDto } from './dto/create-project.dto';
 import { ListProjectsQueryDto, type ProjectListScope } from './dto/list-projects-query.dto';
 import { UpdateProjectDto } from './dto/update-project.dto';
@@ -228,6 +230,14 @@ export class ProjectsService {
       userId,
       userType,
     );
+    const contracts = await contractSummaries(
+      this.dataSource.manager,
+      projects.flatMap((project) => (project.contractId ? [project.contractId] : [])),
+    );
+    const specChecks = await specCheckCounts(
+      this.dataSource.manager,
+      projects.filter((project) => project.contractId).map((project) => project.id),
+    );
     const items = projects.map((project) => {
       const country = project.countryId ? countryById.get(project.countryId) : undefined;
       const province = project.provinceId ? provinceById.get(project.provinceId) : undefined;
@@ -246,6 +256,8 @@ export class ProjectsService {
         tags: (tagsByProjectId.get(project.id) ?? []).map((tag) => tag.name),
         tagIds: (tagsByProjectId.get(project.id) ?? []).map((tag) => tag.id),
         canSeeOriginals: withOriginals.has(project.id),
+        contract: project.contractId ? (contracts.get(project.contractId) ?? null) : null,
+        specChecks: project.contractId ? (specChecks.get(project.id) ?? null) : null,
       });
     });
 
@@ -399,6 +411,11 @@ export class ProjectsService {
       this.sumRenderedBytes(project.id),
     ]);
     const thumbnail = (await this.resolveThumbnails([project])).get(project.id);
+    const contract = project.contractId
+      ? ((await contractSummaries(this.dataSource.manager, [project.contractId])).get(
+          project.contractId,
+        ) ?? null)
+      : null;
     const [enrichedProject] = await this.actorEnrichment.enrich(
       [
         Object.assign(project, {
@@ -421,6 +438,8 @@ export class ProjectsService {
           ),
           // Same rule as its audit log (AuditService.listProject).
           canViewHistory: project.ownerUserId === userId || myAccessLevel !== null,
+          // Contract it is delivered under (no money terms); checks: GET /projects/:id/spec-checks.
+          contract,
         }) as unknown as Record<string, unknown>,
       ],
       [{ id: 'ownerUserId', target: 'ownerUser' }],
@@ -484,6 +503,11 @@ export class ProjectsService {
           [project.id, tagIds],
         );
       }
+      // A partner's project goes to their contract in force today when there is only one.
+      const link = await autoLinkProject(manager, project, contractDay(new Date()), {
+        requestChecks: false,
+      });
+      project.contractId = link.contractId;
       return project;
     });
     const folder = await this.folderRepository.findOne({ where: { id: created.folderId } });
