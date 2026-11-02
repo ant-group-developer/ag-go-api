@@ -21,6 +21,7 @@ import {
 } from '../../database/entities/acceptance.entity';
 import { PartnerEntity } from '../../database/entities/partner.entity';
 import { buildPartnerSnapshot, ContractsService } from '../contracts/contracts.service';
+import { DocumentsService } from '../documents/documents.service';
 import { SystemLogService } from '../logs/system-log.service';
 import { hasPermission, type PartnerActor } from '../partners/partner-actor';
 import { PartnersService } from '../partners/partners.service';
@@ -126,6 +127,7 @@ export class AcceptancesService {
     private readonly partners: PartnersService,
     private readonly cipher: PiiCipherService,
     private readonly systemLog: SystemLogService,
+    private readonly documents: DocumentsService,
   ) {}
 
   async list(query: ListAcceptancesQueryDto, actor: PartnerActor) {
@@ -483,6 +485,8 @@ export class AcceptancesService {
   async issue(id: string, actor: PartnerActor) {
     const record = await this.findVisible(this.dataSource.manager, id, actor);
     this.assertLevel('issue', record, actor);
+    // Checked again under the lock; early so a wrong status is not reported as missing data.
+    this.assertTransition(record, 'issue');
     const partner = await this.dataSource.getRepository(PartnerEntity).findOneByOrFail({
       id: record.partnerId,
     });
@@ -495,8 +499,11 @@ export class AcceptancesService {
       });
     }
     const now = new Date();
-    const snapshot = this.cipher.encryptJson(buildPartnerSnapshot(partner, profile, now));
-    return this.transition(id, 'issue', actor, async (locked, manager) => {
+    const partnerSnapshot = buildPartnerSnapshot(partner, profile, now);
+    // Party A, template and no empty placeholder before the number is taken (FR-D-03).
+    const prepared = await this.documents.prepareIssue('acceptance', id, partnerSnapshot);
+    const snapshot = this.cipher.encryptJson(partnerSnapshot);
+    const issued = await this.transition(id, 'issue', actor, async (locked, manager) => {
       const [contract] = (await manager.query(
         `SELECT status, last_appendix_number AS "last" FROM contracts WHERE id = $1 FOR UPDATE`,
         [locked.contractId],
@@ -537,12 +544,24 @@ export class AcceptancesService {
         recordDate: locked.recordDate ?? today(),
         partnerSnapshotEnc: snapshot,
         partnerSnapshotAt: now,
+        companySnapshot: prepared.companySnapshot,
+        templateVersionId: prepared.templateId,
       };
     });
+    await this.documents.requestGeneration({
+      ownerType: 'acceptance',
+      ownerId: id,
+      templateId: prepared.templateId,
+      actor,
+    });
+    return issued;
   }
 
   /** issued → signed: signed copy and payment due date (BR-34, weekends skipped). */
-  sign(id: string, dto: SignAcceptanceDto, actor: PartnerActor) {
+  async sign(id: string, dto: SignAcceptanceDto, actor: PartnerActor) {
+    if (dto.signedFileId) {
+      await this.documents.assertSignedFile('acceptance', id, dto.signedFileId);
+    }
     return this.transition(id, 'sign', actor, async (record, manager) => {
       const [contract] = (await manager.query(
         `SELECT payment_term_business_days AS "days" FROM contracts WHERE id = $1`,

@@ -14,6 +14,7 @@ import { ContractAmendmentEntity } from '../../database/entities/contract-amendm
 import { ContractEntity } from '../../database/entities/contract.entity';
 import { PartnerEntity } from '../../database/entities/partner.entity';
 import { ContractsService } from '../contracts/contracts.service';
+import { documentsStub, STUB_COMPANY, STUB_TEMPLATE_ID } from '../documents/testing/documents-stub';
 import type { SystemLogService } from '../logs/system-log.service';
 import type { PartnerActor } from '../partners/partner-actor';
 import type { PartnersService } from '../partners/partners.service';
@@ -41,6 +42,7 @@ const partners = {
   }),
 };
 const cipher = { encryptJson: jest.fn().mockReturnValue('k1:encrypted') };
+const documents = documentsStub();
 
 const preparer: PartnerActor = {
   userId: 'bbnt-manager',
@@ -68,6 +70,7 @@ beforeAll(async () => {
     partners as unknown as PartnersService,
     {} as never,
     systemLog as unknown as SystemLogService,
+    documents,
   );
   service = new AcceptancesService(
     ds,
@@ -75,6 +78,7 @@ beforeAll(async () => {
     partners as unknown as PartnersService,
     cipher as unknown as PiiCipherService,
     systemLog as unknown as SystemLogService,
+    documents,
   );
 });
 
@@ -238,6 +242,15 @@ describe('per_topic — real record D2 (Nguyễn Hữu Hoàng, phụ lục số 
       appendixNumber: 2,
       recordDate: '2026-10-07',
       hasPartnerSnapshot: true,
+      companySnapshot: STUB_COMPANY,
+      templateVersionId: STUB_TEMPLATE_ID,
+    });
+    // Checked before the number is taken, rendered by worker-io after (documents.db-spec).
+    expect(documents.calls.prepareIssue.at(-1)?.slice(0, 2)).toEqual(['acceptance', record.id]);
+    expect(documents.calls.requestGeneration.at(-1)).toMatchObject({
+      ownerType: 'acceptance',
+      ownerId: record.id,
+      templateId: STUB_TEMPLATE_ID,
     });
     expect(issued).not.toHaveProperty('partnerSnapshotEnc');
     const [contract] = (await ds.query(

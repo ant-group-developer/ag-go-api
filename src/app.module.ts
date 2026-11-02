@@ -75,6 +75,7 @@ import { AnalysisModule } from './modules/analysis/analysis.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { ContractDocumentsModule } from './modules/contract-documents/contract-documents.module';
 import { ContractsModule } from './modules/contracts/contracts.module';
 import { CountriesModule } from './modules/countries/countries.module';
 import { DocumentsModule } from './modules/documents/documents.module';
@@ -201,6 +202,7 @@ import { WorkersModule } from './modules/workers/workers.module';
     PackagesModule,
     AcceptancesModule,
     DocumentsModule,
+    ContractDocumentsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

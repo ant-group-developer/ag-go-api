@@ -14,6 +14,7 @@ import { ContractEntity } from '../../database/entities/contract.entity';
 import { PartnerEntity } from '../../database/entities/partner.entity';
 import type { AccountApiService } from '../account/account-api.service';
 import type { AccountContractProfile } from '../account/account.types';
+import { documentsStub } from '../documents/testing/documents-stub';
 import type { SystemLogService } from '../logs/system-log.service';
 import { ListPartnersQueryDto } from '../partners/dto/partner.dto';
 import type { PartnerActor } from '../partners/partner-actor';
@@ -108,6 +109,7 @@ beforeAll(async () => {
     partners,
     cipher,
     systemLog as unknown as SystemLogService,
+    documentsStub(),
   );
 });
 

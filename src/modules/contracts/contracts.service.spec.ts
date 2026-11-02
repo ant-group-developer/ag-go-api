@@ -12,6 +12,7 @@ import type { ContractAmendmentEntity } from '../../database/entities/contract-a
 import type { ContractEntity } from '../../database/entities/contract.entity';
 import type { PartnerEntity } from '../../database/entities/partner.entity';
 import type { AccountContractProfile } from '../account/account.types';
+import { documentsStub } from '../documents/testing/documents-stub';
 import type { SystemLogService } from '../logs/system-log.service';
 import type { PartnerActor } from '../partners/partner-actor';
 import type { PartnersService } from '../partners/partners.service';
@@ -155,6 +156,7 @@ function setup(row: ContractEntity) {
     partners as unknown as PartnersService,
     cipher,
     systemLog as unknown as SystemLogService,
+    documentsStub(),
   );
   return { service, state, contractRepository, partners, cipher, systemLog };
 }

@@ -179,7 +179,7 @@ export class AcceptancesController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Phát hành và khoá (approved → issued): cấp số phụ lục tiếp theo của HĐ, chụp hồ sơ đối tác mã hoá (BR-02), gói → accepted. Chặn khi HĐ không active, dòng không có giá, vượt trần (FR-A-07). Sinh file ở PR sau',
+      'Phát hành và khoá (approved → issued): cấp số phụ lục tiếp theo của HĐ, chụp hồ sơ đối tác mã hoá (BR-02) và thông tin Bên A, gói → accepted, worker-io sinh file DOCX/PDF (GET /acceptances/:id/documents). Chặn khi HĐ không active, dòng không có giá, vượt trần (FR-A-07); 422 COMPANY_PROFILE_INCOMPLETE / DOCUMENT_TEMPLATE_MISSING / DOCUMENT_DATA_MISSING (details.missing) trước khi sinh (FR-D-03)',
   })
   issue(@Req() request: Request, @Param('id', ParseUUIDPipe) id: string) {
     return this.service.issue(id, this.actor(request));
@@ -189,7 +189,8 @@ export class AcceptancesController {
   @RequirePermissions(GO_PERMISSIONS.CONTRACT_READ, GO_PERMISSIONS.ACCEPTANCE_APPROVE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Ghi nhận đã ký (issued → signed), tính hạn thanh toán theo ngày làm việc (BR-34)',
+    summary:
+      'Ghi nhận đã ký (issued → signed), tính hạn thanh toán theo ngày làm việc (BR-34). signedFileId: bản ký đã upload (POST /acceptances/:id/signed-file)',
   })
   sign(
     @Req() request: Request,

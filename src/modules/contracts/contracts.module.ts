@@ -7,6 +7,7 @@ import { ContractAmendmentEntity } from '../../database/entities/contract-amendm
 import { ContractEntity } from '../../database/entities/contract.entity';
 import { PartnerEntity } from '../../database/entities/partner.entity';
 import { AccountModule } from '../account/account.module';
+import { DocumentsModule } from '../documents/documents.module';
 import { LogsModule } from '../logs/logs.module';
 import { PartnersModule } from '../partners/partners.module';
 import { ContractsController } from './contracts.controller';
@@ -15,6 +16,7 @@ import { ContractsService } from './contracts.service';
 @Module({
   imports: [
     AccountModule,
+    DocumentsModule,
     LogsModule,
     PartnersModule,
     TypeOrmModule.forFeature([ContractEntity, ContractAmendmentEntity, PartnerEntity]),
