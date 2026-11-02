@@ -1,4 +1,11 @@
-import { BadGatewayException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AccountApiService } from './account-api.service';
 
@@ -221,5 +228,223 @@ describe('AccountApiService', () => {
 
     const service = new AccountApiService(config);
     await expect(service.getUsers('user-1')).rejects.toBeInstanceOf(BadGatewayException);
+  });
+
+  describe('contract profile', () => {
+    const profile = {
+      user_id: 'acc-1',
+      name: 'Nguyễn Hữu Hoàng',
+      citizen_id_number: '035086000130',
+      tax_number: '035086000130',
+      bank_account_last4: '6167',
+      passport_unreadable: false,
+      bank_account_unreadable: false,
+      updated_at: null,
+      version: 'v-1',
+    };
+
+    it('reads it with the API key and the acting AG Account user', async () => {
+      const fetchMock = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(
+          new Response(JSON.stringify({ statusCode: 200, data: profile }), { status: 200 }),
+        );
+
+      await expect(
+        new AccountApiService(config).getContractProfile('acc-1', 'acting-1'),
+      ).resolves.toEqual(profile);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://account.test/v2/public/users/acc-1/contract-profile',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            'x-api-key': 'ak_test',
+            'X-Acting-User-Id': 'acting-1',
+          }),
+        }),
+      );
+    });
+
+    it('leaves out an acting user id Account API would refuse', async () => {
+      const fetchMock = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(new Response(JSON.stringify(profile), { status: 200 }));
+
+      await new AccountApiService(config).getContractProfile('acc-1', 'waad|' + 'x'.repeat(40));
+
+      const headers = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+      expect(headers['X-Acting-User-Id']).toBeUndefined();
+    });
+
+    it('maps 404 to a not-a-member error and 403 to unavailable', async () => {
+      jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(new Response('{"message":"x"}', { status: 404 }))
+        .mockResolvedValueOnce(new Response('{"message":"x"}', { status: 403 }));
+      const service = new AccountApiService(config);
+
+      const notFound = await service.getContractProfile('acc-1').catch((error: unknown) => error);
+      expect(notFound).toBeInstanceOf(NotFoundException);
+      expect((notFound as NotFoundException).getResponse()).toMatchObject({
+        code: 'ACCOUNT_USER_NOT_IN_APPLICATION',
+      });
+      await expect(service.getContractProfile('acc-1')).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+    });
+
+    it('maps a network failure to unavailable', async () => {
+      jest.spyOn(global, 'fetch').mockRejectedValue(new Error('ECONNREFUSED'));
+
+      await expect(
+        new AccountApiService(config).getContractProfile('acc-1'),
+      ).rejects.toBeInstanceOf(ServiceUnavailableException);
+    });
+
+    it('patches only the given fields with If-Match', async () => {
+      const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            data: { ...profile, version: 'v-2', changed_fields: ['phone_number'] },
+            statusCode: 200,
+          }),
+          { status: 200 },
+        ),
+      );
+
+      const result = await new AccountApiService(config).patchContractProfile(
+        'acc-1',
+        { phone_number: '0912345678', address: null },
+        { version: 'v-1', actingUserId: 'acting-1' },
+      );
+
+      expect(result.version).toBe('v-2');
+      expect(result.changed_fields).toEqual(['phone_number']);
+      const init = fetchMock.mock.calls[0]?.[1];
+      expect(init).toMatchObject({
+        method: 'PATCH',
+        headers: {
+          'If-Match': 'v-1',
+          'X-Acting-User-Id': 'acting-1',
+          'Content-Type': 'application/json',
+        },
+      });
+      expect(JSON.parse(init?.body as string)).toEqual({
+        phone_number: '0912345678',
+        address: null,
+      });
+    });
+
+    it('maps 409 to a version conflict and 400 to the Account API messages', async () => {
+      jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(new Response('{"message":"conflict"}', { status: 409 }))
+        .mockResolvedValueOnce(
+          new Response(
+            JSON.stringify({
+              statusCode: 400,
+              message: ['citizen_id_number đã thuộc người dùng khác'],
+            }),
+            { status: 400 },
+          ),
+        );
+      const service = new AccountApiService(config);
+
+      const conflict = await service
+        .patchContractProfile('acc-1', { phone_number: null }, { version: 'old' })
+        .catch((error: unknown) => error);
+      expect(conflict).toBeInstanceOf(ConflictException);
+      expect((conflict as ConflictException).getResponse()).toMatchObject({
+        code: 'CONTRACT_PROFILE_VERSION_CONFLICT',
+      });
+
+      const invalid = await service
+        .patchContractProfile('acc-1', { citizen_id_number: '1' }, { version: 'v' })
+        .catch((error: unknown) => error);
+      expect(invalid).toBeInstanceOf(BadRequestException);
+      expect((invalid as BadRequestException).getResponse()).toMatchObject({
+        code: 'CONTRACT_PROFILE_INVALID',
+        details: { messages: ['citizen_id_number đã thuộc người dùng khác'] },
+      });
+    });
+  });
+
+  describe('resolveBySub', () => {
+    it('looks the subject up for this application and caches it for 10 minutes', async () => {
+      const fetchMock = jest.spyOn(global, 'fetch').mockImplementation(
+        async () =>
+          new Response(
+            JSON.stringify({
+              statusCode: 200,
+              data: {
+                user_id: 'acc-1',
+                application: 'ant-go-v2',
+                is_active: true,
+                user_type: 'USER',
+                permissions: ['go.project.edit'],
+              },
+            }),
+            { status: 200 },
+          ),
+      );
+      const now = jest.spyOn(Date, 'now').mockReturnValue(1_000_000);
+      const service = new AccountApiService(config);
+
+      const first = await service.resolveBySub('google-oauth2|123');
+      await service.resolveBySub('google-oauth2|123');
+      now.mockReturnValue(1_000_000 + 9 * 60 * 1000);
+      await service.resolveBySub('google-oauth2|123');
+
+      expect(first).toEqual({
+        user_id: 'acc-1',
+        application: 'ant-go-v2',
+        is_active: true,
+        user_type: 'USER',
+        permissions: ['go.project.edit'],
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        'http://account.test/v2/public/users/by-sub/access?sub=google-oauth2%7C123&application=ant-go-v2',
+      );
+
+      now.mockReturnValue(1_000_000 + 11 * 60 * 1000);
+      await service.resolveBySub('google-oauth2|123');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+
+      service.forgetAccountUsers(['acc-1']);
+      await service.resolveBySub('google-oauth2|123');
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('refuses an unexpected response shape', async () => {
+      jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValue(new Response(JSON.stringify({ user_id: 'acc-1' }), { status: 200 }));
+
+      await expect(new AccountApiService(config).resolveBySub('auth0|x')).rejects.toBeInstanceOf(
+        ServiceUnavailableException,
+      );
+    });
+  });
+
+  it('searches members of the application with the API key', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: [{ id: 'acc-1', name: 'A' }],
+          meta: { total: 1, page: 1, page_size: 20, total_pages: 1 },
+        }),
+        { status: 200 },
+      ),
+    );
+
+    await new AccountApiService(config).searchApplicationUsers({ keyword: 'an', limit: 20 });
+
+    const url = new URL(fetchMock.mock.calls[0]?.[0] as string);
+    expect(url.pathname).toBe('/v2/public/users');
+    expect(url.searchParams.get('application')).toBe('ant-go-v2');
+    expect(url.searchParams.get('keyword')).toBe('an');
+    expect(url.searchParams.get('page_size')).toBe('20');
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ headers: { 'x-api-key': 'ak_test' } });
   });
 });

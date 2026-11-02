@@ -128,6 +128,7 @@ export class Auth0Guard implements CanActivate {
 
     const authContext: AuthContext = {
       userId,
+      sub: claims.sub,
       accessToken: token,
     };
     request.authContext = authContext;

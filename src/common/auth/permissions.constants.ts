@@ -26,6 +26,20 @@ export const GO_PERMISSIONS = {
   ANALYSIS_MANAGE: 'go.analysis.manage',
   FOOTAGE_SEARCH: 'go.footage.search',
   FOOTAGE_PRODUCE: 'go.footage.produce',
+  /** Partners (CTV) of the contracts module; personal data stays masked without PARTNER_PII_READ. */
+  PARTNER_READ: 'go.partner.read',
+  /** Every partner, not only those one manages (`partners.manager_user_id`). */
+  PARTNER_READ_ALL: 'go.partner.read_all',
+  PARTNER_MANAGE: 'go.partner.manage',
+  /** Full ID card, tax and bank numbers of a partner (`?reveal=pii`); each view is audited. */
+  PARTNER_PII_READ: 'go.partner.pii_read',
+  CONTRACT_READ: 'go.contract.read',
+  /** Every contract, not only those one manages (`contracts.manager_user_id`). */
+  CONTRACT_READ_ALL: 'go.contract.read_all',
+  /** Create, edit, issue, activate, suspend and terminate contracts and their amendments. */
+  CONTRACT_MANAGE: 'go.contract.manage',
+  /** Contract / acceptance templates and the company (party A) details. */
+  CONTRACT_TEMPLATE_MANAGE: 'go.contract.template_manage',
 } as const;
 
 export type GoPermission = (typeof GO_PERMISSIONS)[keyof typeof GO_PERMISSIONS];

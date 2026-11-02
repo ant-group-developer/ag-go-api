@@ -116,7 +116,11 @@ describe('Auth0Guard', () => {
     const request = createRequest({ authorization: `Bearer ${token}` });
 
     await expect(guard.canActivate(createContext(request))).resolves.toBe(true);
-    expect(request.authContext).toEqual({ userId: 'user-1', accessToken: token });
+    expect(request.authContext).toEqual({
+      userId: 'user-1',
+      sub: 'auth0|user-1',
+      accessToken: token,
+    });
 
     fetchSpy.mockRestore();
   });
