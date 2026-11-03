@@ -40,6 +40,12 @@ export const GO_PERMISSIONS = {
   CONTRACT_MANAGE: 'go.contract.manage',
   /** Contract / acceptance templates and the company (party A) details. */
   CONTRACT_TEMPLATE_MANAGE: 'go.contract.template_manage',
+  /** Create, edit drafts, publish, import / export versions of the CTV rate card (spec 7.2.1). */
+  RATE_CARD_MANAGE: 'go.rate_card.manage',
+  /** Create and edit draft acceptance records (BBNT) and packages for the partners one manages. */
+  ACCEPTANCE_PREPARE: 'go.acceptance.prepare',
+  /** Approve, return, issue (lock) and cancel acceptance records. */
+  ACCEPTANCE_APPROVE: 'go.acceptance.approve',
 } as const;
 
 export type GoPermission = (typeof GO_PERMISSIONS)[keyof typeof GO_PERMISSIONS];

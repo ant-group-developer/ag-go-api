@@ -46,6 +46,8 @@ describe('MediaService bulk approval', () => {
       update: jest.fn().mockResolvedValue(undefined),
       insert: jest.fn().mockResolvedValue(undefined),
       upsert: jest.fn().mockResolvedValue(undefined),
+      // Package progress after the evaluation (no package here).
+      query: jest.fn().mockResolvedValue([]),
     };
     const transaction = jest.fn(async (callback: (value: typeof manager) => Promise<unknown>) =>
       callback(manager),

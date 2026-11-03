@@ -34,6 +34,7 @@ export const PROJECT_CONTRACT_ERROR_CODES = {
   CONTRACT_OTHER_PARTNER: 'CONTRACT_OTHER_PARTNER',
   DELIVERED_AT_INVALID: 'PROJECT_DELIVERED_AT_INVALID',
   CONTRACT_MANAGE_REQUIRED: 'CONTRACT_MANAGE_REQUIRED',
+  PROJECT_IN_PACKAGE: 'PROJECT_IN_PACKAGE',
 } as const;
 
 export type ProjectContractLink = {
@@ -134,6 +135,12 @@ export class ProjectContractsService {
       };
       let contractNumber: string | null = null;
       if (dto.contractId !== undefined && dto.contractId !== project.contractId) {
+        if (project.packageId) {
+          throw new ConflictException({
+            code: PROJECT_CONTRACT_ERROR_CODES.PROJECT_IN_PACKAGE,
+            message: 'Remove the project from its package before changing its contract',
+          });
+        }
         // Moving a project off a contract needs to see that contract too.
         if (project.contractId) {
           await this.contracts.findVisible(project.contractId, actor);

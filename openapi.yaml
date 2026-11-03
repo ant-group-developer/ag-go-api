@@ -5237,6 +5237,986 @@ paths:
       summary: Worker processes on every host, with the commit they run (admins only)
       tags:
         - system
+  /rate-cards:
+    get:
+      operationId: RateCardsController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: code
+          required: false
+          in: query
+          schema:
+            example: CTV-2026
+            type: string
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - draft
+              - published
+              - archived
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a46
+        - bearer: []
+      summary: Các phiên bản bảng giá CTV (lọc mã, trạng thái), mới nhất trước
+      tags: &a47
+        - rate-cards
+    post:
+      operationId: RateCardsController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRateCardDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a46
+      summary: Tạo phiên bản nháp (phiên bản tự tăng theo mã)
+      tags: *a47
+  /rate-cards/effective:
+    get:
+      operationId: RateCardsController_effective
+      parameters:
+        - name: code
+          required: true
+          in: query
+          schema:
+            example: CTV-2026
+            type: string
+        - name: date
+          required: false
+          in: query
+          description: Mặc định hôm nay
+          schema:
+            example: 2026-07-20
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a46
+      summary:
+        Phiên bản đã phát hành của mã bảng giá hiệu lực tại một ngày (Q-R1);
+        404 RATE_CARD_NOT_IN_FORCE
+      tags: *a47
+  /rate-cards/import:
+    post:
+      operationId: RateCardsController_importXlsx
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+                - code
+                - effectiveFrom
+              properties:
+                file:
+                  type: string
+                  format: binary
+                code:
+                  type: string
+                  example: CTV-2026
+                effectiveFrom:
+                  type: string
+                  example: 2026-07-15
+                note:
+                  type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a46
+      summary:
+        Nhập file Excel theo bố cục "Bảng lương CTV (chuẩn)" thành phiên bản
+        nháp mới (tất cả hoặc không; 400 RATE_CARD_FILE_INVALID kèm
+        details.errors)
+      tags: *a47
+  /rate-cards/{id}:
+    get:
+      operationId: RateCardsController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a46
+      summary: "Chi tiết phiên bản: ô giá (sản phẩm × cấp × Mức), quy tắc cấp"
+      tags: *a47
+    patch:
+      operationId: RateCardsController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRateCardDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a46
+      summary:
+        Sửa bản nháp (items / levelRules thay toàn bộ); 409 RATE_CARD_LOCKED
+        khi đã phát hành
+      tags: *a47
+    delete:
+      operationId: RateCardsController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a46
+      summary: Xoá bản nháp
+      tags: *a47
+  /rate-cards/{id}/clone:
+    post:
+      operationId: RateCardsController_clone
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloneRateCardDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a46
+      summary: Tạo phiên bản mới (nháp) từ phiên bản này
+      tags: *a47
+  /rate-cards/{id}/publish:
+    post:
+      operationId: RateCardsController_publish
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRateCardDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a46
+      summary: Phát hành bản nháp; phiên bản trước kết thúc ngày hôm trước. 409
+        RATE_CARD_EFFECTIVE_FROM_INVALID nếu không sau phiên bản đã phát hành
+      tags: *a47
+  /rate-cards/{id}/archive:
+    post:
+      operationId: RateCardsController_archive
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a46
+      summary: Lưu trữ (không còn dùng để tính tiền)
+      tags: *a47
+  /rate-cards/{id}/export:
+    get:
+      operationId: RateCardsController_exportXlsx
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a46
+      summary: Xuất Excel theo bố cục "Bảng lương CTV (chuẩn)"
+      tags: *a47
+  /packages:
+    get:
+      operationId: PackagesController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: keyword
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: categoryId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - open
+              - submitted
+              - evaluated
+              - accepted
+              - cancelled
+        - name: mine
+          required: false
+          in: query
+          description: Chỉ gói của chính mình (CTV, "my-projects")
+          schema:
+            type: boolean
+        - name: readyForAcceptance
+          required: false
+          in: query
+          description: "Sẵn sàng lập BBNT: evaluated và chưa thuộc BBNT nào (FR-K-07)"
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a48
+        - bearer: []
+      summary: "Danh sách gói (FR-K-07): CTV thấy gói của mình, người phụ trách
+        (go.acceptance.prepare) gói của HĐ mình phụ trách, người nghiệm thu mọi
+        gói. Lọc HĐ, CTV, danh mục, trạng thái, mine, readyForAcceptance"
+      tags: &a49
+        - packages
+    post:
+      operationId: PackagesController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePackageDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary:
+        "Tạo gói (FR-K-01): CTV tạo cho mình (contractId tuỳ chọn), người phụ
+        trách tạo hộ. Danh mục thuộc HĐ package_tier đang active và tính theo
+        Mức; mã gói tự sinh"
+      tags: *a49
+  /packages/{id}:
+    get:
+      operationId: PackagesController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary:
+        "Chi tiết gói kèm bảng tính tạm (FR-K-03): bối cảnh tính được / không
+        (lý do), source hợp lệ, tỷ lệ ≥ 20s, Mức hiện tại, thành tiền, còn thiếu
+        để lên Mức tiếp theo"
+      tags: *a49
+    patch:
+      operationId: PackagesController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePackageDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary: Đổi tên gói
+      tags: *a49
+  /packages/{id}/preview:
+    get:
+      operationId: PackagesController_preview
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary: Tính lại và lưu bảng tính tạm của gói
+      tags: *a49
+  /packages/{id}/projects/{projectId}:
+    post:
+      operationId: PackagesController_addProject
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary:
+        "Thêm dự án vào gói open (FR-K-02): cùng CTV, cùng HĐ, cùng danh mục,
+        chưa thuộc gói khác; dự án chưa gắn HĐ được gắn vào HĐ của gói"
+      tags: *a49
+    delete:
+      operationId: PackagesController_removeProject
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary: Bớt dự án khỏi gói open
+      tags: *a49
+  /packages/{id}/submit:
+    post:
+      operationId: PackagesController_submit
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary:
+        'Gửi nghiệm thu (FR-K-04): 422 PACKAGE_BELOW_TIER_1 ("Gói chưa đạt Mức
+        1: thiếu N source") khi tính tạm chưa đạt Mức 1; khoá danh sách dự án'
+      tags: *a49
+  /packages/{id}/withdraw:
+    post:
+      operationId: PackagesController_withdraw
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary: Rút lại gói đã gửi (submitted → open)
+      tags: *a49
+  /packages/{id}/return:
+    post:
+      operationId: PackagesController_returnPackage
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReturnPackageDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary: Người nghiệm thu trả lại gói kèm lý do (→ open)
+      tags: *a49
+  /packages/{id}/reopen:
+    post:
+      operationId: PackagesController_reopen
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary: Mở lại gói đã nghiệm thu xong để bổ sung (evaluated → open, FR-K-08)
+      tags: *a49
+  /packages/{id}/cancel:
+    post:
+      operationId: PackagesController_cancel
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a48
+      summary: Huỷ gói open, trả các dự án ra ngoài
+      tags: *a49
+  /contracts/{id}/eligible-projects:
+    get:
+      operationId: AcceptancesController_eligible
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: periodEnd
+          required: true
+          in: query
+          description: Ngày cuối kỳ (giá và điều khoản theo ngày này)
+          schema:
+            example: 2026-07-31
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a50
+        - bearer: []
+      summary:
+        "Xem trước BBNT của HĐ cho kỳ kết thúc ngày periodEnd: dòng sẽ gom (gói
+        evaluated / dự án đã giao), dự án không tính kèm lý do, cảnh báo. Không
+        lưu"
+      tags: &a51
+        - acceptances
+  /contracts/{id}/acceptances:
+    post:
+      operationId: AcceptancesController_create
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAcceptanceDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        "Tạo BBNT nháp cho HĐ active và kỳ: tự gom (BR-20) và tính tiền theo mô
+        hình giá, thuế, đối trừ tạm ứng, bằng chữ (FR-A-01, FR-A-02, FR-A-05)"
+      tags: *a51
+  /acceptances:
+    get:
+      operationId: AcceptancesController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: keyword
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - draft
+              - submitted
+              - approved
+              - issued
+              - signed
+              - partially_paid
+              - paid
+              - cancelled
+        - name: managerUserId
+          required: false
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        "Danh sách BBNT (lọc HĐ, đối tác, trạng thái, người phụ trách). Không
+        có go.contract.read_all: chỉ HĐ mình phụ trách"
+      tags: *a51
+  /acceptances/{id}:
+    get:
+      operationId: AcceptancesController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        "Chi tiết BBNT: dòng (giá trị tính / điều chỉnh / lý do), dự án gom vào
+        và bị loại kèm lý do, tổng tiền, trần HĐ, cảnh báo, thao tác được phép"
+      tags: *a51
+    patch:
+      operationId: AcceptancesController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAcceptanceDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        "Sửa BBNT nháp: kỳ, ngày lập, hình thức bàn giao, thuế (tỷ lệ / nhập
+        tay có lý do), đối trừ tạm ứng nhập tay, bỏ dự án / gói (FR-A-04). Đổi
+        kỳ hoặc danh sách bỏ thì tính lại"
+      tags: *a51
+  /acceptances/{id}/items/{itemId}:
+    patch:
+      operationId: AcceptancesController_adjustItem
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: itemId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdjustItemDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        "Điều chỉnh một dòng (khối lượng, đơn giá, tên): bắt buộc lý do khi
+        khác giá trị hệ thống tính (FR-A-03, BR-14); ghi audit chênh lệch"
+      tags: *a51
+  /acceptances/{id}/recalculate:
+    post:
+      operationId: AcceptancesController_recalculate
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary: Gom và tính lại từ dữ liệu mới nhất, giữ điều chỉnh của các dòng còn lại
+      tags: *a51
+  /acceptances/{id}/submit:
+    post:
+      operationId: AcceptancesController_submit
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        Gửi duyệt (draft → submitted); 422 ACCEPTANCE_EMPTY khi không có gì để
+        trả
+      tags: *a51
+  /acceptances/{id}/return:
+    post:
+      operationId: AcceptancesController_returnRecord
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptanceReasonDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary: Trả lại kèm lý do (submitted → draft)
+      tags: *a51
+  /acceptances/{id}/approve:
+    post:
+      operationId: AcceptancesController_approve
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveAcceptanceDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        Duyệt (submitted → approved). 409 ACCEPTANCE_CAP_EXCEEDED khi vượt
+        trần; 422 ACCEPTANCE_APPROVAL_NOTE_REQUIRED khi còn cảnh báo (80/20, tụt
+        Mức…) mà không ghi quyết định
+      tags: *a51
+  /acceptances/{id}/issue:
+    post:
+      operationId: AcceptancesController_issue
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        "Phát hành và khoá (approved → issued): cấp số phụ lục tiếp theo của
+        HĐ, chụp hồ sơ đối tác mã hoá (BR-02), gói → accepted. Chặn khi HĐ không
+        active, dòng không có giá, vượt trần (FR-A-07). Sinh file ở PR sau"
+      tags: *a51
+  /acceptances/{id}/sign:
+    post:
+      operationId: AcceptancesController_sign
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignAcceptanceDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        Ghi nhận đã ký (issued → signed), tính hạn thanh toán theo ngày làm
+        việc (BR-34)
+      tags: *a51
+  /acceptances/{id}/cancel:
+    post:
+      operationId: AcceptancesController_cancel
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptanceReasonDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        "Huỷ kèm lý do: nháp / chờ duyệt cần go.acceptance.prepare, đã duyệt /
+        đã phát hành cần go.acceptance.approve. Trả dự án và gói, số phụ lục
+        không dùng lại"
+      tags: *a51
 info:
   title: AG Go API
   description: AG Go backend API
@@ -5295,7 +6275,7 @@ components:
             format: uuid
         accessLevel:
           type: string
-          enum: &a46
+          enum: &a52
             - viewer
             - editor
             - manager
@@ -5311,7 +6291,7 @@ components:
       properties:
         accessLevel:
           type: string
-          enum: *a46
+          enum: *a52
         inheritChildren:
           type: boolean
     PreviewOriginalAccessBundleDto:
@@ -5513,7 +6493,7 @@ components:
       properties:
         contractType:
           type: string
-          enum: &a47
+          enum: &a53
             - content_production
           default: content_production
         contractNumber:
@@ -5542,7 +6522,7 @@ components:
           description: Hạn tạm ứng (ngày làm việc), bắt buộc khi có tạm ứng
         advanceOffsetRule:
           type: string
-          enum: &a48
+          enum: &a54
             - full_first
             - proportional
           default: full_first
@@ -5559,7 +6539,7 @@ components:
           additionalProperties: true
         techSpecPreset:
           type: string
-          enum: &a49
+          enum: &a55
             - footage_4k60
             - topic_video
             - shot_4k
@@ -5597,7 +6577,7 @@ components:
           example: 2026-08-01
         pricingModel:
           type: string
-          enum: &a50
+          enum: &a56
             - per_topic
             - per_unit
             - package_tier
@@ -5609,7 +6589,7 @@ components:
           additionalProperties: true
         acceptanceCycle:
           type: string
-          enum: &a51
+          enum: &a57
             - on_demand
             - weekly
             - monthly
@@ -5629,7 +6609,7 @@ components:
       properties:
         contractType:
           type: string
-          enum: *a47
+          enum: *a53
           default: content_production
         contractNumber:
           type: string
@@ -5657,7 +6637,7 @@ components:
           description: Hạn tạm ứng (ngày làm việc), bắt buộc khi có tạm ứng
         advanceOffsetRule:
           type: string
-          enum: *a48
+          enum: *a54
           default: full_first
         deliveryRule:
           type: object
@@ -5672,7 +6652,7 @@ components:
           additionalProperties: true
         techSpecPreset:
           type: string
-          enum: *a49
+          enum: *a55
           default: footage_4k60
         penaltyPercent:
           type: number
@@ -5704,13 +6684,13 @@ components:
           example: 2026-08-01
         pricingModel:
           type: string
-          enum: *a50
+          enum: *a56
         pricingConfig:
           type: object
           additionalProperties: true
         acceptanceCycle:
           type: string
-          enum: *a51
+          enum: *a57
         paymentTermBusinessDays:
           type: number
           example: 10
@@ -6382,7 +7362,7 @@ components:
             type: string
         purpose:
           type: string
-          enum: &a52
+          enum: &a58
             - preview
             - final
         prefer:
@@ -6420,7 +7400,7 @@ components:
             type: string
         purpose:
           type: string
-          enum: *a52
+          enum: *a58
         prefer:
           $ref: "#/components/schemas/ResolvePreferDto"
         projectIds:
@@ -6508,6 +7488,318 @@ components:
             $ref: "#/components/schemas/StudioUsageEventDto"
       required:
         - events
+    DurationRuleDto:
+      type: object
+      properties:
+        minSeconds:
+          type: number
+          example: 10
+          description: File ngắn hơn không là source
+        preferredSeconds:
+          type: number
+          example: 20
+        preferredRatio:
+          type: number
+          example: 0.8
+      required:
+        - minSeconds
+        - preferredSeconds
+        - preferredRatio
+    RateCardItemDto:
+      type: object
+      properties:
+        categoryId:
+          type: string
+          format: uuid
+          description: Sản phẩm = danh mục
+        level:
+          type: string
+          enum:
+            - LV1
+            - LV2
+            - LV3
+            - ALL
+        pricingType:
+          type: string
+          enum:
+            - tier
+            - per_source
+        tier:
+          type: object
+          nullable: true
+          example: 1
+        sourceMin:
+          type: object
+          nullable: true
+          example: 70
+        sourceMax:
+          type: object
+          nullable: true
+          example: 100
+        sceneMin:
+          type: object
+          nullable: true
+          example: 7
+        price:
+          type: number
+          example: 800000
+          description: Đồng
+        minSourceSeconds:
+          type: object
+          nullable: true
+          example: 300
+      required:
+        - categoryId
+        - level
+        - pricingType
+        - price
+    LevelRuleDto:
+      type: object
+      properties:
+        level:
+          type: string
+          enum:
+            - LV1
+            - LV2
+            - LV3
+        extraScenePrice:
+          type: number
+          example: 80000
+        extraSceneMinSources:
+          type: number
+          example: 8
+      required:
+        - level
+        - extraScenePrice
+        - extraSceneMinSources
+    CreateRateCardDto:
+      type: object
+      properties:
+        effectiveFrom:
+          type: string
+          example: 2026-07-15
+        note:
+          type: object
+          nullable: true
+        durationRule:
+          $ref: "#/components/schemas/DurationRuleDto"
+        items:
+          description: Thay toàn bộ ô giá
+          type: array
+          items:
+            $ref: "#/components/schemas/RateCardItemDto"
+        levelRules:
+          description: Thay toàn bộ quy tắc cấp
+          type: array
+          items:
+            $ref: "#/components/schemas/LevelRuleDto"
+        code:
+          type: string
+          example: CTV-2026
+          description: Phiên bản tự tăng theo mã
+      required:
+        - code
+    UpdateRateCardDto:
+      type: object
+      properties:
+        effectiveFrom:
+          type: string
+          example: 2026-07-15
+        note:
+          type: object
+          nullable: true
+        durationRule:
+          $ref: "#/components/schemas/DurationRuleDto"
+        items:
+          description: Thay toàn bộ ô giá
+          type: array
+          items:
+            $ref: "#/components/schemas/RateCardItemDto"
+        levelRules:
+          description: Thay toàn bộ quy tắc cấp
+          type: array
+          items:
+            $ref: "#/components/schemas/LevelRuleDto"
+    CloneRateCardDto:
+      type: object
+      properties:
+        effectiveFrom:
+          type: string
+          example: 2026-10-01
+          description: Mặc định bằng bản gốc
+        note:
+          type: string
+    PublishRateCardDto:
+      type: object
+      properties:
+        effectiveFrom:
+          type: string
+          example: 2026-07-15
+          description:
+            Đổi ngày hiệu lực khi phát hành; phiên bản trước kết thúc vào ngày
+            hôm trước
+    CreatePackageDto:
+      type: object
+      properties:
+        categoryId:
+          type: string
+          format: uuid
+          description: Sản phẩm (danh mục) thuộc category_ids của HĐ
+        contractId:
+          type: string
+          format: uuid
+          description:
+            HĐ package_tier đang active. CTV bỏ trống được khi chỉ có một HĐ
+            hiệu lực có danh mục này
+        name:
+          type: string
+          maxLength: 200
+          example: Khám phá Đà Lạt đợt 2
+      required:
+        - categoryId
+    UpdatePackageDto:
+      type: object
+      properties:
+        name:
+          type: object
+          maxLength: 200
+          nullable: true
+    ReturnPackageDto:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required:
+        - reason
+    CreateAcceptanceDto:
+      type: object
+      properties:
+        periodStart:
+          type: string
+          example: 2026-07-01
+        periodEnd:
+          type: string
+          example: 2026-07-31
+          description: Giá theo phiên bản bảng giá hiệu lực ngày này (Q-R1)
+        recordDate:
+          type: string
+          example: 2026-08-01
+          description: Ngày lập ghi trên biên bản
+        deliveryMethod:
+          type: string
+          enum: &a59
+            - ag_go
+            - hard_drive
+            - google_drive
+            - other
+          default: ag_go
+        deliveryNote:
+          type: string
+          maxLength: 2000
+        taxRate:
+          type: number
+          example: 10
+          description: Thuế TNCN (%), mặc định 10 (BR-30)
+      required:
+        - periodStart
+        - periodEnd
+    UpdateAcceptanceDto:
+      type: object
+      properties:
+        periodStart:
+          type: string
+          example: 2026-07-01
+        periodEnd:
+          type: string
+          example: 2026-07-31
+          description: Đổi thì tính lại
+        recordDate:
+          type: object
+          nullable: true
+        deliveryMethod:
+          type: string
+          enum: *a59
+        deliveryNote:
+          type: object
+          nullable: true
+          maxLength: 2000
+        taxRate:
+          type: number
+          example: 10
+        taxAmount:
+          type: object
+          nullable: true
+          description: Thuế nhập tay (đồng); null = tính theo tỷ lệ. Cần taxOverrideReason
+        taxOverrideReason:
+          type: string
+          maxLength: 2000
+        advanceOffsetAmount:
+          type: object
+          nullable: true
+          description:
+            Đối trừ tạm ứng nhập tay (đồng); null = tính theo BR-32. Cần
+            advanceOffsetReason
+        advanceOffsetReason:
+          type: string
+          maxLength: 2000
+        excludedProjectIds:
+          description: Dự án bỏ khỏi BBNT nháp (thay toàn bộ, FR-A-04); tính lại
+          type: array
+          items:
+            type: string
+        excludedPackageIds:
+          description: Gói bỏ khỏi BBNT nháp (thay toàn bộ); tính lại
+          type: array
+          items:
+            type: string
+    AdjustItemDto:
+      type: object
+      properties:
+        quantity:
+          type: number
+          example: 12
+          description: Khối lượng cuối (2 chữ số lẻ)
+        unitPrice:
+          type: number
+          example: 300000
+        productLabel:
+          type: string
+          maxLength: 200
+        reason:
+          type: string
+          maxLength: 2000
+          description: Bắt buộc khi khối lượng / đơn giá khác giá trị hệ thống tính (BR-14)
+    AcceptanceReasonDto:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required:
+        - reason
+    ApproveAcceptanceDto:
+      type: object
+      properties:
+        note:
+          type: string
+          maxLength: 2000
+          description:
+            "Bắt buộc khi BBNT còn cảnh báo (80/20, tụt Mức…): quyết định của
+            người duyệt (Q-R3)"
+    SignAcceptanceDto:
+      type: object
+      properties:
+        signedFileId:
+          type: string
+          format: uuid
+          description: Bản ký đã tải lên (chứng từ, PR sau)
+        signedDate:
+          type: string
+          example: 2026-08-05
+          description: Ngày ký, mặc định hôm nay; tính hạn thanh toán (BR-34)
     ApiError:
       type: object
       required:

@@ -47,6 +47,10 @@ export class ProjectEntity {
   @Column({ name: 'accepted_outside_note', type: 'text', nullable: true })
   acceptedOutsideNote!: string | null;
 
+  /** Product package holding the project (spec 7.4.1); at most one. */
+  @Column({ name: 'package_id', type: 'uuid', nullable: true })
+  packageId!: string | null;
+
   @Column({ name: 'media_count', type: 'integer', default: 0 })
   mediaCount!: number;
 

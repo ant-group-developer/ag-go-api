@@ -2,6 +2,11 @@ import { config as loadEnv } from 'dotenv';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from '../config/env.validation';
+import {
+  AcceptanceItemEntity,
+  AcceptanceItemSourceEntity,
+  AcceptanceRecordEntity,
+} from './entities/acceptance.entity';
 import { AccessGrantEntity } from './entities/access-grant.entity';
 import { AnalysisBatchEntity } from './entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './entities/analysis-farm-job.entity';
@@ -33,12 +38,18 @@ import {
 } from './entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './entities/outbox-event.entity';
 import { PartnerEntity } from './entities/partner.entity';
+import { ProductPackageEntity } from './entities/product-package.entity';
 import { ProjectAuditLogEntity } from './entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from './entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from './entities/project-media.entity';
 import { ProjectEntity } from './entities/project.entity';
 import { ProvinceEntity } from './entities/province.entity';
+import {
+  RateCardEntity,
+  RateCardItemEntity,
+  RateCardLevelRuleEntity,
+} from './entities/rate-card.entity';
 import { RenderBatchEntity } from './entities/render-batch.entity';
 import { RenderProfileEntity } from './entities/render-profile.entity';
 import { StudioUsageEventEntity } from './entities/studio-usage-event.entity';
@@ -95,6 +106,9 @@ import { UploadSpeedLogRange2170000000000 } from './migrations/2170000000000-upl
 import { UploadFailureLog2180000000000 } from './migrations/2180000000000-upload-failure-log';
 import { PartnersContracts2190000000000 } from './migrations/2190000000000-partners-contracts';
 import { ProjectContractChecks2200000000000 } from './migrations/2200000000000-project-contract-checks';
+import { RateCards2210000000000 } from './migrations/2210000000000-rate-cards';
+import { ProductPackages2220000000000 } from './migrations/2220000000000-product-packages';
+import { Acceptances2230000000000 } from './migrations/2230000000000-acceptances';
 
 loadEnv();
 
@@ -155,6 +169,13 @@ export const AppDataSource = new DataSource({
     ContractEntity,
     ContractAmendmentEntity,
     MediaSpecCheckEntity,
+    RateCardEntity,
+    RateCardItemEntity,
+    RateCardLevelRuleEntity,
+    ProductPackageEntity,
+    AcceptanceRecordEntity,
+    AcceptanceItemEntity,
+    AcceptanceItemSourceEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -207,6 +228,9 @@ export const AppDataSource = new DataSource({
     UploadFailureLog2180000000000,
     PartnersContracts2190000000000,
     ProjectContractChecks2200000000000,
+    RateCards2210000000000,
+    ProductPackages2220000000000,
+    Acceptances2230000000000,
   ],
   synchronize: false,
 });

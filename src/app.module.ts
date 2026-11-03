@@ -10,6 +10,11 @@ import { PermissionsGuard } from './common/auth/permissions.guard';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from './config/env.validation';
+import {
+  AcceptanceItemEntity,
+  AcceptanceItemSourceEntity,
+  AcceptanceRecordEntity,
+} from './database/entities/acceptance.entity';
 import { AccessGrantEntity } from './database/entities/access-grant.entity';
 import { AnalysisBatchEntity } from './database/entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './database/entities/analysis-farm-job.entity';
@@ -41,12 +46,18 @@ import {
 } from './database/entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './database/entities/outbox-event.entity';
 import { PartnerEntity } from './database/entities/partner.entity';
+import { ProductPackageEntity } from './database/entities/product-package.entity';
 import { ProjectAuditLogEntity } from './database/entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from './database/entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from './database/entities/project-media.entity';
 import { ProjectEntity } from './database/entities/project.entity';
 import { ProvinceEntity } from './database/entities/province.entity';
+import {
+  RateCardEntity,
+  RateCardItemEntity,
+  RateCardLevelRuleEntity,
+} from './database/entities/rate-card.entity';
 import { RenderBatchEntity } from './database/entities/render-batch.entity';
 import { RenderProfileEntity } from './database/entities/render-profile.entity';
 import { StudioUsageEventEntity } from './database/entities/studio-usage-event.entity';
@@ -55,6 +66,7 @@ import { SystemSettingEntity } from './database/entities/system-setting.entity';
 import { TagEntity } from './database/entities/tag.entity';
 import { HealthController } from './health/health.controller';
 import { QueueModule } from './infra/queue/queue.module';
+import { AcceptancesModule } from './modules/acceptances/acceptances.module';
 import { AccountWebhooksModule } from './modules/account-webhooks/account-webhooks.module';
 import { AccountModule } from './modules/account/account.module';
 import { AnalysisModule } from './modules/analysis/analysis.module';
@@ -69,10 +81,12 @@ import { FootageModule } from './modules/footage/footage.module';
 import { GoogleDriveModule } from './modules/google-drive/google-drive.module';
 import { LogsModule } from './modules/logs/logs.module';
 import { MediaModule } from './modules/media/media.module';
+import { PackagesModule } from './modules/packages/packages.module';
 import { PartnersModule } from './modules/partners/partners.module';
 import { ProjectContractsModule } from './modules/project-contracts/project-contracts.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { ProvincesModule } from './modules/provinces/provinces.module';
+import { RateCardsModule } from './modules/rate-cards/rate-cards.module';
 import { RenderModule } from './modules/render/render.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
@@ -141,6 +155,13 @@ import { WorkersModule } from './modules/workers/workers.module';
           ContractEntity,
           ContractAmendmentEntity,
           MediaSpecCheckEntity,
+          RateCardEntity,
+          RateCardItemEntity,
+          RateCardLevelRuleEntity,
+          ProductPackageEntity,
+          AcceptanceRecordEntity,
+          AcceptanceItemEntity,
+          AcceptanceItemSourceEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -171,6 +192,9 @@ import { WorkersModule } from './modules/workers/workers.module';
     ContractsModule,
     ProjectContractsModule,
     AccountWebhooksModule,
+    RateCardsModule,
+    PackagesModule,
+    AcceptancesModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

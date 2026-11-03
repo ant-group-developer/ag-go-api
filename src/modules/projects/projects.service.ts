@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -539,6 +540,13 @@ export class ProjectsService {
       throw new BadRequestException('Category is required');
     }
     await this.validateCatalogs(countryId ?? undefined, provinceId ?? undefined, categoryId);
+    // A package holds projects of its own category only (spec 7.4.1).
+    if (project.packageId && categoryId !== project.categoryId) {
+      throw new ConflictException({
+        code: 'PROJECT_IN_PACKAGE',
+        message: 'Remove the project from its package before changing its category',
+      });
+    }
     // Moving it or changing its category must keep it within the editor's grants.
     if (folderId !== project.folderId || categoryId !== project.categoryId) {
       await this.requireEditor(
