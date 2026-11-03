@@ -4,11 +4,12 @@ import { AppModule } from '../app.module';
 import { OutboxDispatcherService } from '../infra/queue/outbox-dispatcher.service';
 import { FarmResultPollerService } from '../modules/analysis/farm-result-poller.service';
 import { MediaQueueWorkerService } from '../modules/assets/media-queue-worker.service';
+import { DocumentWorkerService } from '../modules/documents/document-worker.service';
 import { DownloadWorkerService } from '../modules/downloads/download-worker.service';
 import { GoogleDriveImportWorkerService } from '../modules/google-drive/google-drive-import-worker.service';
 import { WorkerHeartbeatPublisher } from './worker-heartbeat-publisher';
 
-const WORKER_ROLES = ['media', 'download', 'import', 'outbox'] as const;
+const WORKER_ROLES = ['media', 'download', 'import', 'outbox', 'documents'] as const;
 type WorkerRole = (typeof WORKER_ROLES)[number];
 
 // Accepts `all` (the default) or a comma-separated list such as `import,outbox`, so one
@@ -48,6 +49,11 @@ async function bootstrap(): Promise<void> {
   if (roles.has('import')) {
     app.get(GoogleDriveImportWorkerService).start();
     started.push('import');
+  }
+  if (roles.has('documents')) {
+    // Contract / acceptance documents (DOCX, PDF through Gotenberg); personal data stays here.
+    app.get(DocumentWorkerService).start();
+    started.push('documents');
   }
   if (roles.has('outbox')) {
     app.get(OutboxDispatcherService).start();

@@ -6,3 +6,5 @@ export const IMPORT_QUEUE = 'google-drive-imports';
 export const IMPORT_JOB = 'google-drive-import';
 export const IMPORT_DISCOVERY_QUEUE = 'google-drive-import-discovery';
 export const IMPORT_DISCOVERY_JOB = 'google-drive-import-discovery';
+export const DOCUMENT_QUEUE = 'documents';
+export const DOCUMENT_JOB = 'generate-document';

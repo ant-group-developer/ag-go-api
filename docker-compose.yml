@@ -65,11 +65,12 @@ services:
     restart: unless-stopped
 
   # Network-bound work: Google Drive imports, ZIP downloads (streamed straight to R2, so
-  # memory stays flat) and the lightweight outbox dispatcher.
+  # memory stays flat), the lightweight outbox dispatcher and contract documents (DOCX rendered
+  # here so partner data never reaches a browser; PDF through Gotenberg when GOTENBERG_URL is set).
   worker-io:
     image: ag-go-api:${TAG:-latest}
     pull_policy: never
-    command: ['node', 'dist/workers/worker.js', 'download,import,outbox']
+    command: ['node', 'dist/workers/worker.js', 'download,import,outbox,documents']
     stop_grace_period: ${WORKER_STOP_GRACE_PERIOD:-150s}
     env_file:
       - .env

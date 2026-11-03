@@ -158,7 +158,7 @@ export class ContractsController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Phát hành: đọc hồ sơ AG Account, chụp snapshot mã hoá; 422 PARTNER_PROFILE_INCOMPLETE nếu thiếu trường',
+      'Phát hành: đọc hồ sơ AG Account, chụp snapshot mã hoá và thông tin Bên A, worker-io sinh file DOCX/PDF (GET /contracts/:id/documents). 422 PARTNER_PROFILE_INCOMPLETE nếu thiếu trường hồ sơ; COMPANY_PROFILE_INCOMPLETE / DOCUMENT_TEMPLATE_MISSING / DOCUMENT_DATA_MISSING (details.missing) trước khi sinh (FR-D-03)',
   })
   issue(@Req() request: Request, @Param('id', ParseUUIDPipe) id: string) {
     return this.contractsService.issue(id, this.actor(request));
@@ -176,7 +176,8 @@ export class ContractsController {
   @RequirePermissions(GO_PERMISSIONS.CONTRACT_MANAGE)
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Kích hoạt: cần ngày ký và bản ký (quản trị bỏ qua bản ký được nếu nêu lý do)',
+    summary:
+      'Kích hoạt: cần ngày ký và bản ký (upload ở POST /contracts/:id/signed-file, hoặc signedFileId); quản trị vẫn bỏ qua bản ký được nếu nêu lý do',
   })
   activate(
     @Req() request: Request,
@@ -271,7 +272,10 @@ export class ContractsController {
   @Post(':id/amendments/:amendmentId/issue')
   @RequirePermissions(GO_PERMISSIONS.CONTRACT_MANAGE)
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Phát hành phụ lục (draft → issued)' })
+  @ApiOperation({
+    summary:
+      'Phát hành phụ lục (draft → issued): chụp hồ sơ đối tác và Bên A, worker-io sinh file; 422 như phát hành HĐ',
+  })
   issueAmendment(
     @Req() request: Request,
     @Param('id', ParseUUIDPipe) id: string,

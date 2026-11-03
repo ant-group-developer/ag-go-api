@@ -2,6 +2,8 @@ import type { EntityManager } from 'typeorm';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { ProjectMediaEntity } from '../../database/entities/project-media.entity';
 import { ProjectEntity } from '../../database/entities/project.entity';
+import { refreshProjectPackage } from '../packages/package-progress';
+import { recordProjectDelivery } from '../project-contracts/project-delivery';
 import { deriveProjectEvaluationStatus } from './evaluation-status';
 
 /**
@@ -46,6 +48,8 @@ export async function refreshProjectMediaSummary(
   const rejected = Number(counts?.rejected ?? 0);
   const evaluationStatus = deriveProjectEvaluationStatus(totalMedia, pending, approved, rejected);
   await manager.update(ProjectEntity, projectId, { evaluationStatus });
+  await recordProjectDelivery(manager, projectId, evaluationStatus);
+  await refreshProjectPackage(manager, projectId);
   await manager.query(
     `INSERT INTO project_evaluation_summaries
       (project_id, total_media, pending_count, approved_count, rejected_count, evaluation_status)

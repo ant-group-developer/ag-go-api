@@ -1,0 +1,15 @@
+# Gotenberg for development: contract / acceptance documents Word → PDF (ANTGO-253, spec 13).
+#   docker compose -f dev/gotenberg/docker-compose.yml up -d
+# then GOTENBERG_URL=http://localhost:3001 in .env (api for previews, worker-io for issued files).
+# Production can share one internal Gotenberg instance (AG Music runs the same image); do not
+# publish its port outside the private network.
+name: ag-go-gotenberg
+
+services:
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: ag-go-gotenberg
+    restart: unless-stopped
+    command: ['gotenberg', '--api-timeout=60s', '--libreoffice-restart-after=50']
+    ports:
+      - '127.0.0.1:3001:3000'

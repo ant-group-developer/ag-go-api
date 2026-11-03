@@ -121,7 +121,7 @@ export class ContractEntity {
   @Column({ name: 'non_compete_months', type: 'integer', nullable: true, default: 24 })
   nonCompeteMonths!: number | null;
 
-  /** Template the contract file is issued from (document templates come later). */
+  /** Template version the contract file was issued from (document_templates, FR-D-01). */
   @Column({ name: 'template_version_id', type: 'uuid', nullable: true })
   templateVersionId!: string | null;
 
@@ -137,6 +137,10 @@ export class ContractEntity {
 
   @Column({ name: 'partner_snapshot_at', type: 'timestamptz', nullable: true })
   partnerSnapshotAt!: Date | null;
+
+  /** Party A details captured when issued (FR-D-05): later settings changes leave it as is. */
+  @Column({ name: 'company_snapshot', type: 'jsonb', nullable: true })
+  companySnapshot!: Record<string, unknown> | null;
 
   /**
    * Last acceptance appendix number used (BR-07): the next one is this + 1. Imported contracts
@@ -168,7 +172,7 @@ export class ContractEntity {
   })
   legacyAdvanceBalance!: number | null;
 
-  /** Signed copy (→ generated_documents once contract documents exist). */
+  /** Signed copy uploaded (generated_documents, kind `signed`). */
   @Column({ name: 'signed_file_id', type: 'uuid', nullable: true })
   signedFileId!: string | null;
 

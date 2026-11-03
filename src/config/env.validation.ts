@@ -117,6 +117,15 @@ export const envValidationSchema = Joi.object({
     .optional(),
   PARTNER_PII_ENCRYPTION_PREVIOUS_KEYS: Joi.string().trim().allow('').optional(),
 
+  // Contract documents: DOCX → PDF through Gotenberg (POST /forms/libreoffice/convert). Unset =
+  // documents stay DOCX only (spec Q4). Read by the api (previews) and worker-io (documents role).
+  GOTENBERG_URL: Joi.string()
+    .trim()
+    .uri({ scheme: ['http', 'https'] })
+    .allow('')
+    .optional(),
+  GOTENBERG_TIMEOUT_MS: Joi.number().integer().min(1000).max(600_000).default(60_000),
+
   // Google Drive OAuth
   GOOGLE_CLIENT_ID: Joi.string().trim().allow('').optional(),
   GOOGLE_CLIENT_SECRET: Joi.string().trim().allow('').optional(),

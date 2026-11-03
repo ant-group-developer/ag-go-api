@@ -20,7 +20,8 @@ async function bootstrap(): Promise<void> {
       config.get<string>('CORS_EXTRA_ORIGINS'),
     ),
     credentials: true,
-    exposedHeaders: ['x-request-id'],
+    // x-document-missing: placeholders a document preview printed empty (contract documents).
+    exposedHeaders: ['x-request-id', 'content-disposition', 'x-document-missing'],
   });
   app.useGlobalPipes(
     new ValidationPipe({

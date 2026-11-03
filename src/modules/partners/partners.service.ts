@@ -86,7 +86,7 @@ export type PartnerCandidate = {
 };
 
 /** Why the profile was read, recorded with the audit entry. */
-export type ProfileReadPurpose = 'profile_view' | 'contract_issue';
+export type ProfileReadPurpose = 'profile_view' | 'contract_issue' | 'document_preview';
 
 @Injectable()
 export class PartnersService {
@@ -381,6 +381,14 @@ export class PartnersService {
     actor: PartnerActor,
   ): Promise<{ profile: AccountContractProfile; completeness: ProfileCompleteness }> {
     return this.readProfile(partner, actor, 'contract_issue', true);
+  }
+
+  /** Full profile printed on the preview of a draft document (audited as a view, spec 13). */
+  async readProfileForPreview(
+    partner: PartnerEntity,
+    actor: PartnerActor,
+  ): Promise<{ profile: AccountContractProfile; completeness: ProfileCompleteness }> {
+    return this.readProfile(partner, actor, 'document_preview', true);
   }
 
   /** USER_PROFILE_CHANGED webhook: refreshes the cached names of these AG Account users. */

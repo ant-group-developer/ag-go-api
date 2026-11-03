@@ -32,6 +32,25 @@ export class ProjectEntity {
   @Column({ name: 'evaluation_status', type: 'varchar', length: 30, default: 'draft' })
   evaluationStatus!: 'draft' | 'pending' | 'completed' | 'partially_completed' | 'failed';
 
+  /** Contract of the owner (partner) the project is delivered under (FR-C-08, FR-P-09). */
+  @Column({ name: 'contract_id', type: 'uuid', nullable: true })
+  contractId!: string | null;
+
+  /** When the partner delivered it: by default the first time it went to `pending` (spec 7.4). */
+  @Column({ name: 'delivered_at', type: 'timestamptz', nullable: true })
+  deliveredAt!: Date | null;
+
+  /** Accepted on a paper acceptance record before AG Go (spec 15.3): never counted again. */
+  @Column({ name: 'accepted_outside_at', type: 'timestamptz', nullable: true })
+  acceptedOutsideAt!: Date | null;
+
+  @Column({ name: 'accepted_outside_note', type: 'text', nullable: true })
+  acceptedOutsideNote!: string | null;
+
+  /** Product package holding the project (spec 7.4.1); at most one. */
+  @Column({ name: 'package_id', type: 'uuid', nullable: true })
+  packageId!: string | null;
+
   @Column({ name: 'media_count', type: 'integer', default: 0 })
   mediaCount!: number;
 
