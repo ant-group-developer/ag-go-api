@@ -1,5 +1,7 @@
 import {
   BadGatewayException,
+  BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -10,9 +12,13 @@ import { ConfigService } from '@nestjs/config';
 import { USER_TYPES, type UserType } from '../../common/auth/user-type';
 import type {
   AccountApplication,
+  AccountContractProfile,
+  AccountContractProfileChanges,
+  AccountContractProfileUpdateResult,
   AccountCurrentUser,
   AccountPaginationMeta,
   AccountUser,
+  AccountUserBySub,
   AccountUserQuery,
   AccountUserSearchQuery,
   AccountUserSearchResponse,
@@ -55,12 +61,35 @@ export type AccountUserAccess = {
 /** Code of this application in Account API: every user_type/permission lookup is made for it. */
 const DEFAULT_APPLICATION_CODE = 'ant-go-v2';
 
+/** Account API only takes `X-Acting-User-Id` values matching its VarChar(36) log columns. */
+const ACTING_USER_PATTERN = /^[\w.@|-]{1,36}$/;
+
+const BY_SUB_TTL_MS = 10 * 60 * 1000;
+
+/** Error codes of the contract-profile proxy, for the web client to show its own message. */
+export const ACCOUNT_ERROR_CODES = {
+  USER_NOT_IN_APPLICATION: 'ACCOUNT_USER_NOT_IN_APPLICATION',
+  PROFILE_VERSION_CONFLICT: 'CONTRACT_PROFILE_VERSION_CONFLICT',
+  PROFILE_INVALID: 'CONTRACT_PROFILE_INVALID',
+  UNAVAILABLE: 'ACCOUNT_API_UNAVAILABLE',
+} as const;
+
+type ApiKeyRequestOptions = {
+  method?: 'GET' | 'PATCH';
+  headers?: Record<string, string>;
+  body?: unknown;
+  /** Name of the calling method, for logs only. */
+  operation: string;
+};
+
 @Injectable()
 export class AccountApiService {
   private readonly logger = new Logger(AccountApiService.name);
   private readonly actorCache = new Map<string, { expiresAt: number; value: AccountUser | null }>();
   /** Cache for getUserAccess: userId → { expiresAt, value }. TTL 60 s. */
   private readonly accessCache = new Map<string, { expiresAt: number; value: AccountUserAccess }>();
+  /** Cache for resolveBySub: token subject → AG Account user. TTL 10 min. */
+  private readonly bySubCache = new Map<string, { expiresAt: number; value: AccountUserBySub }>();
 
   constructor(private readonly config: ConfigService) {}
 
@@ -183,6 +212,277 @@ export class AccountApiService {
     };
     this.accessCache.set(userId, { expiresAt: now + 60_000, value: result });
     return result;
+  }
+
+  /**
+   * AG Account's own user id (and access in this application) of a token subject (`sub`, with its
+   * `auth0|` / `google-oauth2|` prefix). AG Go ids are the subject without `auth0|`, which is not
+   * always the AG Account id (users linked by email, long ids). Cached 10 minutes per subject.
+   *
+   * Endpoint: `GET /v2/public/users/by-sub/access?sub=&application=ant-go-v2` (API key). Errors as
+   * getUserAccess (503), except an unknown user: 404 `ACCOUNT_USER_NOT_IN_APPLICATION`.
+   */
+  async resolveBySub(sub: string): Promise<AccountUserBySub> {
+    const subject = sub.trim();
+    const now = Date.now();
+    const cached = this.bySubCache.get(subject);
+    if (cached && cached.expiresAt > now) {
+      return cached.value;
+    }
+    const url = this.buildAccountUrl('public/users/by-sub/access');
+    url.searchParams.set('sub', subject);
+    url.searchParams.set('application', this.applicationCode());
+    const data = await this.sendApiKeyRequest(url.toString(), { operation: 'resolveBySub' });
+    if (!this.isUserBySub(data)) {
+      this.logger.warn('Account API resolveBySub returned unexpected shape');
+      throw new ServiceUnavailableException('Account API returned an invalid access response');
+    }
+    const isActive = (data as { is_active?: unknown }).is_active;
+    const value: AccountUserBySub = {
+      user_id: data.user_id,
+      user_type: data.user_type,
+      permissions: data.permissions,
+      ...(typeof data.application === 'string' ? { application: data.application } : {}),
+      ...(typeof isActive === 'boolean' ? { is_active: isActive } : {}),
+    };
+    this.bySubCache.set(subject, { expiresAt: now + BY_SUB_TTL_MS, value });
+    return value;
+  }
+
+  /** Drops cached lookups (by-sub, names) of these AG Account users after a webhook. */
+  forgetAccountUsers(accountUserIds: string[]): void {
+    const ids = new Set(accountUserIds);
+    for (const [sub, entry] of this.bySubCache) {
+      if (ids.has(entry.value.user_id)) {
+        this.bySubCache.delete(sub);
+      }
+    }
+    for (const id of accountUserIds) {
+      this.actorCache.delete(id);
+    }
+  }
+
+  /**
+   * Contract profile of an AG Account user, decrypted (never cached: each call is logged as a VIEW
+   * by AG Account). `actingUserId` is the AG Account id of the AG Go user doing it.
+   *
+   * 404 `ACCOUNT_USER_NOT_IN_APPLICATION` when the user does not exist or is not a member of AG Go;
+   * 503 when the API key lacks `contract_profile_access` or Account API is down.
+   */
+  async getContractProfile(
+    accountUserId: string,
+    actingUserId?: string,
+  ): Promise<AccountContractProfile> {
+    const data = await this.sendApiKeyRequest(this.contractProfileUrl(accountUserId), {
+      operation: 'getContractProfile',
+      headers: this.actingHeaders(actingUserId),
+    });
+    if (!this.isContractProfile(data)) {
+      this.logger.warn('Account API getContractProfile returned unexpected shape');
+      throw new ServiceUnavailableException('Account API returned an invalid contract profile');
+    }
+    return data;
+  }
+
+  /**
+   * Partial update: only the keys present are written, null clears. `version` (from the last GET)
+   * is always sent as `If-Match`; a profile changed since then gives 409
+   * `CONTRACT_PROFILE_VERSION_CONFLICT`. Values Account API refuses (format, duplicate ID card
+   * number) give 400 `CONTRACT_PROFILE_INVALID` with its messages in `details.messages`.
+   */
+  async patchContractProfile(
+    accountUserId: string,
+    changes: AccountContractProfileChanges,
+    options: { version: string; actingUserId?: string },
+  ): Promise<AccountContractProfileUpdateResult> {
+    const data = await this.sendApiKeyRequest(this.contractProfileUrl(accountUserId), {
+      operation: 'patchContractProfile',
+      method: 'PATCH',
+      headers: { ...this.actingHeaders(options.actingUserId), 'If-Match': options.version },
+      body: changes,
+    });
+    if (
+      !this.isContractProfile(data) ||
+      !Array.isArray((data as { changed_fields?: unknown }).changed_fields)
+    ) {
+      this.logger.warn('Account API patchContractProfile returned unexpected shape');
+      throw new ServiceUnavailableException('Account API returned an invalid contract profile');
+    }
+    return data as AccountContractProfileUpdateResult;
+  }
+
+  /** Members of this application in Account API, by name or email (API key, summary fields). */
+  async searchApplicationUsers(query: AccountUserSearchQuery): Promise<AccountUsersResponse> {
+    const url = this.buildAccountUrl('public/users');
+    url.searchParams.set('application', this.applicationCode());
+    url.searchParams.set('fields', ACTOR_FIELDS);
+    url.searchParams.set('page', String(query.page ?? 1));
+    url.searchParams.set('page_size', String(query.limit ?? 20));
+    url.searchParams.set('sort_by', 'name');
+    url.searchParams.set('sort_order', 'asc');
+    const keyword = query.keyword?.trim();
+    if (keyword) {
+      url.searchParams.set('keyword', keyword);
+    }
+    const payload = await this.request<AccountUsersResponse>(url.toString());
+    const result = this.unwrap(payload);
+    if (!this.isUsersResponse(result)) {
+      throw new BadGatewayException('Account API returned an invalid user response');
+    }
+    return result;
+  }
+
+  private contractProfileUrl(accountUserId: string): string {
+    return this.buildAccountUrl(
+      `public/users/${encodeURIComponent(accountUserId)}/contract-profile`,
+    ).toString();
+  }
+
+  private actingHeaders(actingUserId?: string): Record<string, string> {
+    const acting = actingUserId?.trim();
+    if (!acting) {
+      return {};
+    }
+    if (!ACTING_USER_PATTERN.test(acting)) {
+      // Account API would refuse the whole request (400): log without the acting user instead.
+      this.logger.warn('Acting user id is not accepted by Account API; sent without it');
+      return {};
+    }
+    return { 'X-Acting-User-Id': acting };
+  }
+
+  /**
+   * Calls Account API with the API key like getUserAccess does: network failure, 401/403 (key not
+   * allowed) and unexpected statuses are 503; 404, 409 and 400 keep their meaning with a code.
+   * Returns the unwrapped `data`.
+   */
+  private async sendApiKeyRequest(url: string, options: ApiKeyRequestOptions): Promise<unknown> {
+    const apiKey = this.config.get<string>('ACCOUNT_API_KEY')?.trim();
+    if (!apiKey) {
+      throw new ServiceUnavailableException('Account API key is not configured');
+    }
+    const headers: Record<string, string> = {
+      Accept: 'application/json',
+      'x-api-key': apiKey,
+      ...options.headers,
+    };
+    if (options.body !== undefined) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: options.method ?? 'GET',
+        headers,
+        ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
+        signal: AbortSignal.timeout(5000),
+      });
+    } catch (error) {
+      this.logger.error(
+        `Account API ${options.operation} failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      throw new ServiceUnavailableException({
+        code: ACCOUNT_ERROR_CODES.UNAVAILABLE,
+        message: 'Account API is unavailable',
+      });
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      this.logger.warn(`Account API denied ${options.operation} (HTTP ${response.status})`);
+      throw new ServiceUnavailableException({
+        code: ACCOUNT_ERROR_CODES.UNAVAILABLE,
+        message: `Account API denied access for ${options.operation}`,
+      });
+    }
+
+    const bodyText = await response.text();
+    let body: unknown = null;
+    if (bodyText) {
+      try {
+        body = JSON.parse(bodyText) as unknown;
+      } catch {
+        if (response.ok) {
+          throw new ServiceUnavailableException('Account API returned invalid JSON');
+        }
+      }
+    }
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new NotFoundException({
+          code: ACCOUNT_ERROR_CODES.USER_NOT_IN_APPLICATION,
+          message: 'User does not exist or is not a member of AG Go in Account API',
+        });
+      }
+      if (response.status === 409) {
+        throw new ConflictException({
+          code: ACCOUNT_ERROR_CODES.PROFILE_VERSION_CONFLICT,
+          message: 'The contract profile was changed elsewhere; reload it and save again',
+        });
+      }
+      if (response.status === 400) {
+        const messages = this.errorMessages(body);
+        throw new BadRequestException({
+          code: ACCOUNT_ERROR_CODES.PROFILE_INVALID,
+          message: messages[0] ?? 'Account API refused the contract profile',
+          details: { messages },
+        });
+      }
+      this.logger.warn(`Account API ${options.operation} returned HTTP ${response.status}`);
+      throw new ServiceUnavailableException({
+        code: ACCOUNT_ERROR_CODES.UNAVAILABLE,
+        message: 'Account API request failed',
+      });
+    }
+
+    if (
+      typeof body === 'object' &&
+      body !== null &&
+      'data' in body &&
+      ('statusCode' in body || 'success' in body || 'timestamp' in body)
+    ) {
+      const envelope = body as Record<string, unknown>;
+      if (envelope['success'] === false) {
+        throw new ServiceUnavailableException(`Account API ${options.operation} failed`);
+      }
+      return envelope['data'];
+    }
+    return body;
+  }
+
+  /** `message` of an Account API error: a string, or the validation messages. */
+  private errorMessages(body: unknown): string[] {
+    if (typeof body !== 'object' || body === null) {
+      return [];
+    }
+    const record = body as Record<string, unknown>;
+    const nested =
+      typeof record['error'] === 'object' && record['error'] !== null
+        ? (record['error'] as Record<string, unknown>)['message']
+        : undefined;
+    const message = record['message'] ?? nested;
+    if (typeof message === 'string') {
+      return [message];
+    }
+    return Array.isArray(message)
+      ? message.filter((item): item is string => typeof item === 'string')
+      : [];
+  }
+
+  private isUserBySub(value: unknown): value is AccountUserBySub {
+    return (
+      this.isUserAccess(value) &&
+      typeof (value as unknown as Record<string, unknown>)['user_id'] === 'string'
+    );
+  }
+
+  private isContractProfile(value: unknown): value is AccountContractProfile {
+    if (typeof value !== 'object' || value === null) {
+      return false;
+    }
+    const candidate = value as Record<string, unknown>;
+    return typeof candidate['user_id'] === 'string' && typeof candidate['version'] === 'string';
   }
 
   private isUserAccess(value: unknown): value is AccountUserAccess {

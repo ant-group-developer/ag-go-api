@@ -2,6 +2,11 @@ import { config as loadEnv } from 'dotenv';
 import 'reflect-metadata';
 import { DataSource } from 'typeorm';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from '../config/env.validation';
+import {
+  AcceptanceItemEntity,
+  AcceptanceItemSourceEntity,
+  AcceptanceRecordEntity,
+} from './entities/acceptance.entity';
 import { AccessGrantEntity } from './entities/access-grant.entity';
 import { AnalysisBatchEntity } from './entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './entities/analysis-farm-job.entity';
@@ -14,27 +19,40 @@ import { AssetUploadSessionEntity } from './entities/asset-upload-session.entity
 import { AssetVariantEntity } from './entities/asset-variant.entity';
 import { AssetEntity } from './entities/asset.entity';
 import { CategoryEntity } from './entities/category.entity';
+import { ContractAmendmentEntity } from './entities/contract-amendment.entity';
+import { ContractEntity } from './entities/contract.entity';
 import { CountryEntity } from './entities/country.entity';
+import { DocumentTemplateEntity } from './entities/document-template.entity';
 import { DownloadJobItemEntity } from './entities/download-job-item.entity';
 import { DownloadJobEntity } from './entities/download-job.entity';
 import { DownloadLogEntity } from './entities/download-log.entity';
 import { FolderClosureEntity } from './entities/folder-closure.entity';
 import { FolderEntity } from './entities/folder.entity';
+import { GeneratedDocumentEntity } from './entities/generated-document.entity';
 import { GoogleDriveConnectionEntity } from './entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './entities/import-batch.entity';
 import { MediaRenderJobEntity } from './entities/media-render-job.entity';
+import { MediaSpecCheckEntity } from './entities/media-spec-check.entity';
 import {
   OriginalAccessBundleCategoryEntity,
   OriginalAccessBundleEntity,
   OriginalAccessBundleFolderEntity,
 } from './entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './entities/outbox-event.entity';
+import { PartnerEntity } from './entities/partner.entity';
+import { PaymentEntity } from './entities/payment.entity';
+import { ProductPackageEntity } from './entities/product-package.entity';
 import { ProjectAuditLogEntity } from './entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from './entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from './entities/project-media.entity';
 import { ProjectEntity } from './entities/project.entity';
 import { ProvinceEntity } from './entities/province.entity';
+import {
+  RateCardEntity,
+  RateCardItemEntity,
+  RateCardLevelRuleEntity,
+} from './entities/rate-card.entity';
 import { RenderBatchEntity } from './entities/render-batch.entity';
 import { RenderProfileEntity } from './entities/render-profile.entity';
 import { StudioUsageEventEntity } from './entities/studio-usage-event.entity';
@@ -89,6 +107,13 @@ import { UploadMetrics2150000000000 } from './migrations/2150000000000-upload-me
 import { OriginalAccessBundles2160000000000 } from './migrations/2160000000000-original-access-bundles';
 import { UploadSpeedLogRange2170000000000 } from './migrations/2170000000000-upload-speed-log-range';
 import { UploadFailureLog2180000000000 } from './migrations/2180000000000-upload-failure-log';
+import { PartnersContracts2190000000000 } from './migrations/2190000000000-partners-contracts';
+import { ProjectContractChecks2200000000000 } from './migrations/2200000000000-project-contract-checks';
+import { RateCards2210000000000 } from './migrations/2210000000000-rate-cards';
+import { ProductPackages2220000000000 } from './migrations/2220000000000-product-packages';
+import { Acceptances2230000000000 } from './migrations/2230000000000-acceptances';
+import { ContractDocuments2240000000000 } from './migrations/2240000000000-contract-documents';
+import { Payments2250000000000 } from './migrations/2250000000000-payments';
 
 loadEnv();
 
@@ -145,6 +170,20 @@ export const AppDataSource = new DataSource({
     AssetPrepBatchEntity,
     AssetPrepFarmJobEntity,
     StudioUsageEventEntity,
+    PartnerEntity,
+    ContractEntity,
+    ContractAmendmentEntity,
+    MediaSpecCheckEntity,
+    RateCardEntity,
+    RateCardItemEntity,
+    RateCardLevelRuleEntity,
+    ProductPackageEntity,
+    AcceptanceRecordEntity,
+    AcceptanceItemEntity,
+    AcceptanceItemSourceEntity,
+    DocumentTemplateEntity,
+    GeneratedDocumentEntity,
+    PaymentEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -195,6 +234,13 @@ export const AppDataSource = new DataSource({
     OriginalAccessBundles2160000000000,
     UploadSpeedLogRange2170000000000,
     UploadFailureLog2180000000000,
+    PartnersContracts2190000000000,
+    ProjectContractChecks2200000000000,
+    RateCards2210000000000,
+    ProductPackages2220000000000,
+    Acceptances2230000000000,
+    ContractDocuments2240000000000,
+    Payments2250000000000,
   ],
   synchronize: false,
 });

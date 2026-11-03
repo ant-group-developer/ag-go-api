@@ -70,7 +70,7 @@ Compose chạy service `api` và hai worker, cùng đọc biến runtime từ `.
 | Service | Role | Việc xử lý |
 |---|---|---|
 | `worker-media` | `media` | Render preview/thumbnail bằng FFmpeg/Sharp (nặng CPU) |
-| `worker-io` | `download,import,outbox` | Tạo ZIP tải xuống (stream thẳng lên R2), import Google Drive, dispatch outbox event |
+| `worker-io` | `download,import,outbox,documents` | Tạo ZIP tải xuống (stream thẳng lên R2), import Google Drive, dispatch outbox event, sinh chứng từ HĐ / phụ lục / BBNT (DOCX; PDF qua Gotenberg nếu có `GOTENBERG_URL`) |
 Sau khi chuẩn bị các dịch vụ phụ thuộc và `.env`, build image, chạy migration
 rồi khởi động các service:
 

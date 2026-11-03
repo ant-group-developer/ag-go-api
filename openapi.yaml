@@ -1601,6 +1601,981 @@ paths:
       security: *a20
       summary: Cancel everything unfinished in a prep backfill
       tags: *a21
+  /projects/{id}/contract:
+    get:
+      operationId: ProjectContractsController_getLink
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a22
+        - bearer: []
+      summary:
+        HĐ đã gắn, thời điểm giao, "nghiệm thu ngoài hệ thống" và các HĐ hiệu
+        lực của đối tác sở hữu để chọn (FR-P-09)
+      tags: &a23
+        - project-contracts
+    patch:
+      operationId: ProjectContractsController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProjectContractDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a22
+      summary: Gắn / bỏ gắn HĐ (chỉ HĐ active của đúng đối tác, FR-C-08); sửa
+        deliveredAt, đánh dấu nghiệm thu ngoài hệ thống (cần
+        go.contract.manage). Gắn mới thì xếp phân tích còn thiếu và chạy kiểm
+        tra kỹ thuật.
+      tags: *a23
+  /projects/{id}/spec-checks:
+    get:
+      operationId: ProjectContractsController_specChecks
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a22
+      summary:
+        "Kết quả kiểm tra kỹ thuật theo tech spec của HĐ tại ngày giao: từng
+        video (pass/warn/fail/unknown kèm lý do) và tổng hợp project (FR-T-02,
+        FR-T-03). Chỉ là gợi ý cho người nghiệm thu."
+      tags: *a23
+  /projects/{id}/spec-checks/recheck:
+    post:
+      operationId: ProjectContractsController_recheck
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a22
+      summary: Xếp phân tích còn thiếu rồi kiểm tra lại mọi video của project (FR-T-05)
+      tags: *a23
+  /partners/{id}/projects:
+    get:
+      operationId: ProjectContractsController_partnerProjects
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: link
+          required: false
+          in: query
+          description: unlinked = chưa gắn HĐ (vd. đối tác có nhiều HĐ hiệu lực, cần chọn)
+          schema:
+            default: all
+            type: string
+            enum:
+              - all
+              - linked
+              - unlinked
+        - name: delivered
+          required: false
+          in: query
+          description: Chỉ project đã giao (delivered_at có giá trị)
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a22
+      summary:
+        Project của đối tác (owner = go_user_id), lọc đã / chưa gắn HĐ, đã
+        giao; kèm số kết quả kiểm tra
+      tags: *a23
+  /contracts/{id}/projects:
+    get:
+      operationId: ProjectContractsController_contractProjects
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a22
+      summary: Project đã gắn vào HĐ, mới giao trước; kèm số kết quả kiểm tra
+      tags: *a23
+  /contracts:
+    get:
+      operationId: ContractsController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: keyword
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - draft
+              - issued
+              - active
+              - suspended
+              - completed
+              - terminated
+        - name: pricingModel
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - per_topic
+              - per_unit
+              - package_tier
+        - name: managerUserId
+          required: false
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a24
+        - bearer: []
+      summary:
+        "Danh sách HĐ (lọc đối tác, trạng thái, mô hình giá, người phụ trách).
+        Không có go.contract.read_all: chỉ HĐ mình phụ trách."
+      tags: &a25
+        - contracts
+    post:
+      operationId: ContractsController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateContractDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Tạo HĐ nháp (cấu hình giá kiểm theo mô hình, FR-C-01)
+      tags: *a25
+  /contracts/tech-spec-presets:
+    get:
+      operationId: ContractsController_techSpecPresets
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Preset tech spec (FR-C-03), vd. Footage 4K60
+      tags: *a25
+  /contracts/next-number:
+    get:
+      operationId: ContractsController_nextNumber
+      parameters:
+        - name: partnerId
+          required: true
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: date
+          required: true
+          in: query
+          description: Ngày ký dự kiến
+          schema:
+            example: 2026-08-01
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Số HĐ sẽ cấp cho đối tác và ngày ký (BR-05)
+      tags: *a25
+  /contracts/import:
+    post:
+      operationId: ContractsController_importCsv
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary:
+        "Nhập HĐ cũ từ CSV (FR-C-11), tất cả hoặc không. Cột: partner_code,
+        contract_number, signed_date, start_date, end_date, status,
+        pricing_model, pricing_config, acceptance_cycle,
+        payment_term_business_days, cap_amount, advance_amount,
+        advance_due_business_days, last_appendix_number, legacy_accepted_amount,
+        legacy_paid_amount, legacy_advance_balance, note"
+      tags: *a25
+  /contracts/{id}:
+    get:
+      operationId: ContractsController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Chi tiết HĐ kèm phụ lục sửa đổi và các thao tác được phép
+      tags: *a25
+    patch:
+      operationId: ContractsController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateContractDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary:
+        "Sửa HĐ: điều khoản chỉ khi nháp (409 CONTRACT_TERMS_LOCKED sau đó,
+        dùng phụ lục); người phụ trách, ghi chú lúc nào cũng sửa được"
+      tags: *a25
+    delete:
+      operationId: ContractsController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Xoá HĐ nháp
+      tags: *a25
+  /contracts/{id}/terms:
+    get:
+      operationId: ContractsController_terms
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: date
+          required: false
+          in: query
+          description: Mặc định hôm nay
+          schema:
+            example: 2026-09-30
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Điều khoản hiệu lực tại một ngày (áp các phụ lục đã ký)
+      tags: *a25
+  /contracts/{id}/issue:
+    post:
+      operationId: ContractsController_issue
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary:
+        "Phát hành: đọc hồ sơ AG Account, chụp snapshot mã hoá và thông tin Bên
+        A, worker-io sinh file DOCX/PDF (GET /contracts/:id/documents). 422
+        PARTNER_PROFILE_INCOMPLETE nếu thiếu trường hồ sơ;
+        COMPANY_PROFILE_INCOMPLETE / DOCUMENT_TEMPLATE_MISSING /
+        DOCUMENT_DATA_MISSING (details.missing) trước khi sinh (FR-D-03)"
+      tags: *a25
+  /contracts/{id}/unissue:
+    post:
+      operationId: ContractsController_unissue
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Huỷ phát hành, về nháp để sửa
+      tags: *a25
+  /contracts/{id}/activate:
+    post:
+      operationId: ContractsController_activate
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivateContractDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: "Kích hoạt: cần ngày ký và bản ký (upload ở POST
+        /contracts/:id/signed-file, hoặc signedFileId); quản trị vẫn bỏ qua bản
+        ký được nếu nêu lý do"
+      tags: *a25
+  /contracts/{id}/suspend:
+    post:
+      operationId: ContractsController_suspend
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContractReasonDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Tạm dừng HĐ đang hiệu lực
+      tags: *a25
+  /contracts/{id}/resume:
+    post:
+      operationId: ContractsController_resume
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Tiếp tục HĐ đang tạm dừng
+      tags: *a25
+  /contracts/{id}/complete:
+    post:
+      operationId: ContractsController_complete
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Hoàn thành (đủ nghĩa vụ / chạm trần)
+      tags: *a25
+  /contracts/{id}/terminate:
+    post:
+      operationId: ContractsController_terminate
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TerminateContractDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Chấm dứt / thanh lý, bắt buộc lý do (FR-C-10)
+      tags: *a25
+  /contracts/{id}/amendments:
+    get:
+      operationId: ContractsController_listAmendments
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Phụ lục sửa đổi của HĐ
+      tags: *a25
+    post:
+      operationId: ContractsController_createAmendment
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAmendmentDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Tạo phụ lục sửa đổi nháp (HĐ active / suspended, FR-C-07)
+      tags: *a25
+  /contracts/{id}/amendments/{amendmentId}:
+    patch:
+      operationId: ContractsController_updateAmendment
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: amendmentId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAmendmentDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Sửa phụ lục nháp
+      tags: *a25
+    delete:
+      operationId: ContractsController_removeAmendment
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: amendmentId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Xoá phụ lục nháp
+      tags: *a25
+  /contracts/{id}/amendments/{amendmentId}/issue:
+    post:
+      operationId: ContractsController_issueAmendment
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: amendmentId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: "Phát hành phụ lục (draft → issued): chụp hồ sơ đối tác và Bên A,
+        worker-io sinh file; 422 như phát hành HĐ"
+      tags: *a25
+  /contracts/{id}/amendments/{amendmentId}/sign:
+    post:
+      operationId: ContractsController_signAmendment
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: amendmentId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignAmendmentDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a24
+      summary: Ghi nhận phụ lục đã ký (issued → signed), có hiệu lực từ effectiveDate
+      tags: *a25
+  /contract-templates:
+    get:
+      operationId: DocumentTemplatesController_list
+      parameters:
+        - name: kind
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - contract
+              - amendment
+              - acceptance
+        - name: pricingModel
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - per_topic
+              - per_unit
+              - package_tier
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a26
+        - bearer: []
+      summary:
+        Các phiên bản template (HĐ theo mô hình giá, phụ lục sửa đổi, BBNT),
+        mới nhất trước; isActive = bản dùng khi phát hành
+      tags: &a27
+        - contract-templates
+    post:
+      operationId: DocumentTemplatesController_upload
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+                - kind
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  type: string
+                  enum:
+                    - contract
+                    - amendment
+                    - acceptance
+                pricingModel:
+                  type: string
+                  enum:
+                    - per_topic
+                    - per_unit
+                    - package_tier
+                name:
+                  type: string
+                note:
+                  type: string
+                activate:
+                  type: boolean
+                  default: true
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a26
+      summary: Upload phiên bản mới (DOCX ≤ 10 MB) lên R2. 422
+        DOCUMENT_TEMPLATE_INVALID khi lỗi cú pháp hoặc có placeholder lạ;
+        warnings = placeholder nên có mà thiếu
+      tags: *a27
+  /contract-templates/placeholders:
+    get:
+      operationId: DocumentTemplatesController_placeholders
+      parameters:
+        - name: kind
+          required: true
+          in: query
+          schema:
+            type: string
+            enum:
+              - contract
+              - amendment
+              - acceptance
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a26
+      summary:
+        Danh sách placeholder dùng được cho một loại chứng từ (giá trị, vòng
+        lặp, điều kiện) kèm ví dụ (spec 13)
+      tags: *a27
+  /contract-templates/validate:
+    post:
+      operationId: DocumentTemplatesController_validate
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+                - kind
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  type: string
+                  enum:
+                    - contract
+                    - amendment
+                    - acceptance
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a26
+      summary:
+        "Kiểm tra file DOCX không lưu: lỗi cú pháp, placeholder lạ (unknown),
+        placeholder nên có mà thiếu (missingRecommended)"
+      tags: *a27
+  /contract-templates/install-defaults:
+    post:
+      operationId: DocumentTemplatesController_installDefaults
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a26
+      summary:
+        "Cài mẫu tạm của hệ thống (Q-R9) cho loại / mô hình chưa có template
+        nào: HĐ package_tier, per_topic, per_unit, phụ lục sửa đổi, BBNT"
+      tags: *a27
+  /contract-templates/{id}/content:
+    get:
+      operationId: DocumentTemplatesController_content
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a26
+      summary: Tải file DOCX của phiên bản template
+      tags: *a27
+  /contract-templates/{id}/activate:
+    post:
+      operationId: DocumentTemplatesController_activate
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a26
+      summary: Dùng phiên bản này khi phát hành (bỏ kích hoạt bản trước cùng loại)
+      tags: *a27
+  /settings/company:
+    get:
+      operationId: CompanySettingsController_get
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a28
+        - bearer: []
+      summary:
+        Thông tin Bên A (tên, MST, người đại diện, chức vụ, địa chỉ…) in trên
+        chứng từ; complete / missing (FR-D-05)
+      tags: &a29
+        - settings
+    put:
+      operationId: CompanySettingsController_update
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCompanySettingsDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a28
+      summary:
+        Sửa thông tin Bên A (trường gửi lên được ghi, null xoá). Chứng từ đã
+        phát hành giữ bản chụp cũ
+      tags: *a29
   /logs:
     get:
       operationId: LogsController_list
@@ -1612,9 +2587,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a22
+      security: &a30
         - bearer: []
-      tags: &a23
+      tags: &a31
         - logs
   /logs/upload-speed/filters:
     get:
@@ -1627,9 +2602,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
+      security: *a30
       summary: Projects and uploaders found in the upload speed log (admins only)
-      tags: *a23
+      tags: *a31
   /logs/upload-speed:
     get:
       operationId: LogsController_listUploadSpeed
@@ -1641,9 +2616,230 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a22
-      summary: Completed uploads with their transfer speed (admins only)
-      tags: *a23
+      security: *a30
+      summary:
+        Uploads with their transfer speed, failed and expired ones included
+        (admins only)
+      tags: *a31
+  /partners:
+    get:
+      operationId: PartnersController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: keyword
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - active
+              - inactive
+        - name: managerUserId
+          required: false
+          in: query
+          description: Người phụ trách (AG Go user id)
+          schema:
+            type: string
+        - name: profile
+          required: false
+          in: query
+          description: Kết quả lần kiểm tra hồ sơ gần nhất (không gọi AG Account)
+          schema:
+            type: string
+            enum:
+              - complete
+              - incomplete
+              - unchecked
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a32
+        - bearer: []
+      summary: Danh sách đối tác (không có thông tin cá nhân). Người không có
+        go.partner.read_all chỉ thấy đối tác mình phụ trách.
+      tags: &a33
+        - partners
+    post:
+      operationId: PartnersController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePartnerDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a32
+      summary: Thêm đối tác từ một user AG Go (FR-P-01)
+      tags: *a33
+  /partners/account-users:
+    get:
+      operationId: PartnersController_searchCandidates
+      parameters:
+        - name: keyword
+          required: false
+          in: query
+          description: Tìm theo tên hoặc email
+          schema:
+            example: nguyen
+            type: string
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: limit
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 50
+            default: 20
+            type: number
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a32
+      summary:
+        Tìm user AG Account thuộc ứng dụng AG Go để thêm làm đối tác (id, tên,
+        email, goUserId, partnerId nếu đã là đối tác)
+      tags: *a33
+  /partners/{id}:
+    get:
+      operationId: PartnersController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a32
+      summary:
+        "Đối tác (bản ghi AG Go, trạng thái hồ sơ lần kiểm gần nhất). Hồ sơ AG
+        Account: GET /partners/:id/profile"
+      tags: *a33
+    patch:
+      operationId: PartnersController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePartnerDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a32
+      summary: Sửa mã, người phụ trách, trạng thái, ghi chú
+      tags: *a33
+  /partners/{id}/profile:
+    get:
+      operationId: PartnersController_getProfile
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: reveal
+          required: false
+          in: query
+          description: pii = trả giá trị đầy đủ (cần go.partner.pii_read, ghi audit)
+          schema:
+            type: string
+            enum:
+              - pii
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a32
+      summary:
+        "Hồ sơ hợp đồng từ AG Account: đã che, hoặc đầy đủ với ?reveal=pii (cần
+        go.partner.pii_read). Mỗi lần xem ghi audit PARTNER_PROFILE_VIEWED."
+      tags: *a33
+    patch:
+      operationId: PartnersController_updateProfile
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePartnerProfileDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a32
+      summary:
+        "Sửa một phần hồ sơ ở AG Account (PATCH + If-Match = version). 409
+        CONTRACT_PROFILE_VERSION_CONFLICT khi hồ sơ đã đổi: tải lại."
+      tags: *a33
   /projects/{projectId}/media:
     get:
       operationId: MediaController_list
@@ -1660,9 +2856,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a24
+      security: &a34
         - bearer: []
-      tags: &a25
+      tags: &a35
         - project-media
     post:
       operationId: MediaController_attach
@@ -1685,8 +2881,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a34
+      tags: *a35
   /project-media/{id}:
     patch:
       operationId: MediaController_update
@@ -1709,8 +2905,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a34
+      tags: *a35
     delete:
       operationId: MediaController_remove
       parameters:
@@ -1726,8 +2922,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a34
+      tags: *a35
   /project-media/bulk-approve:
     post:
       operationId: MediaController_bulkApproveMedia
@@ -1745,8 +2941,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a34
+      tags: *a35
   /projects/bulk-approve:
     post:
       operationId: MediaController_bulkApproveProjects
@@ -1764,8 +2960,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a34
+      tags: *a35
   /project-media/{id}/evaluations:
     get:
       operationId: MediaController_listEvaluationHistory
@@ -1782,8 +2978,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a34
+      tags: *a35
   /projects/{projectId}/reorder-media:
     patch:
       operationId: MediaController_reorder
@@ -1806,8 +3002,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a34
+      tags: *a35
   /projects/{projectId}/thumbnail:
     patch:
       operationId: MediaController_setThumbnail
@@ -1830,8 +3026,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a24
-      tags: *a25
+      security: *a34
+      tags: *a35
   /assets/upload-session:
     post:
       operationId: AssetsController_createUploadSession
@@ -1849,9 +3045,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a26
+      security: &a36
         - bearer: []
-      tags: &a27
+      tags: &a37
         - assets
   /assets/{assetId}/upload-parts:
     post:
@@ -1875,9 +3071,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
+      security: *a36
       summary: Presigned URL để upload từng phần của phiên upload multipart
-      tags: *a27
+      tags: *a37
   /assets/{assetId}/complete:
     post:
       operationId: AssetsController_completeUpload
@@ -1900,8 +3096,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a36
+      tags: *a37
   /assets/{assetId}/abort:
     post:
       operationId: AssetsController_abortUpload
@@ -1924,8 +3120,35 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a36
+      tags: *a37
+  /assets/{assetId}/upload-failed:
+    post:
+      operationId: AssetsController_recordUploadFailure
+      parameters:
+        - name: assetId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AbortUploadDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a36
+      summary:
+        "Báo upload lỗi: upload lớn giữ lại các phần đã gửi để chọn lại file
+        thì upload tiếp; upload nhỏ bị hủy"
+      tags: *a37
   /assets/{assetId}/variants:
     get:
       operationId: AssetsController_listVariants
@@ -1942,8 +3165,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a36
+      tags: *a37
   /assets/{assetId}/original-url:
     get:
       operationId: AssetsController_originalUrl
@@ -1960,9 +3183,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
+      security: *a36
       summary: Presigned URL file gốc (không watermark) để đánh giá media
-      tags: *a27
+      tags: *a37
   /assets/{assetId}/renditions:
     get:
       operationId: AssetsController_listRenditions
@@ -1979,11 +3202,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
+      security: *a36
       summary:
         Các bản preview (độ phân giải, watermark, bitrate) người xem được chọn;
         bản không watermark chỉ cho người có quyền xem file gốc
-      tags: *a27
+      tags: *a37
   /assets/{assetId}/preview/{variantCode}:
     get:
       operationId: AssetsController_preview
@@ -2001,8 +3224,8 @@ paths:
       responses:
         "200":
           description: ""
-      security: *a26
-      tags: *a27
+      security: *a36
+      tags: *a37
   /assets/{assetId}/preview-url:
     get:
       operationId: AssetsController_previewUrl
@@ -2019,11 +3242,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
+      security: *a36
       summary:
         Tạo presigned URL để tải preview trực tiếp từ R2. variantCode=preview
         kèm width chọn kích thước phù hợp.
-      tags: *a27
+      tags: *a37
   /assets/{assetId}/retry:
     post:
       operationId: AssetsController_retry
@@ -2040,8 +3263,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a26
-      tags: *a27
+      security: *a36
+      tags: *a37
+  /settings/public:
+    get:
+      operationId: SettingsController_getPublic
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      tags: &a38
+        - settings
+  /settings:
+    get:
+      operationId: SettingsController_get
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      tags: *a38
+    patch:
+      operationId: SettingsController_update
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSettingsDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security:
+        - bearer: []
+      tags: *a38
   /render-profiles:
     get:
       operationId: RenderController_listProfiles
@@ -2053,9 +3322,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a28
+      security: &a39
         - bearer: []
-      tags: &a29
+      tags: &a40
         - render
   /render-profiles/{id}:
     patch:
@@ -2079,8 +3348,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-watermark/upload-session:
     post:
       operationId: RenderController_createWatermarkUploadSession
@@ -2098,8 +3367,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-watermark/logos/{assetId}/url:
     get:
       operationId: RenderController_getWatermarkLogoUrl
@@ -2116,8 +3385,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-watermark/assets/{assetId}/complete:
     post:
       operationId: RenderController_completeWatermarkUpload
@@ -2140,8 +3409,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-watermark/assets/{assetId}/abort:
     post:
       operationId: RenderController_abortWatermarkUpload
@@ -2164,8 +3433,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-batches:
     post:
       operationId: RenderController_createBatch
@@ -2183,8 +3452,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
     get:
       operationId: RenderController_listAllBatches
       parameters: []
@@ -2195,8 +3464,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /projects/{projectId}/render-batches:
     get:
       operationId: RenderController_listBatches
@@ -2213,8 +3482,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-batches/{id}/jobs:
     get:
       operationId: RenderController_listJobs
@@ -2231,8 +3500,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-jobs/auto:
     get:
       operationId: RenderController_listAutoJobs
@@ -2244,8 +3513,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-jobs/{id}/retry:
     post:
       operationId: RenderController_retryJob
@@ -2262,8 +3531,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-watermark/rerender:
     post:
       operationId: RenderController_rerenderWatermark
@@ -2281,8 +3550,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-batches/{id}:
     get:
       operationId: RenderController_getBatch
@@ -2299,8 +3568,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-batches/{id}/cancel:
     post:
       operationId: RenderController_cancelBatch
@@ -2317,8 +3586,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-batches/{id}/retry-failed:
     post:
       operationId: RenderController_retryFailedJobs
@@ -2335,8 +3604,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-batches/{id}/pause:
     post:
       operationId: RenderController_pauseBatch
@@ -2353,8 +3622,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /render-batches/{id}/resume:
     post:
       operationId: RenderController_resumeBatch
@@ -2371,8 +3640,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a28
-      tags: *a29
+      security: *a39
+      tags: *a40
   /downloads:
     post:
       operationId: DownloadsController_create
@@ -2390,9 +3659,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a30
+      security: &a41
         - bearer: []
-      tags: &a31
+      tags: &a42
         - downloads
   /downloads/{id}:
     get:
@@ -2410,8 +3679,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a41
+      tags: *a42
   /downloads/{id}/cancel:
     post:
       operationId: DownloadsController_cancel
@@ -2428,8 +3697,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a30
-      tags: *a31
+      security: *a41
+      tags: *a42
   /statistics/summary:
     get:
       operationId: StatisticsController_summary
@@ -2462,9 +3731,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a32
+      security: &a43
         - bearer: []
-      tags: &a33
+      tags: &a44
         - statistics
   /statistics/trend:
     get:
@@ -2498,8 +3767,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a43
+      tags: *a44
   /statistics/project-trend:
     get:
       operationId: StatisticsController_projectTrend
@@ -2532,8 +3801,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a43
+      tags: *a44
   /statistics/breakdown:
     get:
       operationId: StatisticsController_breakdown
@@ -2589,8 +3858,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a43
+      tags: *a44
   /statistics/progress:
     get:
       operationId: StatisticsController_progress
@@ -2609,8 +3878,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a43
+      tags: *a44
   /statistics/team:
     get:
       operationId: StatisticsController_team
@@ -2643,8 +3912,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a43
+      tags: *a44
   /statistics/studio-usage:
     get:
       operationId: StatisticsController_studioUsage
@@ -2677,8 +3946,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a43
+      tags: *a44
   /statistics/operations:
     get:
       operationId: StatisticsController_operations
@@ -2711,8 +3980,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a43
+      tags: *a44
   /statistics/activity:
     get:
       operationId: StatisticsController_activity
@@ -2731,8 +4000,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a32
-      tags: *a33
+      security: *a43
+      tags: *a44
   /google-drive/connection:
     get:
       operationId: GoogleDriveController_connection
@@ -2744,9 +4013,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a34
+      security: &a45
         - bearer: []
-      tags: &a35
+      tags: &a46
         - google-drive
     delete:
       operationId: GoogleDriveController_disconnect
@@ -2758,8 +4027,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/connection/start:
     post:
       operationId: GoogleDriveController_start
@@ -2781,8 +4050,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/connection/callback:
     get:
       operationId: GoogleDriveController_callback
@@ -2804,8 +4073,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/picker-token:
     get:
       operationId: GoogleDriveController_pickerToken
@@ -2817,8 +4086,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/sources/summary:
     post:
       operationId: GoogleDriveController_summarizeSources
@@ -2836,8 +4105,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/imports:
     post:
       operationId: GoogleDriveController_createImport
@@ -2855,8 +4124,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
     get:
       operationId: GoogleDriveController_listImports
       parameters:
@@ -2925,8 +4194,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/imports/{batchId}:
     get:
       operationId: GoogleDriveController_getImport
@@ -2943,8 +4212,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/imports/{batchId}/cancel:
     post:
       operationId: GoogleDriveController_cancel
@@ -2961,8 +4230,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/imports/{batchId}/pause:
     post:
       operationId: GoogleDriveController_pause
@@ -2979,8 +4248,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/imports/{batchId}/resume:
     post:
       operationId: GoogleDriveController_resume
@@ -2997,8 +4266,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/imports/{batchId}/retry:
     post:
       operationId: GoogleDriveController_retryImport
@@ -3015,8 +4284,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/imports/{batchId}/items:
     get:
       operationId: GoogleDriveController_items
@@ -3083,8 +4352,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
+      security: *a45
+      tags: *a46
   /google-drive/imports/{batchId}/items/{itemId}/retry:
     post:
       operationId: GoogleDriveController_retry
@@ -3106,54 +4375,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a34
-      tags: *a35
-  /settings/public:
-    get:
-      operationId: SettingsController_getPublic
-      parameters: []
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      tags: &a36
-        - settings
-  /settings:
-    get:
-      operationId: SettingsController_get
-      parameters: []
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security:
-        - bearer: []
-      tags: *a36
-    patch:
-      operationId: SettingsController_update
-      parameters: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateSettingsDto"
-      responses:
-        "200":
-          description: ""
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ApiResponse"
-      security:
-        - bearer: []
-      tags: *a36
+      security: *a45
+      tags: *a46
   /footage/folders:
     get:
       operationId: FootageController_getFolders
@@ -3166,11 +4389,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - &a37
+        - &a47
           bearer: []
         - service-key: []
       summary: List accessible folders with analysed video counts
-      tags: &a38
+      tags: &a48
         - footage
   /footage/catalog:
     post:
@@ -3190,10 +4413,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: Analysed videos of the given folders with their descriptions (AI input)
-      tags: *a38
+      tags: *a48
   /footage/assets/{assetId}/media:
     get:
       operationId: FootageController_getAssetMedia
@@ -3211,10 +4434,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: Preview URL of the whole video, keyframes and contact sheet
-      tags: *a38
+      tags: *a48
   /footage/assets/{assetId}:
     get:
       operationId: FootageController_getVideo
@@ -3232,10 +4455,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: One analysed video as the search lists it (links open it by id)
-      tags: *a38
+      tags: *a48
   /footage/assets/{assetId}/preview-url:
     get:
       operationId: FootageController_getPreviewUrl
@@ -3259,10 +4482,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: Presigned URL of one preview offered by the footage player
-      tags: *a38
+      tags: *a48
   /footage/assets/resolve:
     post:
       operationId: FootageController_resolveAssets
@@ -3281,10 +4504,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: Signed URLs of whole video files for rendering (respects decision 8)
-      tags: *a38
+      tags: *a48
   /footage/assets/prep:
     post:
       operationId: FootageController_readPreps
@@ -3303,12 +4526,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary:
         Prepared Studio inputs (shots, frames, sheets, transcript) or how far
         their prep is
-      tags: *a38
+      tags: *a48
   /footage/assets/prep/run:
     post:
       operationId: FootageController_runPreps
@@ -3327,12 +4550,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary:
         Run the prep of footage now (missing or failed), or raise one waiting
         in a backfill
-      tags: *a38
+      tags: *a48
   /footage/projects/access:
     post:
       operationId: FootageController_projectAccess
@@ -3351,12 +4574,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary:
         Whether the user sees each project and may download its originals (AG
         Studio adds those)
-      tags: *a38
+      tags: *a48
   /footage/studio/search:
     get:
       operationId: FootageController_studioSearch
@@ -3541,10 +4764,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: Footage search within the given projects (AG Studio, service key only)
-      tags: *a38
+      tags: *a48
   /footage/studio/facets:
     get:
       operationId: FootageController_studioFacets
@@ -3729,10 +4952,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: Facet counts within the given projects (AG Studio, service key only)
-      tags: *a38
+      tags: *a48
   /footage/studio/assets/resolve:
     post:
       operationId: FootageController_studioResolve
@@ -3751,12 +4974,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary:
         Signed URLs of videos of the given projects, originals included; others
         are missing (AG Studio)
-      tags: *a38
+      tags: *a48
   /footage/studio/assets/prep:
     post:
       operationId: FootageController_studioReadPreps
@@ -3775,10 +4998,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: Prepared Studio inputs of videos of the given projects (AG Studio)
-      tags: *a38
+      tags: *a48
   /footage/studio/assets/prep/run:
     post:
       operationId: FootageController_studioRunPreps
@@ -3797,10 +5020,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: Run the prep of videos of the given projects now (AG Studio)
-      tags: *a38
+      tags: *a48
   /footage/search:
     get:
       operationId: FootageController_search
@@ -3985,10 +5208,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: Full-text + trigram search across analysed videos
-      tags: *a38
+      tags: *a48
   /footage/facets:
     get:
       operationId: FootageController_getFacets
@@ -4173,10 +5396,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
       security:
-        - *a37
+        - *a47
         - service-key: []
       summary: Facet counts for search filters
-      tags: *a38
+      tags: *a48
   /usage/studio-events:
     post:
       operationId: StudioUsageController_record
@@ -4197,7 +5420,7 @@ paths:
       security:
         - service-key: []
       summary: Footage usage events from AG Studio (service key only)
-      tags: &a39
+      tags: &a49
         - usage
   /footage/assets/{assetId}/studio-usage:
     get:
@@ -4218,7 +5441,7 @@ paths:
       security:
         - bearer: []
       summary: How AG Studio used one footage, and its downloads
-      tags: *a39
+      tags: *a49
   /projects/{projectId}/studio-usage:
     get:
       operationId: StudioUsageController_projectUsage
@@ -4238,7 +5461,7 @@ paths:
       security:
         - bearer: []
       summary: How AG Studio used a project's footage, and their downloads
-      tags: *a39
+      tags: *a49
   /system/workers:
     get:
       operationId: WorkersController_list
@@ -4255,6 +5478,2032 @@ paths:
       summary: Worker processes on every host, with the commit they run (admins only)
       tags:
         - system
+  /rate-cards:
+    get:
+      operationId: RateCardsController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: code
+          required: false
+          in: query
+          schema:
+            example: CTV-2026
+            type: string
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - draft
+              - published
+              - archived
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a50
+        - bearer: []
+      summary: Các phiên bản bảng giá CTV (lọc mã, trạng thái), mới nhất trước
+      tags: &a51
+        - rate-cards
+    post:
+      operationId: RateCardsController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRateCardDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary: Tạo phiên bản nháp (phiên bản tự tăng theo mã)
+      tags: *a51
+  /rate-cards/effective:
+    get:
+      operationId: RateCardsController_effective
+      parameters:
+        - name: code
+          required: true
+          in: query
+          schema:
+            example: CTV-2026
+            type: string
+        - name: date
+          required: false
+          in: query
+          description: Mặc định hôm nay
+          schema:
+            example: 2026-07-20
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        Phiên bản đã phát hành của mã bảng giá hiệu lực tại một ngày (Q-R1);
+        404 RATE_CARD_NOT_IN_FORCE
+      tags: *a51
+  /rate-cards/import:
+    post:
+      operationId: RateCardsController_importXlsx
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+                - code
+                - effectiveFrom
+              properties:
+                file:
+                  type: string
+                  format: binary
+                code:
+                  type: string
+                  example: CTV-2026
+                effectiveFrom:
+                  type: string
+                  example: 2026-07-15
+                note:
+                  type: string
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        Nhập file Excel theo bố cục "Bảng lương CTV (chuẩn)" thành phiên bản
+        nháp mới (tất cả hoặc không; 400 RATE_CARD_FILE_INVALID kèm
+        details.errors)
+      tags: *a51
+  /rate-cards/{id}:
+    get:
+      operationId: RateCardsController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary: "Chi tiết phiên bản: ô giá (sản phẩm × cấp × Mức), quy tắc cấp"
+      tags: *a51
+    patch:
+      operationId: RateCardsController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateRateCardDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        Sửa bản nháp (items / levelRules thay toàn bộ); 409 RATE_CARD_LOCKED
+        khi đã phát hành
+      tags: *a51
+    delete:
+      operationId: RateCardsController_remove
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary: Xoá bản nháp
+      tags: *a51
+  /rate-cards/{id}/clone:
+    post:
+      operationId: RateCardsController_clone
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloneRateCardDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary: Tạo phiên bản mới (nháp) từ phiên bản này
+      tags: *a51
+  /rate-cards/{id}/publish:
+    post:
+      operationId: RateCardsController_publish
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublishRateCardDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary: Phát hành bản nháp; phiên bản trước kết thúc ngày hôm trước. 409
+        RATE_CARD_EFFECTIVE_FROM_INVALID nếu không sau phiên bản đã phát hành
+      tags: *a51
+  /rate-cards/{id}/archive:
+    post:
+      operationId: RateCardsController_archive
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary: Lưu trữ (không còn dùng để tính tiền)
+      tags: *a51
+  /rate-cards/{id}/export:
+    get:
+      operationId: RateCardsController_exportXlsx
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary: Xuất Excel theo bố cục "Bảng lương CTV (chuẩn)"
+      tags: *a51
+  /packages:
+    get:
+      operationId: PackagesController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: keyword
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: categoryId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - open
+              - submitted
+              - evaluated
+              - accepted
+              - cancelled
+        - name: mine
+          required: false
+          in: query
+          description: Chỉ gói của chính mình (CTV, "my-projects")
+          schema:
+            type: boolean
+        - name: readyForAcceptance
+          required: false
+          in: query
+          description: "Sẵn sàng lập BBNT: evaluated và chưa thuộc BBNT nào (FR-K-07)"
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a52
+        - bearer: []
+      summary: "Danh sách gói (FR-K-07): CTV thấy gói của mình, người phụ trách
+        (go.acceptance.prepare) gói của HĐ mình phụ trách, người nghiệm thu mọi
+        gói. Lọc HĐ, CTV, danh mục, trạng thái, mine, readyForAcceptance"
+      tags: &a53
+        - packages
+    post:
+      operationId: PackagesController_create
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePackageDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary:
+        "Tạo gói (FR-K-01): CTV tạo cho mình (contractId tuỳ chọn), người phụ
+        trách tạo hộ. Danh mục thuộc HĐ package_tier đang active và tính theo
+        Mức; mã gói tự sinh"
+      tags: *a53
+  /packages/{id}:
+    get:
+      operationId: PackagesController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary:
+        "Chi tiết gói kèm bảng tính tạm (FR-K-03): bối cảnh tính được / không
+        (lý do), source hợp lệ, tỷ lệ ≥ 20s, Mức hiện tại, thành tiền, còn thiếu
+        để lên Mức tiếp theo"
+      tags: *a53
+    patch:
+      operationId: PackagesController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePackageDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary: Đổi tên gói
+      tags: *a53
+  /packages/{id}/preview:
+    get:
+      operationId: PackagesController_preview
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary: Tính lại và lưu bảng tính tạm của gói
+      tags: *a53
+  /packages/{id}/projects/{projectId}:
+    post:
+      operationId: PackagesController_addProject
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary:
+        "Thêm dự án vào gói open (FR-K-02): cùng CTV, cùng HĐ, cùng danh mục,
+        chưa thuộc gói khác; dự án chưa gắn HĐ được gắn vào HĐ của gói"
+      tags: *a53
+    delete:
+      operationId: PackagesController_removeProject
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: projectId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary: Bớt dự án khỏi gói open
+      tags: *a53
+  /packages/{id}/submit:
+    post:
+      operationId: PackagesController_submit
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary:
+        'Gửi nghiệm thu (FR-K-04): 422 PACKAGE_BELOW_TIER_1 ("Gói chưa đạt Mức
+        1: thiếu N source") khi tính tạm chưa đạt Mức 1; khoá danh sách dự án'
+      tags: *a53
+  /packages/{id}/withdraw:
+    post:
+      operationId: PackagesController_withdraw
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary: Rút lại gói đã gửi (submitted → open)
+      tags: *a53
+  /packages/{id}/return:
+    post:
+      operationId: PackagesController_returnPackage
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReturnPackageDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary: Người nghiệm thu trả lại gói kèm lý do (→ open)
+      tags: *a53
+  /packages/{id}/reopen:
+    post:
+      operationId: PackagesController_reopen
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary: Mở lại gói đã nghiệm thu xong để bổ sung (evaluated → open, FR-K-08)
+      tags: *a53
+  /packages/{id}/cancel:
+    post:
+      operationId: PackagesController_cancel
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a52
+      summary: Huỷ gói open, trả các dự án ra ngoài
+      tags: *a53
+  /contracts/{id}/eligible-projects:
+    get:
+      operationId: AcceptancesController_eligible
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: periodEnd
+          required: true
+          in: query
+          description: Ngày cuối kỳ (giá và điều khoản theo ngày này)
+          schema:
+            example: 2026-07-31
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a54
+        - bearer: []
+      summary:
+        "Xem trước BBNT của HĐ cho kỳ kết thúc ngày periodEnd: dòng sẽ gom (gói
+        evaluated / dự án đã giao), dự án không tính kèm lý do, cảnh báo. Không
+        lưu"
+      tags: &a55
+        - acceptances
+  /contracts/{id}/acceptances:
+    post:
+      operationId: AcceptancesController_create
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAcceptanceDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary:
+        "Tạo BBNT nháp cho HĐ active và kỳ: tự gom (BR-20) và tính tiền theo mô
+        hình giá, thuế, đối trừ tạm ứng, bằng chữ (FR-A-01, FR-A-02, FR-A-05)"
+      tags: *a55
+  /acceptances:
+    get:
+      operationId: AcceptancesController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: keyword
+          required: false
+          in: query
+          schema:
+            maxLength: 200
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - draft
+              - submitted
+              - approved
+              - issued
+              - signed
+              - partially_paid
+              - paid
+              - cancelled
+        - name: managerUserId
+          required: false
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary:
+        "Danh sách BBNT (lọc HĐ, đối tác, trạng thái, người phụ trách). Không
+        có go.contract.read_all: chỉ HĐ mình phụ trách"
+      tags: *a55
+  /acceptances/{id}:
+    get:
+      operationId: AcceptancesController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary:
+        "Chi tiết BBNT: dòng (giá trị tính / điều chỉnh / lý do), dự án gom vào
+        và bị loại kèm lý do, tổng tiền, trần HĐ, cảnh báo, thao tác được phép"
+      tags: *a55
+    patch:
+      operationId: AcceptancesController_update
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAcceptanceDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary:
+        "Sửa BBNT nháp: kỳ, ngày lập, hình thức bàn giao, thuế (tỷ lệ / nhập
+        tay có lý do), đối trừ tạm ứng nhập tay, bỏ dự án / gói (FR-A-04). Đổi
+        kỳ hoặc danh sách bỏ thì tính lại"
+      tags: *a55
+  /acceptances/{id}/items/{itemId}:
+    patch:
+      operationId: AcceptancesController_adjustItem
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: itemId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdjustItemDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary:
+        "Điều chỉnh một dòng (khối lượng, đơn giá, tên): bắt buộc lý do khi
+        khác giá trị hệ thống tính (FR-A-03, BR-14); ghi audit chênh lệch"
+      tags: *a55
+  /acceptances/{id}/recalculate:
+    post:
+      operationId: AcceptancesController_recalculate
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary: Gom và tính lại từ dữ liệu mới nhất, giữ điều chỉnh của các dòng còn lại
+      tags: *a55
+  /acceptances/{id}/submit:
+    post:
+      operationId: AcceptancesController_submit
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary:
+        Gửi duyệt (draft → submitted); 422 ACCEPTANCE_EMPTY khi không có gì để
+        trả
+      tags: *a55
+  /acceptances/{id}/return:
+    post:
+      operationId: AcceptancesController_returnRecord
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptanceReasonDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary: Trả lại kèm lý do (submitted → draft)
+      tags: *a55
+  /acceptances/{id}/approve:
+    post:
+      operationId: AcceptancesController_approve
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveAcceptanceDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary:
+        Duyệt (submitted → approved). 409 ACCEPTANCE_CAP_EXCEEDED khi vượt
+        trần; 422 ACCEPTANCE_APPROVAL_NOTE_REQUIRED khi còn cảnh báo (80/20, tụt
+        Mức…) mà không ghi quyết định
+      tags: *a55
+  /acceptances/{id}/issue:
+    post:
+      operationId: AcceptancesController_issue
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary:
+        "Phát hành và khoá (approved → issued): cấp số phụ lục tiếp theo của
+        HĐ, chụp hồ sơ đối tác mã hoá (BR-02) và thông tin Bên A, gói →
+        accepted, worker-io sinh file DOCX/PDF (GET /acceptances/:id/documents).
+        Chặn khi HĐ không active, dòng không có giá, vượt trần (FR-A-07); 422
+        COMPANY_PROFILE_INCOMPLETE / DOCUMENT_TEMPLATE_MISSING /
+        DOCUMENT_DATA_MISSING (details.missing) trước khi sinh (FR-D-03)"
+      tags: *a55
+  /acceptances/{id}/sign:
+    post:
+      operationId: AcceptancesController_sign
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SignAcceptanceDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary:
+        "Ghi nhận đã ký (issued → signed), tính hạn thanh toán theo ngày làm
+        việc (BR-34). signedFileId: bản ký đã upload (POST
+        /acceptances/:id/signed-file)"
+      tags: *a55
+  /acceptances/{id}/cancel:
+    post:
+      operationId: AcceptancesController_cancel
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AcceptanceReasonDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a54
+      summary:
+        "Huỷ kèm lý do: nháp / chờ duyệt cần go.acceptance.prepare, đã duyệt /
+        đã phát hành cần go.acceptance.approve. Trả dự án và gói, số phụ lục
+        không dùng lại"
+      tags: *a55
+  /contracts/{id}/documents:
+    get:
+      operationId: ContractDocumentsController_contractDocuments
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a56
+        - bearer: []
+      summary:
+        "Chứng từ của HĐ, các phụ lục sửa đổi và BBNT: bản sinh (generated,
+        theo phiên bản, trạng thái DOCX / PDF) và bản ký (signed)"
+      tags: &a57
+        - contract-documents
+  /contracts/{id}/versions/{no}/content:
+    get:
+      operationId: ContractDocumentsController_contractVersion
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: no
+          required: true
+          in: path
+          schema:
+            type: number
+        - name: format
+          required: false
+          in: query
+          schema:
+            default: docx
+            type: string
+            enum:
+              - docx
+              - pdf
+        - name: download
+          required: false
+          in: query
+          description: "true: Content-Disposition attachment (tải về) thay vì inline (xem)"
+          schema:
+            default: false
+            type: boolean
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary: File HĐ phiên bản :no (inline, ?download=true để tải). 409
+        DOCUMENT_NOT_READY / DOCUMENT_PDF_NOT_READY. Ghi audit
+      tags: *a57
+  /contracts/{id}/preview:
+    post:
+      operationId: ContractDocumentsController_contractPreview
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: format
+          required: false
+          in: query
+          schema:
+            default: docx
+            type: string
+            enum:
+              - docx
+              - pdf
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary:
+        "Xem trước HĐ từ dữ liệu hiện tại với template đang dùng, không lưu.
+        Nháp: hồ sơ AG Account đọc trực tiếp (ghi audit như xem PII). Header
+        X-Document-Missing: placeholder còn trống. 409 DOCUMENT_PDF_DISABLED khi
+        chưa cấu hình Gotenberg, 503 DOCUMENT_PDF_FAILED"
+      tags: *a57
+  /contracts/{id}/signed-file:
+    post:
+      operationId: ContractDocumentsController_contractSigned
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: "Bản ký (scan / PDF ký): PDF, JPG, PNG hoặc DOCX, tối đa 20 MB"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary:
+        Upload bản ký của HĐ đã phát hành lên R2, gắn signedFileId của HĐ (dùng
+        khi kích hoạt)
+      tags: *a57
+  /contracts/{id}/amendments/{amendmentId}/documents:
+    get:
+      operationId: ContractDocumentsController_amendmentDocuments
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: amendmentId
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary: Chứng từ của một phụ lục sửa đổi (bản sinh và bản ký)
+      tags: *a57
+  /contracts/{id}/amendments/{amendmentId}/versions/{no}/content:
+    get:
+      operationId: ContractDocumentsController_amendmentVersion
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: amendmentId
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: no
+          required: true
+          in: path
+          schema:
+            type: number
+        - name: format
+          required: false
+          in: query
+          schema:
+            default: docx
+            type: string
+            enum:
+              - docx
+              - pdf
+        - name: download
+          required: false
+          in: query
+          description: "true: Content-Disposition attachment (tải về) thay vì inline (xem)"
+          schema:
+            default: false
+            type: boolean
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary: File phụ lục sửa đổi phiên bản :no (inline). Ghi audit
+      tags: *a57
+  /contracts/{id}/amendments/{amendmentId}/preview:
+    post:
+      operationId: ContractDocumentsController_amendmentPreview
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: amendmentId
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: format
+          required: false
+          in: query
+          schema:
+            default: docx
+            type: string
+            enum:
+              - docx
+              - pdf
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary: Xem trước phụ lục sửa đổi, không lưu (như xem trước HĐ)
+      tags: *a57
+  /contracts/{id}/amendments/{amendmentId}/signed-file:
+    post:
+      operationId: ContractDocumentsController_amendmentSigned
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: amendmentId
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: "Bản ký (scan / PDF ký): PDF, JPG, PNG hoặc DOCX, tối đa 20 MB"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary:
+        Upload bản ký của phụ lục đã phát hành, gắn signedFileId (dùng khi ghi
+        nhận đã ký)
+      tags: *a57
+  /acceptances/{id}/documents:
+    get:
+      operationId: ContractDocumentsController_acceptanceDocuments
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary: Chứng từ của BBNT (các phiên bản sinh và bản ký)
+      tags: *a57
+  /acceptances/{id}/versions/{no}/content:
+    get:
+      operationId: ContractDocumentsController_acceptanceVersion
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: no
+          required: true
+          in: path
+          schema:
+            type: number
+        - name: format
+          required: false
+          in: query
+          schema:
+            default: docx
+            type: string
+            enum:
+              - docx
+              - pdf
+        - name: download
+          required: false
+          in: query
+          description: "true: Content-Disposition attachment (tải về) thay vì inline (xem)"
+          schema:
+            default: false
+            type: boolean
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary: "File BBNT đã phát hành phiên bản :no, Content-Disposition inline
+        (backend đọc R2). PDF chưa có: 409 DOCUMENT_PDF_NOT_READY. Ghi audit"
+      tags: *a57
+  /acceptances/{id}/preview:
+    post:
+      operationId: ContractDocumentsController_acceptancePreview
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: format
+          required: false
+          in: query
+          schema:
+            default: docx
+            type: string
+            enum:
+              - docx
+              - pdf
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary:
+        Xem trước BBNT từ dữ liệu nháp ở server, không lưu (spec 13); mỗi lần
+        xem ghi audit như xem PII. Header X-Document-Missing; 409
+        DOCUMENT_PDF_DISABLED, 503 DOCUMENT_PDF_FAILED
+      tags: *a57
+  /acceptances/{id}/signed-file:
+    post:
+      operationId: ContractDocumentsController_acceptanceSigned
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: "Bản ký (scan / PDF ký): PDF, JPG, PNG hoặc DOCX, tối đa 20 MB"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary:
+        Upload bản ký của BBNT đã phát hành, gắn signedFileId (dùng khi ghi
+        nhận đã ký)
+      tags: *a57
+  /documents/{id}/content:
+    get:
+      operationId: ContractDocumentsController_documentContent
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+        - name: format
+          required: false
+          in: query
+          schema:
+            default: docx
+            type: string
+            enum:
+              - docx
+              - pdf
+        - name: download
+          required: false
+          in: query
+          description: "true: Content-Disposition attachment (tải về) thay vì inline (xem)"
+          schema:
+            default: false
+            type: boolean
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary:
+        "File của một chứng từ theo id (bản sinh: format=docx|pdf; bản ký: file
+        đã upload). Inline, ?download=true để tải. Ghi audit"
+      tags: *a57
+  /documents/{id}/regenerate:
+    post:
+      operationId: ContractDocumentsController_regenerate
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a56
+      summary:
+        "Tạo lại: bản sinh lỗi / chưa xong thì sinh lại DOCX (cùng snapshot,
+        cùng template), bản đã có thì tạo lại PDF. HĐ / phụ lục cần
+        go.contract.manage, BBNT cần go.acceptance.approve"
+      tags: *a57
+  /contracts/{id}/payments:
+    post:
+      operationId: PaymentsController_create
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePaymentDto"
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a58
+        - bearer: []
+      summary:
+        Ghi nhận chi tạm ứng (advance, HĐ active/suspended, không vượt tạm ứng
+        thoả thuận), chi trả BBNT đã ký (settlement + acceptanceId, một hoặc
+        nhiều lần; đủ thực lĩnh → paid, chưa đủ → partially_paid) hoặc đối tác
+        hoàn tạm ứng (refund, không vượt số dư). Tạm ứng/hoàn đổi thì BBNT nháp
+        của HĐ được tính lại. Ghi audit
+      tags: &a59
+        - payments
+  /contracts/{id}/ledger:
+    get:
+      operationId: PaymentsController_ledger
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary:
+        "Sổ công nợ HĐ (FR-$-04): đã nghiệm thu, thuế, đối trừ, thực lĩnh, đã
+        chi, tạm ứng đã chi / số dư, còn phải trả, quá hạn, % trần và cảnh báo
+        80%/100%, số phải hoàn khi HĐ đóng (FR-C-10); BBNT đã phát hành và các
+        khoản chi"
+      tags: *a59
+  /payments:
+    get:
+      operationId: PaymentsController_list
+      parameters:
+        - name: page
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            default: 1
+            type: number
+        - name: pageSize
+          required: false
+          in: query
+          schema:
+            minimum: 1
+            maximum: 100
+            default: 20
+            type: number
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: acceptanceId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: kind
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - advance
+              - settlement
+              - refund
+        - name: status
+          required: false
+          in: query
+          schema:
+            type: string
+            enum:
+              - recorded
+              - cancelled
+        - name: from
+          required: false
+          in: query
+          description: Ngày chi từ (gồm)
+          schema:
+            example: 2026-08-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Ngày chi đến (gồm)
+          schema:
+            example: 2026-08-31
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary:
+        "Danh sách khoản chi (lọc HĐ, đối tác, BBNT, loại, trạng thái, ngày
+        chi). Không có go.contract.read_all: chỉ HĐ mình phụ trách"
+      tags: *a59
+  /payments/overdue:
+    get:
+      operationId: PaymentsController_overdue
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: asOf
+          required: false
+          in: query
+          description: Ngày xét quá hạn, mặc định hôm nay
+          schema:
+            example: 2026-11-03
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary:
+        BBNT đã ký quá hạn thanh toán (hạn theo ngày làm việc, BR-34) còn phải
+        trả, kèm số ngày quá hạn (FR-$-03, FR-R-05)
+      tags: *a59
+  /payments/export:
+    get:
+      operationId: PaymentsController_exportPayouts
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: dueTo
+          required: false
+          in: query
+          description: Chỉ BBNT có hạn thanh toán đến ngày này (gồm)
+          schema:
+            example: 2026-11-30
+            type: string
+        - name: reveal
+          required: false
+          in: query
+          description:
+            "true: số tài khoản, MST đầy đủ (cần go.partner.pii_read, ghi
+            audit); mặc định che như màn hình"
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary:
+        "Xuất Excel danh sách chi trả cho kế toán (FR-$-05): BBNT đã ký còn
+        phải trả, đối tác, MST, số tài khoản, ngân hàng (từ hồ sơ chụp khi phát
+        hành), gộp / thuế / đối trừ / thực lĩnh / đã chi / còn lại / hạn. MST và
+        STK bị che trừ khi reveal=true (cần go.partner.pii_read). Ghi audit"
+      tags: *a59
+  /payments/{id}:
+    get:
+      operationId: PaymentsController_get
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary: Chi tiết một khoản chi
+      tags: *a59
+  /payments/{id}/cancel:
+    post:
+      operationId: PaymentsController_cancel
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelPaymentDto"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary: Huỷ khoản chi kèm lý do (không xoá). Chi trả BBNT huỷ → BBNT về
+        partially_paid / signed; không huỷ được tạm ứng đã đối trừ ở BBNT đã
+        phát hành (409 PAYMENT_ADVANCE_ALREADY_OFFSET). Ghi audit
+      tags: *a59
+  /payments/{id}/proof:
+    post:
+      operationId: PaymentsController_uploadProof
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: "Chứng từ chuyển khoản: PDF, JPG hoặc PNG, tối đa 10 MB"
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary: Upload chứng từ chuyển khoản (lưu R2, thay bản trước nếu có). Ghi audit
+      tags: *a59
+    get:
+      operationId: PaymentsController_proof
+      parameters:
+        - name: id
+          required: true
+          in: path
+          schema:
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a58
+      summary: Xem chứng từ chuyển khoản (inline, đọc từ R2 qua API). 404
+        PAYMENT_PROOF_MISSING. Ghi audit
+      tags: *a59
+  /payment-reports/payables:
+    get:
+      operationId: PaymentReportsController_payables
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: managerUserId
+          required: false
+          in: query
+          description: Người phụ trách HĐ
+          schema:
+            type: string
+        - name: from
+          required: false
+          in: query
+          description: Từ ngày (gồm)
+          schema:
+            example: 2026-01-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Đến ngày (gồm)
+          schema:
+            example: 2026-12-31
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a60
+        - bearer: []
+      summary:
+        "Công nợ hiện tại theo HĐ và theo đối tác (sổ công nợ của nhiều HĐ):
+        nghiệm thu, thuế, thực lĩnh, đã chi, tạm ứng, số dư tạm ứng, còn phải
+        trả, quá hạn, % trần; capAlerts: HĐ đạt 80%/100% trần (FR-C-09,
+        FR-R-05). from/to không áp dụng"
+      tags: &a61
+        - payment-reports
+  /payment-reports/payments:
+    get:
+      operationId: PaymentReportsController_payments
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: managerUserId
+          required: false
+          in: query
+          description: Người phụ trách HĐ
+          schema:
+            type: string
+        - name: from
+          required: false
+          in: query
+          description: Từ ngày (gồm)
+          schema:
+            example: 2026-01-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Đến ngày (gồm)
+          schema:
+            example: 2026-12-31
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a60
+      summary:
+        "Thanh toán theo kỳ (ngày chi trong from–to): tổng theo tháng và loại
+        (tạm ứng, thanh toán BBNT, hoàn tạm ứng, chi ròng) và danh sách khoản
+        chi (FR-R-01)"
+      tags: *a61
+  /payment-reports/acceptances:
+    get:
+      operationId: PaymentReportsController_acceptances
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: managerUserId
+          required: false
+          in: query
+          description: Người phụ trách HĐ
+          schema:
+            type: string
+        - name: from
+          required: false
+          in: query
+          description: Từ ngày (gồm)
+          schema:
+            example: 2026-01-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Đến ngày (gồm)
+          schema:
+            example: 2026-12-31
+            type: string
+        - name: status
+          required: false
+          in: query
+          description: Chỉ liệt kê BBNT ở trạng thái này
+          schema:
+            type: string
+            enum:
+              - draft
+              - submitted
+              - approved
+              - issued
+              - signed
+              - partially_paid
+              - paid
+              - cancelled
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a60
+      summary:
+        "BBNT theo trạng thái (ngày lập trong from–to): số lượng, gộp, thuế,
+        thực lĩnh, đã chi, còn phải trả theo trạng thái và danh sách (lọc
+        status)"
+      tags: *a61
+  /payment-reports/tax:
+    get:
+      operationId: PaymentReportsController_tax
+      parameters:
+        - name: year
+          required: true
+          in: query
+          description: Năm (theo ngày lập BBNT), FR-R-04
+          schema:
+            example: 2026
+            type: number
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a60
+      summary:
+        Thuế TNCN đã khấu trừ theo đối tác trong năm (BBNT đã phát hành, theo
+        ngày lập), hỗ trợ quyết toán (FR-R-04)
+      tags: *a61
+  /payment-reports/export:
+    get:
+      operationId: PaymentReportsController_export
+      parameters:
+        - name: partnerId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: contractId
+          required: false
+          in: query
+          schema:
+            format: uuid
+            type: string
+        - name: managerUserId
+          required: false
+          in: query
+          description: Người phụ trách HĐ
+          schema:
+            type: string
+        - name: from
+          required: false
+          in: query
+          description: Từ ngày (gồm)
+          schema:
+            example: 2026-01-01
+            type: string
+        - name: to
+          required: false
+          in: query
+          description: Đến ngày (gồm)
+          schema:
+            example: 2026-12-31
+            type: string
+        - name: status
+          required: false
+          in: query
+          description: Chỉ liệt kê BBNT ở trạng thái này
+          schema:
+            type: string
+            enum:
+              - draft
+              - submitted
+              - approved
+              - issued
+              - signed
+              - partially_paid
+              - paid
+              - cancelled
+        - name: report
+          required: true
+          in: query
+          schema:
+            type: string
+            enum:
+              - payables
+              - payments
+              - acceptances
+              - tax
+        - name: year
+          required: false
+          in: query
+          description: Bắt buộc với report=tax
+          schema:
+            example: 2026
+            type: number
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a60
+      summary:
+        "Xuất Excel một báo cáo: report=payables (2 sheet: theo HĐ, theo đối
+        tác) | payments (theo tháng, chi tiết) | acceptances (theo trạng thái,
+        danh sách) | tax (cần year). Ghi audit"
+      tags: *a61
 info:
   title: AG Go API
   description: AG Go backend API
@@ -4262,7 +7511,7 @@ info:
   contact: {}
 tags: []
 servers:
-  - url: http://localhost:3738/api
+  - url: http://localhost:3000/api
 components:
   securitySchemes:
     bearer:
@@ -4313,7 +7562,7 @@ components:
             format: uuid
         accessLevel:
           type: string
-          enum: &a40
+          enum: &a62
             - viewer
             - editor
             - manager
@@ -4329,7 +7578,7 @@ components:
       properties:
         accessLevel:
           type: string
-          enum: *a40
+          enum: *a62
         inheritChildren:
           type: boolean
     PreviewOriginalAccessBundleDto:
@@ -4501,6 +7750,450 @@ components:
           description: Only count the footage that would be queued
       required:
         - mode
+    UpdateProjectContractDto:
+      type: object
+      properties:
+        contractId:
+          type: object
+          format: uuid
+          nullable: true
+          description:
+            HĐ active của đúng đối tác sở hữu project (FR-C-08); null = bỏ gắn;
+            bỏ trống = giữ nguyên
+        deliveredAt:
+          type: string
+          example: 2026-09-14T10:00:00+07:00
+          description:
+            Sửa thời điểm giao (mặc định là lần đầu project chuyển "pending");
+            cần go.contract.manage
+        acceptedOutside:
+          type: boolean
+          description:
+            'Đánh dấu / bỏ đánh dấu "đã nghiệm thu ngoài hệ thống" (mục 15.3):
+            không kiểm tra, không tính lại; cần go.contract.manage'
+        acceptedOutsideNote:
+          type: object
+          nullable: true
+          description: Ghi chú, vd. số BBNT giấy
+    CreateContractDto:
+      type: object
+      properties:
+        contractType:
+          type: string
+          enum: &a63
+            - content_production
+          default: content_production
+        contractNumber:
+          type: string
+          description:
+            Bỏ trống = tự sinh DDMMYY/HĐSXND/AG-<mã> (BR-05); sửa được khi còn
+            nháp
+          example: 010826/HĐSXND/AG-NHH
+        signedDate:
+          type: object
+          example: 2026-08-01
+          description: Ngày ký (bắt buộc khi kích hoạt)
+        endDate:
+          type: object
+          example: 2026-08-01
+          nullable: true
+        capAmount:
+          type: object
+          description: Trần giá trị HĐ (đồng); null = không trần
+          nullable: true
+        advanceAmount:
+          type: number
+          default: 0
+        advanceDueBusinessDays:
+          type: object
+          description: Hạn tạm ứng (ngày làm việc), bắt buộc khi có tạm ứng
+        advanceOffsetRule:
+          type: string
+          enum: &a64
+            - full_first
+            - proportional
+          default: full_first
+        deliveryRule:
+          type: object
+          description:
+            '{ "type": "monthly_before_day", "day": 15 } hoặc { "type":
+            "flexible" }'
+          additionalProperties: true
+          nullable: true
+        techSpec:
+          type: object
+          description: Tech spec (đặc tả 8.1); bỏ trống khi tạo = preset techSpecPreset
+          additionalProperties: true
+        techSpecPreset:
+          type: string
+          enum: &a65
+            - footage_4k60
+            - topic_video
+            - shot_4k
+          default: footage_4k60
+        penaltyPercent:
+          type: number
+          default: 8
+        originalityMinPercent:
+          type: object
+          nullable: true
+          example: 70
+        similarityMaxPercent:
+          type: object
+          nullable: true
+          default: 30
+        nonCompeteMonths:
+          type: object
+          nullable: true
+          default: 24
+        templateVersionId:
+          type: object
+          format: uuid
+          nullable: true
+        managerUserId:
+          type: string
+          description: Người phụ trách; mặc định của đối tác
+        note:
+          type: object
+          nullable: true
+        partnerId:
+          type: string
+          format: uuid
+        startDate:
+          type: string
+          example: 2026-08-01
+        pricingModel:
+          type: string
+          enum: &a66
+            - per_topic
+            - per_unit
+            - package_tier
+        pricingConfig:
+          type: object
+          description:
+            "Cấu hình giá theo mô hình (đặc tả 7.2): per_topic / per_unit /
+            package_tier"
+          additionalProperties: true
+        acceptanceCycle:
+          type: string
+          enum: &a67
+            - on_demand
+            - weekly
+            - monthly
+        paymentTermBusinessDays:
+          type: number
+          example: 10
+          description: Hạn thanh toán (ngày làm việc)
+      required:
+        - partnerId
+        - startDate
+        - pricingModel
+        - pricingConfig
+        - acceptanceCycle
+        - paymentTermBusinessDays
+    UpdateContractDto:
+      type: object
+      properties:
+        contractType:
+          type: string
+          enum: *a63
+          default: content_production
+        contractNumber:
+          type: string
+          description:
+            Bỏ trống = tự sinh DDMMYY/HĐSXND/AG-<mã> (BR-05); sửa được khi còn
+            nháp
+          example: 010826/HĐSXND/AG-NHH
+        signedDate:
+          type: object
+          example: 2026-08-01
+          description: Ngày ký (bắt buộc khi kích hoạt)
+        endDate:
+          type: object
+          example: 2026-08-01
+          nullable: true
+        capAmount:
+          type: object
+          description: Trần giá trị HĐ (đồng); null = không trần
+          nullable: true
+        advanceAmount:
+          type: number
+          default: 0
+        advanceDueBusinessDays:
+          type: object
+          description: Hạn tạm ứng (ngày làm việc), bắt buộc khi có tạm ứng
+        advanceOffsetRule:
+          type: string
+          enum: *a64
+          default: full_first
+        deliveryRule:
+          type: object
+          description:
+            '{ "type": "monthly_before_day", "day": 15 } hoặc { "type":
+            "flexible" }'
+          additionalProperties: true
+          nullable: true
+        techSpec:
+          type: object
+          description: Tech spec (đặc tả 8.1); bỏ trống khi tạo = preset techSpecPreset
+          additionalProperties: true
+        techSpecPreset:
+          type: string
+          enum: *a65
+          default: footage_4k60
+        penaltyPercent:
+          type: number
+          default: 8
+        originalityMinPercent:
+          type: object
+          nullable: true
+          example: 70
+        similarityMaxPercent:
+          type: object
+          nullable: true
+          default: 30
+        nonCompeteMonths:
+          type: object
+          nullable: true
+          default: 24
+        templateVersionId:
+          type: object
+          format: uuid
+          nullable: true
+        managerUserId:
+          type: string
+          description: Người phụ trách; mặc định của đối tác
+        note:
+          type: object
+          nullable: true
+        startDate:
+          type: string
+          example: 2026-08-01
+        pricingModel:
+          type: string
+          enum: *a66
+        pricingConfig:
+          type: object
+          additionalProperties: true
+        acceptanceCycle:
+          type: string
+          enum: *a67
+        paymentTermBusinessDays:
+          type: number
+          example: 10
+        regenerateNumber:
+          type: boolean
+          description:
+            Sinh lại số HĐ theo ngày ký / ngày bắt đầu mới (khi không gửi
+            contractNumber)
+    ActivateContractDto:
+      type: object
+      properties:
+        signedDate:
+          type: string
+          example: 2026-08-01
+          description: Ngày ký; bắt buộc nếu HĐ chưa có
+        signedFileId:
+          type: string
+          format: uuid
+          description: Bản ký đã upload
+        skipSignedFileReason:
+          type: string
+          description: "Quản trị kích hoạt khi chưa có bản ký: bắt buộc nêu lý do (FR-C-06)"
+    ContractReasonDto:
+      type: object
+      properties:
+        reason:
+          type: string
+    TerminateContractDto:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Lý do chấm dứt / thanh lý (FR-C-10)
+      required:
+        - reason
+    AmendmentChangesDto:
+      type: object
+      properties:
+        pricingConfig:
+          type: object
+          additionalProperties: true
+        capAmount:
+          type: object
+          nullable: true
+        techSpec:
+          type: object
+          additionalProperties: true
+        endDate:
+          type: object
+          nullable: true
+        paymentTermBusinessDays:
+          type: number
+        penaltyPercent:
+          type: number
+    CreateAmendmentDto:
+      type: object
+      properties:
+        effectiveDate:
+          type: string
+          example: 2026-10-01
+        changes:
+          $ref: "#/components/schemas/AmendmentChangesDto"
+        reason:
+          type: string
+      required:
+        - effectiveDate
+        - changes
+    UpdateAmendmentDto:
+      type: object
+      properties:
+        effectiveDate:
+          type: string
+          example: 2026-10-01
+        changes:
+          $ref: "#/components/schemas/AmendmentChangesDto"
+        reason:
+          type: string
+    SignAmendmentDto:
+      type: object
+      properties:
+        signedFileId:
+          type: string
+          format: uuid
+    UpdateCompanySettingsDto:
+      type: object
+      properties:
+        name:
+          type: object
+          example: CÔNG TY CỔ PHẦN ANT GROUP
+        taxCode:
+          type: object
+          example: "0100000000"
+          description: Mã số thuế
+        representative:
+          type: object
+          example: Ông Nguyễn Văn A
+          description: Người đại diện
+        title:
+          type: object
+          example: Giám đốc
+          description: Chức vụ
+        address:
+          type: object
+          example: Số 1 Phố Mẫu, Hà Nội
+        phone:
+          type: object
+        email:
+          type: object
+        bankAccountNumber:
+          type: object
+        bankName:
+          type: object
+    CreatePartnerDto:
+      type: object
+      properties:
+        goUserId:
+          type: string
+          description: AG Go user id của đối tác (sub đã bỏ `auth0|`, như
+            projects.owner_user_id). AG Go tự lấy id AG Account qua by-sub.
+        accountUserId:
+          type: string
+          description:
+            Id AG Account đã chọn ở danh sách ứng viên; gửi kèm để kiểm tra
+            khớp với goUserId (lệch → 400)
+        code:
+          type: string
+          description: Mã đối tác dùng trong số HĐ; bỏ trống = chữ cái đầu họ tên (BR-06)
+          example: NHH
+        managerUserId:
+          type: string
+          description: Người phụ trách; mặc định là người tạo
+        note:
+          type: string
+      required:
+        - goUserId
+    UpdatePartnerDto:
+      type: object
+      properties:
+        code:
+          type: string
+          example: NHH
+        managerUserId:
+          type: string
+        status:
+          type: string
+          enum:
+            - active
+            - inactive
+        note:
+          type: object
+          nullable: true
+    UpdatePartnerProfileDto:
+      type: object
+      properties:
+        version:
+          type: string
+          description:
+            "`version` từ GET /partners/:id/profile, gửi làm If-Match (lệch →
+            409)"
+        citizenIdNumber:
+          type: object
+          nullable: true
+          description: CCCD 12 số (CMND 9 số vẫn nhận)
+        idIssuedDate:
+          type: object
+          nullable: true
+          example: 2021-05-01
+        idIssuedPlace:
+          type: object
+          nullable: true
+        taxNumber:
+          type: object
+          nullable: true
+          description: MST cá nhân 10/12/13 số
+        phoneNumber:
+          type: object
+          nullable: true
+          example: "0912345678"
+        birthday:
+          type: object
+          nullable: true
+          example: 1990-01-31
+        address:
+          type: object
+          nullable: true
+        permanentAddress:
+          type: object
+          nullable: true
+        passportNumber:
+          type: object
+          nullable: true
+        bankAccountName:
+          type: object
+          nullable: true
+        bankAccountNumber:
+          type: object
+          nullable: true
+          description: Chỉ gồm chữ số, 6–19 ký tự
+        bankCode:
+          type: object
+          nullable: true
+          description: Mã BIN NAPAS 6 số
+          example: "970436"
+        bankName:
+          type: object
+          nullable: true
+          example: Vietcombank
+        taxMode:
+          type: string
+          nullable: true
+          enum:
+            - WITHHOLD_10
+            - SELF_DECLARE
+            - BUSINESS_HOUSEHOLD
+      required:
+        - version
     CreateProjectMediaDto:
       type: object
       properties:
@@ -4641,6 +8334,12 @@ components:
           description:
             Groups files uploaded together so the project audit log shows one
             entry per batch. Without it the file is logged on its own.
+        fileLastModified:
+          type: number
+          description:
+            The file’s last-modified time (File.lastModified, ms). With the
+            name and size it tells the same file chosen again, so an unfinished
+            large upload of it carries on instead of starting over.
       required:
         - assetType
         - originalFilename
@@ -4683,6 +8382,11 @@ components:
           type: number
         parallelParts:
           type: number
+        resumedBytes:
+          type: number
+          description:
+            Bytes already in storage from an earlier attempt, so not sent this
+            time
         retries:
           type: number
           description: Failed part attempts that were retried
@@ -4725,14 +8429,75 @@ components:
           $ref: "#/components/schemas/UploadClientMetricsDto"
       required:
         - uploadSessionId
+    UploadAttemptErrorDto:
+      type: object
+      properties:
+        atMs:
+          type: number
+          description: When it failed, in ms since the transfer started
+        partNumber:
+          type: number
+        httpStatus:
+          type: number
+          description: HTTP status; 0 when no response came back
+        message:
+          type: string
+      required:
+        - atMs
+        - message
+    UploadFailureDto:
+      type: object
+      properties:
+        stage:
+          type: string
+          enum:
+            - part-urls
+            - transfer
+            - complete
+        message:
+          type: string
+        httpStatus:
+          type: number
+          description: HTTP status of the final error; 0 when no response came back
+        partNumber:
+          type: number
+          description: Part that failed for good (multipart only)
+        bytesSent:
+          type: number
+          description: Bytes sent before the failure
+        partsDone:
+          type: number
+          description: Parts fully sent before the failure (multipart only)
+        elapsedMs:
+          type: number
+          description: Time from the start of the transfer to the failure, in ms
+        errors:
+          description: The last failed requests, retried ones included (at most 10)
+          type: array
+          items:
+            $ref: "#/components/schemas/UploadAttemptErrorDto"
+      required:
+        - stage
+        - message
     AbortUploadDto:
       type: object
       properties:
         uploadSessionId:
           type: string
           format: uuid
+        failure:
+          description: Set when the upload failed
+          allOf:
+            - $ref: "#/components/schemas/UploadFailureDto"
+        metrics:
+          description: Timings up to the failure, measured in the browser
+          allOf:
+            - $ref: "#/components/schemas/UploadClientMetricsDto"
       required:
         - uploadSessionId
+    UpdateSettingsDto:
+      type: object
+      properties: {}
     UpdateRenderProfileDto:
       type: object
       properties: {}
@@ -4757,6 +8522,12 @@ components:
           description:
             Groups files uploaded together so the project audit log shows one
             entry per batch. Without it the file is logged on its own.
+        fileLastModified:
+          type: number
+          description:
+            The file’s last-modified time (File.lastModified, ms). With the
+            name and size it tells the same file chosen again, so an unfinished
+            large upload of it carries on instead of starting over.
         mimeType:
           type: string
           enum:
@@ -4836,9 +8607,6 @@ components:
           default: reuse_existing
       required:
         - projectId
-    UpdateSettingsDto:
-      type: object
-      properties: {}
     CatalogFiltersDto:
       type: object
       properties:
@@ -4910,7 +8678,7 @@ components:
             type: string
         purpose:
           type: string
-          enum: &a41
+          enum: &a68
             - preview
             - final
         prefer:
@@ -4948,7 +8716,7 @@ components:
             type: string
         purpose:
           type: string
-          enum: *a41
+          enum: *a68
         prefer:
           $ref: "#/components/schemas/ResolvePreferDto"
         projectIds:
@@ -5036,6 +8804,369 @@ components:
             $ref: "#/components/schemas/StudioUsageEventDto"
       required:
         - events
+    DurationRuleDto:
+      type: object
+      properties:
+        minSeconds:
+          type: number
+          example: 10
+          description: File ngắn hơn không là source
+        preferredSeconds:
+          type: number
+          example: 20
+        preferredRatio:
+          type: number
+          example: 0.8
+      required:
+        - minSeconds
+        - preferredSeconds
+        - preferredRatio
+    RateCardItemDto:
+      type: object
+      properties:
+        categoryId:
+          type: string
+          format: uuid
+          description: Sản phẩm = danh mục
+        level:
+          type: string
+          enum:
+            - LV1
+            - LV2
+            - LV3
+            - ALL
+        pricingType:
+          type: string
+          enum:
+            - tier
+            - per_source
+        tier:
+          type: object
+          nullable: true
+          example: 1
+        sourceMin:
+          type: object
+          nullable: true
+          example: 70
+        sourceMax:
+          type: object
+          nullable: true
+          example: 100
+        sceneMin:
+          type: object
+          nullable: true
+          example: 7
+        price:
+          type: number
+          example: 800000
+          description: Đồng
+        minSourceSeconds:
+          type: object
+          nullable: true
+          example: 300
+      required:
+        - categoryId
+        - level
+        - pricingType
+        - price
+    LevelRuleDto:
+      type: object
+      properties:
+        level:
+          type: string
+          enum:
+            - LV1
+            - LV2
+            - LV3
+        extraScenePrice:
+          type: number
+          example: 80000
+        extraSceneMinSources:
+          type: number
+          example: 8
+      required:
+        - level
+        - extraScenePrice
+        - extraSceneMinSources
+    CreateRateCardDto:
+      type: object
+      properties:
+        effectiveFrom:
+          type: string
+          example: 2026-07-15
+        note:
+          type: object
+          nullable: true
+        durationRule:
+          $ref: "#/components/schemas/DurationRuleDto"
+        items:
+          description: Thay toàn bộ ô giá
+          type: array
+          items:
+            $ref: "#/components/schemas/RateCardItemDto"
+        levelRules:
+          description: Thay toàn bộ quy tắc cấp
+          type: array
+          items:
+            $ref: "#/components/schemas/LevelRuleDto"
+        code:
+          type: string
+          example: CTV-2026
+          description: Phiên bản tự tăng theo mã
+      required:
+        - code
+    UpdateRateCardDto:
+      type: object
+      properties:
+        effectiveFrom:
+          type: string
+          example: 2026-07-15
+        note:
+          type: object
+          nullable: true
+        durationRule:
+          $ref: "#/components/schemas/DurationRuleDto"
+        items:
+          description: Thay toàn bộ ô giá
+          type: array
+          items:
+            $ref: "#/components/schemas/RateCardItemDto"
+        levelRules:
+          description: Thay toàn bộ quy tắc cấp
+          type: array
+          items:
+            $ref: "#/components/schemas/LevelRuleDto"
+    CloneRateCardDto:
+      type: object
+      properties:
+        effectiveFrom:
+          type: string
+          example: 2026-10-01
+          description: Mặc định bằng bản gốc
+        note:
+          type: string
+    PublishRateCardDto:
+      type: object
+      properties:
+        effectiveFrom:
+          type: string
+          example: 2026-07-15
+          description:
+            Đổi ngày hiệu lực khi phát hành; phiên bản trước kết thúc vào ngày
+            hôm trước
+    CreatePackageDto:
+      type: object
+      properties:
+        categoryId:
+          type: string
+          format: uuid
+          description: Sản phẩm (danh mục) thuộc category_ids của HĐ
+        contractId:
+          type: string
+          format: uuid
+          description:
+            HĐ package_tier đang active. CTV bỏ trống được khi chỉ có một HĐ
+            hiệu lực có danh mục này
+        name:
+          type: string
+          maxLength: 200
+          example: Khám phá Đà Lạt đợt 2
+      required:
+        - categoryId
+    UpdatePackageDto:
+      type: object
+      properties:
+        name:
+          type: object
+          maxLength: 200
+          nullable: true
+    ReturnPackageDto:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required:
+        - reason
+    CreateAcceptanceDto:
+      type: object
+      properties:
+        periodStart:
+          type: string
+          example: 2026-07-01
+        periodEnd:
+          type: string
+          example: 2026-07-31
+          description: Giá theo phiên bản bảng giá hiệu lực ngày này (Q-R1)
+        recordDate:
+          type: string
+          example: 2026-08-01
+          description: Ngày lập ghi trên biên bản
+        deliveryMethod:
+          type: string
+          enum: &a69
+            - ag_go
+            - hard_drive
+            - google_drive
+            - other
+          default: ag_go
+        deliveryNote:
+          type: string
+          maxLength: 2000
+        taxRate:
+          type: number
+          example: 10
+          description: Thuế TNCN (%), mặc định 10 (BR-30)
+      required:
+        - periodStart
+        - periodEnd
+    UpdateAcceptanceDto:
+      type: object
+      properties:
+        periodStart:
+          type: string
+          example: 2026-07-01
+        periodEnd:
+          type: string
+          example: 2026-07-31
+          description: Đổi thì tính lại
+        recordDate:
+          type: object
+          nullable: true
+        deliveryMethod:
+          type: string
+          enum: *a69
+        deliveryNote:
+          type: object
+          nullable: true
+          maxLength: 2000
+        taxRate:
+          type: number
+          example: 10
+        taxAmount:
+          type: object
+          nullable: true
+          description: Thuế nhập tay (đồng); null = tính theo tỷ lệ. Cần taxOverrideReason
+        taxOverrideReason:
+          type: string
+          maxLength: 2000
+        advanceOffsetAmount:
+          type: object
+          nullable: true
+          description:
+            Đối trừ tạm ứng nhập tay (đồng); null = tính theo BR-32. Cần
+            advanceOffsetReason
+        advanceOffsetReason:
+          type: string
+          maxLength: 2000
+        excludedProjectIds:
+          description: Dự án bỏ khỏi BBNT nháp (thay toàn bộ, FR-A-04); tính lại
+          type: array
+          items:
+            type: string
+        excludedPackageIds:
+          description: Gói bỏ khỏi BBNT nháp (thay toàn bộ); tính lại
+          type: array
+          items:
+            type: string
+    AdjustItemDto:
+      type: object
+      properties:
+        quantity:
+          type: number
+          example: 12
+          description: Khối lượng cuối (2 chữ số lẻ)
+        unitPrice:
+          type: number
+          example: 300000
+        productLabel:
+          type: string
+          maxLength: 200
+        reason:
+          type: string
+          maxLength: 2000
+          description: Bắt buộc khi khối lượng / đơn giá khác giá trị hệ thống tính (BR-14)
+    AcceptanceReasonDto:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required:
+        - reason
+    ApproveAcceptanceDto:
+      type: object
+      properties:
+        note:
+          type: string
+          maxLength: 2000
+          description:
+            "Bắt buộc khi BBNT còn cảnh báo (80/20, tụt Mức…): quyết định của
+            người duyệt (Q-R3)"
+    SignAcceptanceDto:
+      type: object
+      properties:
+        signedFileId:
+          type: string
+          format: uuid
+          description: Bản ký đã tải lên (chứng từ, PR sau)
+        signedDate:
+          type: string
+          example: 2026-08-05
+          description: Ngày ký, mặc định hôm nay; tính hạn thanh toán (BR-34)
+    CreatePaymentDto:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum:
+            - advance
+            - settlement
+            - refund
+          description:
+            "advance: chi tạm ứng (FR-$-01); settlement: chi trả BBNT đã ký
+            (cần acceptanceId, FR-$-02); refund: đối tác hoàn tạm ứng (FR-C-10)"
+        acceptanceId:
+          type: string
+          format: uuid
+          description: BBNT được chi trả (bắt buộc với settlement)
+        amount:
+          type: number
+          example: 50000000
+          description: Số tiền (đồng), > 0
+        paidDate:
+          type: string
+          example: 2026-08-05
+          description: Ngày chi / ngày nhận hoàn, không sau hôm nay
+        method:
+          type: string
+          enum:
+            - bank_transfer
+            - cash
+            - other
+          default: bank_transfer
+        reference:
+          type: string
+          maxLength: 200
+          description: Mã giao dịch ngân hàng
+        note:
+          type: string
+          maxLength: 2000
+      required:
+        - kind
+        - amount
+        - paidDate
+    CancelPaymentDto:
+      type: object
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 2000
+      required:
+        - reason
     ApiError:
       type: object
       required:

@@ -5,6 +5,7 @@ import type { OutboxEventEntity } from '../../database/entities/outbox-event.ent
 import type { AnalysisOutboxService } from '../../modules/analysis/analysis-outbox.service';
 import type { PrepPipelineService } from '../../modules/analysis/prep/prep-pipeline.service';
 import type { StorageAdapter } from '../../modules/assets/storage/storage-adapter';
+import type { ProjectContractsOutboxService } from '../../modules/project-contracts/project-contracts-outbox.service';
 import type { MediaQueueService } from './media-queue.service';
 import { OutboxDispatcherService } from './outbox-dispatcher.service';
 
@@ -18,6 +19,9 @@ jest.mock('../../modules/analysis/analysis-outbox.service', () => ({
 }));
 jest.mock('../../modules/analysis/prep/prep-pipeline.service', () => ({
   PrepPipelineService: class {},
+}));
+jest.mock('../../modules/project-contracts/project-contracts-outbox.service', () => ({
+  ProjectContractsOutboxService: class {},
 }));
 
 function purgeEvent(attemptCount: number): OutboxEventEntity {
@@ -429,6 +433,80 @@ describe('OutboxDispatcherService', () => {
         event.id,
         expect.objectContaining({ status: 'published' }),
       );
+    });
+  });
+  describe('contract checks', () => {
+    function event(eventType: string, payload: Record<string, unknown>): OutboxEventEntity {
+      return { ...purgeEvent(0), id: randomUUID(), eventType, aggregateType: 'x', payload };
+    }
+
+    function setupWithChecks(rows: OutboxEventEntity[], checks?: Record<string, jest.Mock>) {
+      const queryBuilder = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        setLock: jest.fn().mockReturnThis(),
+        setOnLocked: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue(rows),
+      };
+      const manager = {
+        createQueryBuilder: jest.fn(() => queryBuilder),
+        update: jest.fn().mockResolvedValue(undefined),
+      };
+      const update = jest.fn().mockResolvedValue(undefined);
+      const dataSource = {
+        transaction: jest.fn((work: (m: typeof manager) => unknown) => work(manager)),
+        getRepository: jest.fn(() => ({ update })),
+      } as unknown as DataSource;
+      const service = new OutboxDispatcherService(
+        dataSource,
+        { addProcessingJob: jest.fn() } as unknown as MediaQueueService,
+        {} as ConfigService,
+        { deletePrefix: jest.fn() } as unknown as StorageAdapter,
+        undefined,
+        undefined,
+        checks as unknown as ProjectContractsOutboxService | undefined,
+      );
+      return { service, update };
+    }
+
+    it('checks the linked projects of an asset again when its analysis completes', async () => {
+      const handleAnalysisCompleted = jest.fn().mockResolvedValue(undefined);
+      const completed = event('asset.analysis.completed', { analysisId: 'a1', assetId: 'asset-9' });
+      const { service, update } = setupWithChecks([completed], { handleAnalysisCompleted });
+
+      await expect(service.dispatchPending()).resolves.toBe(1);
+
+      expect(handleAnalysisCompleted).toHaveBeenCalledWith('asset-9');
+      expect(update).toHaveBeenCalledWith(
+        completed.id,
+        expect.objectContaining({ status: 'published' }),
+      );
+    });
+
+    it('retries a project check that failed', async () => {
+      const handleSpecChecksRequested = jest.fn().mockRejectedValue(new Error('db down'));
+      const requested = event('project.spec_checks.requested', { projectId: 'p-1' });
+      const { service, update } = setupWithChecks([requested], { handleSpecChecksRequested });
+
+      await expect(service.dispatchPending()).resolves.toBe(0);
+
+      expect(handleSpecChecksRequested).toHaveBeenCalledWith('p-1');
+      expect(update).toHaveBeenCalledWith(
+        requested.id,
+        expect.objectContaining({ status: 'failed', lastError: 'db down' }),
+      );
+    });
+
+    it('fails a check request without project id', async () => {
+      const handleSpecChecksRequested = jest.fn();
+      const requested = event('project.spec_checks.requested', {});
+      const { service } = setupWithChecks([requested], { handleSpecChecksRequested });
+
+      await expect(service.dispatchPending()).resolves.toBe(0);
+      expect(handleSpecChecksRequested).not.toHaveBeenCalled();
     });
   });
 });

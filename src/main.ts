@@ -8,7 +8,8 @@ import { AssetsService } from './modules/assets/assets.service';
 import { createOpenApiDocument } from './openapi';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  // Raw body kept for signed webhooks (AG Account), whose HMAC covers the exact bytes received.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
   const config = app.get(ConfigService);
   const prefix = config.getOrThrow<string>('API_PREFIX');
 
@@ -19,7 +20,8 @@ async function bootstrap(): Promise<void> {
       config.get<string>('CORS_EXTRA_ORIGINS'),
     ),
     credentials: true,
-    exposedHeaders: ['x-request-id'],
+    // x-document-missing: placeholders a document preview printed empty (contract documents).
+    exposedHeaders: ['x-request-id', 'content-disposition', 'x-document-missing'],
   });
   app.useGlobalPipes(
     new ValidationPipe({

@@ -10,6 +10,11 @@ import { PermissionsGuard } from './common/auth/permissions.guard';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { RequestLoggingInterceptor } from './common/request-logging.interceptor';
 import { DATABASE_CONNECT_TIMEOUT_MS, envValidationSchema } from './config/env.validation';
+import {
+  AcceptanceItemEntity,
+  AcceptanceItemSourceEntity,
+  AcceptanceRecordEntity,
+} from './database/entities/acceptance.entity';
 import { AccessGrantEntity } from './database/entities/access-grant.entity';
 import { AnalysisBatchEntity } from './database/entities/analysis-batch.entity';
 import { AnalysisFarmJobEntity } from './database/entities/analysis-farm-job.entity';
@@ -22,27 +27,40 @@ import { AssetUploadSessionEntity } from './database/entities/asset-upload-sessi
 import { AssetVariantEntity } from './database/entities/asset-variant.entity';
 import { AssetEntity } from './database/entities/asset.entity';
 import { CategoryEntity } from './database/entities/category.entity';
+import { ContractAmendmentEntity } from './database/entities/contract-amendment.entity';
+import { ContractEntity } from './database/entities/contract.entity';
 import { CountryEntity } from './database/entities/country.entity';
+import { DocumentTemplateEntity } from './database/entities/document-template.entity';
 import { DownloadJobItemEntity } from './database/entities/download-job-item.entity';
 import { DownloadJobEntity } from './database/entities/download-job.entity';
 import { DownloadLogEntity } from './database/entities/download-log.entity';
 import { FolderClosureEntity } from './database/entities/folder-closure.entity';
 import { FolderEntity } from './database/entities/folder.entity';
+import { GeneratedDocumentEntity } from './database/entities/generated-document.entity';
 import { GoogleDriveConnectionEntity } from './database/entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './database/entities/import-batch.entity';
 import { MediaRenderJobEntity } from './database/entities/media-render-job.entity';
+import { MediaSpecCheckEntity } from './database/entities/media-spec-check.entity';
 import {
   OriginalAccessBundleCategoryEntity,
   OriginalAccessBundleEntity,
   OriginalAccessBundleFolderEntity,
 } from './database/entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './database/entities/outbox-event.entity';
+import { PartnerEntity } from './database/entities/partner.entity';
+import { PaymentEntity } from './database/entities/payment.entity';
+import { ProductPackageEntity } from './database/entities/product-package.entity';
 import { ProjectAuditLogEntity } from './database/entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
 import { ProjectMediaEvaluationEntity } from './database/entities/project-media-evaluation.entity';
 import { ProjectMediaEntity } from './database/entities/project-media.entity';
 import { ProjectEntity } from './database/entities/project.entity';
 import { ProvinceEntity } from './database/entities/province.entity';
+import {
+  RateCardEntity,
+  RateCardItemEntity,
+  RateCardLevelRuleEntity,
+} from './database/entities/rate-card.entity';
 import { RenderBatchEntity } from './database/entities/render-batch.entity';
 import { RenderProfileEntity } from './database/entities/render-profile.entity';
 import { StudioUsageEventEntity } from './database/entities/studio-usage-event.entity';
@@ -51,20 +69,30 @@ import { SystemSettingEntity } from './database/entities/system-setting.entity';
 import { TagEntity } from './database/entities/tag.entity';
 import { HealthController } from './health/health.controller';
 import { QueueModule } from './infra/queue/queue.module';
+import { AcceptancesModule } from './modules/acceptances/acceptances.module';
+import { AccountWebhooksModule } from './modules/account-webhooks/account-webhooks.module';
 import { AccountModule } from './modules/account/account.module';
 import { AnalysisModule } from './modules/analysis/analysis.module';
 import { AssetsModule } from './modules/assets/assets.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { ContractDocumentsModule } from './modules/contract-documents/contract-documents.module';
+import { ContractsModule } from './modules/contracts/contracts.module';
 import { CountriesModule } from './modules/countries/countries.module';
+import { DocumentsModule } from './modules/documents/documents.module';
 import { DownloadsModule } from './modules/downloads/downloads.module';
 import { FoldersModule } from './modules/folders/folders.module';
 import { FootageModule } from './modules/footage/footage.module';
 import { GoogleDriveModule } from './modules/google-drive/google-drive.module';
 import { LogsModule } from './modules/logs/logs.module';
 import { MediaModule } from './modules/media/media.module';
+import { PackagesModule } from './modules/packages/packages.module';
+import { PartnersModule } from './modules/partners/partners.module';
+import { PaymentsModule } from './modules/payments/payments.module';
+import { ProjectContractsModule } from './modules/project-contracts/project-contracts.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { ProvincesModule } from './modules/provinces/provinces.module';
+import { RateCardsModule } from './modules/rate-cards/rate-cards.module';
 import { RenderModule } from './modules/render/render.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
@@ -129,6 +157,20 @@ import { WorkersModule } from './modules/workers/workers.module';
           AssetPrepBatchEntity,
           AssetPrepFarmJobEntity,
           StudioUsageEventEntity,
+          PartnerEntity,
+          ContractEntity,
+          ContractAmendmentEntity,
+          MediaSpecCheckEntity,
+          RateCardEntity,
+          RateCardItemEntity,
+          RateCardLevelRuleEntity,
+          ProductPackageEntity,
+          AcceptanceRecordEntity,
+          AcceptanceItemEntity,
+          AcceptanceItemSourceEntity,
+          DocumentTemplateEntity,
+          GeneratedDocumentEntity,
+          PaymentEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -155,6 +197,16 @@ import { WorkersModule } from './modules/workers/workers.module';
     FootageModule,
     UsageModule,
     WorkersModule,
+    PartnersModule,
+    ContractsModule,
+    ProjectContractsModule,
+    AccountWebhooksModule,
+    RateCardsModule,
+    PackagesModule,
+    AcceptancesModule,
+    DocumentsModule,
+    ContractDocumentsModule,
+    PaymentsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [
