@@ -20,6 +20,7 @@ import { AnalysisEnqueueService } from '../analysis/analysis-enqueue.service';
 import type { AuditService } from '../audit/audit.service';
 import { TECH_SPEC_PRESETS } from '../contracts/contract-terms';
 import { ContractsService } from '../contracts/contracts.service';
+import { documentsStub } from '../documents/testing/documents-stub';
 import type { FolderAccessService } from '../folders/folder-access.service';
 import type { SystemLogService } from '../logs/system-log.service';
 import { refreshProjectMediaSummary } from '../media/project-media-summary';
@@ -86,6 +87,7 @@ beforeAll(async () => {
     partners,
     {} as never,
     systemLog,
+    documentsStub(),
   );
   const config = {
     get: (name: string) => (name === 'ANALYSIS_AUTO_ENQUEUE' ? autoEnqueue : undefined),

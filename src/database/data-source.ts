@@ -22,11 +22,13 @@ import { CategoryEntity } from './entities/category.entity';
 import { ContractAmendmentEntity } from './entities/contract-amendment.entity';
 import { ContractEntity } from './entities/contract.entity';
 import { CountryEntity } from './entities/country.entity';
+import { DocumentTemplateEntity } from './entities/document-template.entity';
 import { DownloadJobItemEntity } from './entities/download-job-item.entity';
 import { DownloadJobEntity } from './entities/download-job.entity';
 import { DownloadLogEntity } from './entities/download-log.entity';
 import { FolderClosureEntity } from './entities/folder-closure.entity';
 import { FolderEntity } from './entities/folder.entity';
+import { GeneratedDocumentEntity } from './entities/generated-document.entity';
 import { GoogleDriveConnectionEntity } from './entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './entities/import-batch.entity';
 import { MediaRenderJobEntity } from './entities/media-render-job.entity';
@@ -109,6 +111,7 @@ import { ProjectContractChecks2200000000000 } from './migrations/2200000000000-p
 import { RateCards2210000000000 } from './migrations/2210000000000-rate-cards';
 import { ProductPackages2220000000000 } from './migrations/2220000000000-product-packages';
 import { Acceptances2230000000000 } from './migrations/2230000000000-acceptances';
+import { ContractDocuments2240000000000 } from './migrations/2240000000000-contract-documents';
 
 loadEnv();
 
@@ -176,6 +179,8 @@ export const AppDataSource = new DataSource({
     AcceptanceRecordEntity,
     AcceptanceItemEntity,
     AcceptanceItemSourceEntity,
+    DocumentTemplateEntity,
+    GeneratedDocumentEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -231,6 +236,7 @@ export const AppDataSource = new DataSource({
     RateCards2210000000000,
     ProductPackages2220000000000,
     Acceptances2230000000000,
+    ContractDocuments2240000000000,
   ],
   synchronize: false,
 });

@@ -32,9 +32,30 @@ export class ContractAmendmentEntity {
   @Column({ type: 'varchar', length: 20, default: 'draft' })
   status!: ContractAmendmentStatus;
 
-  /** Signed copy (→ generated_documents once contract documents exist). */
+  /** Signed copy uploaded (generated_documents, kind `signed`). */
   @Column({ name: 'signed_file_id', type: 'uuid', nullable: true })
   signedFileId!: string | null;
+
+  /** AG Account profile captured when issued (BR-02), AES-256-GCM; never returned. */
+  @Column({ name: 'partner_snapshot_enc', type: 'text', nullable: true, select: false })
+  partnerSnapshotEnc!: string | null;
+
+  @Column({ name: 'partner_snapshot_at', type: 'timestamptz', nullable: true })
+  partnerSnapshotAt!: Date | null;
+
+  /** Party A details captured when issued (FR-D-05). */
+  @Column({ name: 'company_snapshot', type: 'jsonb', nullable: true })
+  companySnapshot!: Record<string, unknown> | null;
+
+  /** Template version the amendment file was issued from (FR-D-01). */
+  @Column({ name: 'template_version_id', type: 'uuid', nullable: true })
+  templateVersionId!: string | null;
+
+  @Column({ name: 'issued_at', type: 'timestamptz', nullable: true })
+  issuedAt!: Date | null;
+
+  @Column({ name: 'issued_by', type: 'varchar', length: 128, nullable: true })
+  issuedBy!: string | null;
 
   @Column({ name: 'created_by', type: 'varchar', length: 128 })
   createdBy!: string;

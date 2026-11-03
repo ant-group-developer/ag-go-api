@@ -24,6 +24,7 @@ import { ContractAmendmentEntity } from '../../database/entities/contract-amendm
 import { ContractEntity, type PricingModel } from '../../database/entities/contract.entity';
 import { PartnerEntity } from '../../database/entities/partner.entity';
 import type { AccountContractProfile } from '../account/account.types';
+import { DocumentsService } from '../documents/documents.service';
 import { SystemLogService } from '../logs/system-log.service';
 import { hasPermission, type PartnerActor } from '../partners/partner-actor';
 import { PROFILE_FIELD_MAP } from '../partners/partner-profile';
@@ -195,6 +196,7 @@ export class ContractsService {
     private readonly partners: PartnersService,
     private readonly cipher: PiiCipherService,
     private readonly systemLog: SystemLogService,
+    private readonly documents: DocumentsService,
   ) {}
 
   techSpecPresets() {
@@ -414,7 +416,8 @@ export class ContractsService {
   /**
    * draft → issued. Reads the partner's AG Account profile, refuses when a field required to sign
    * is missing (422 PARTNER_PROFILE_INCOMPLETE with `details.missing`) or AG Account cannot be read
-   * (503), and stores it encrypted as the contract's partner snapshot (BR-02).
+   * (503), and stores it encrypted as the contract's partner snapshot (BR-02). The document is
+   * checked first (party A, template, no empty placeholder: FR-D-03) and rendered by worker-io.
    */
   async issue(id: string, actor: PartnerActor) {
     const contract = await this.findVisible(id, actor);
@@ -426,29 +429,38 @@ export class ContractsService {
         message: 'The partner is inactive',
       });
     }
-    const { profile, completeness } = await this.partners.readProfileForDocument(partner, actor);
-    if (!completeness.complete) {
-      throw new UnprocessableEntityException({
-        code: CONTRACT_ERROR_CODES.PROFILE_INCOMPLETE,
-        message: 'The partner profile misses fields required to sign a contract',
-        details: { missing: completeness.missing },
-      });
-    }
     const now = new Date();
-    const snapshot = this.cipher.encryptJson(buildPartnerSnapshot(partner, profile, now));
-    return this.transition(id, 'issue', actor, (locked) => {
+    const partnerSnapshot = await this.partnerSnapshotFor(partner, actor, now);
+    const prepared = await this.documents.prepareIssue(
+      'contract',
+      id,
+      partnerSnapshot,
+      contract.templateVersionId,
+    );
+    const snapshot = this.cipher.encryptJson(partnerSnapshot);
+    const issued = await this.transition(id, 'issue', actor, (locked) => {
       locked.partnerSnapshotEnc = snapshot;
       locked.partnerSnapshotAt = now;
+      locked.companySnapshot = prepared.companySnapshot;
+      locked.templateVersionId = prepared.templateId;
       locked.issuedAt = now;
       locked.issuedBy = actor.userId;
     });
+    await this.documents.requestGeneration({
+      ownerType: 'contract',
+      ownerId: id,
+      templateId: prepared.templateId,
+      actor,
+    });
+    return issued;
   }
 
-  /** issued → draft, to edit again; the snapshot is taken again at the next issue. */
+  /** issued → draft, to edit again; the snapshots are taken again at the next issue. */
   unissue(id: string, actor: PartnerActor) {
     return this.transition(id, 'unissue', actor, (locked) => {
       locked.partnerSnapshotEnc = null;
       locked.partnerSnapshotAt = null;
+      locked.companySnapshot = null;
       locked.issuedAt = null;
       locked.issuedBy = null;
     });
@@ -458,7 +470,10 @@ export class ContractsService {
    * issued → active. Needs the signing date and the signed copy; an administrator may activate
    * without the copy by giving a reason (FR-C-06).
    */
-  activate(id: string, dto: ActivateContractDto, actor: PartnerActor) {
+  async activate(id: string, dto: ActivateContractDto, actor: PartnerActor) {
+    if (dto.signedFileId) {
+      await this.documents.assertSignedFile('contract', id, dto.signedFileId);
+    }
     return this.transition(id, 'activate', actor, (locked) => {
       const signedDate = dto.signedDate ?? locked.signedDate;
       if (!signedDate) {
@@ -602,13 +617,33 @@ export class ContractsService {
     return amendment;
   }
 
+  /**
+   * draft → issued: like the contract, a fresh encrypted partner snapshot, party A and the template
+   * checked (FR-D-03), then the file is rendered by worker-io.
+   */
   async issueAmendment(contractId: string, amendmentId: string, actor: PartnerActor) {
     const { contract, amendment } = await this.findAmendment(contractId, amendmentId, actor);
     this.assertDraftAmendment(amendment);
+    const partner = await this.partnerRepository.findOneByOrFail({ id: contract.partnerId });
+    const now = new Date();
+    const partnerSnapshot = await this.partnerSnapshotFor(partner, actor, now);
+    const prepared = await this.documents.prepareIssue('amendment', amendmentId, partnerSnapshot);
     amendment.status = 'issued';
+    amendment.partnerSnapshotEnc = this.cipher.encryptJson(partnerSnapshot);
+    amendment.partnerSnapshotAt = now;
+    amendment.companySnapshot = prepared.companySnapshot;
+    amendment.templateVersionId = prepared.templateId;
+    amendment.issuedAt = now;
+    amendment.issuedBy = actor.userId;
     await this.amendments.save(amendment);
     await this.audit(actor, 'CONTRACT_AMENDMENT_ISSUED', contract, { amendmentId });
-    return amendment;
+    await this.documents.requestGeneration({
+      ownerType: 'amendment',
+      ownerId: amendmentId,
+      templateId: prepared.templateId,
+      actor,
+    });
+    return this.amendments.findOneByOrFail({ id: amendmentId });
   }
 
   /** issued → signed: from its effective date the amendment is part of the terms in force. */
@@ -624,6 +659,9 @@ export class ContractsService {
         code: CONTRACT_ERROR_CODES.AMENDMENT_LOCKED,
         message: 'Only an issued amendment can be signed',
       });
+    }
+    if (signedFileId) {
+      await this.documents.assertSignedFile('amendment', amendmentId, signedFileId);
     }
     amendment.status = 'signed';
     amendment.signedFileId = signedFileId ?? amendment.signedFileId;
@@ -795,6 +833,22 @@ export class ContractsService {
       metadata: { contractIds: entities.map((entity) => entity.id) },
     });
     return successfulImportResult(parsed.rows.length);
+  }
+
+  /**
+   * The partner's AG Account profile as captured on a document (BR-02); 422
+   * PARTNER_PROFILE_INCOMPLETE (`details.missing`) when a field required to sign is missing.
+   */
+  private async partnerSnapshotFor(partner: PartnerEntity, actor: PartnerActor, now: Date) {
+    const { profile, completeness } = await this.partners.readProfileForDocument(partner, actor);
+    if (!completeness.complete) {
+      throw new UnprocessableEntityException({
+        code: CONTRACT_ERROR_CODES.PROFILE_INCOMPLETE,
+        message: 'The partner profile misses fields required to sign a contract',
+        details: { missing: completeness.missing },
+      });
+    }
+    return buildPartnerSnapshot(partner, profile, now);
   }
 
   /** The contract if the actor may see it (its manager, contract.read_all or admin). */
