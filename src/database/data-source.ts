@@ -25,6 +25,7 @@ import { FolderEntity } from './entities/folder.entity';
 import { GoogleDriveConnectionEntity } from './entities/google-drive-connection.entity';
 import { ImportBatchEntity } from './entities/import-batch.entity';
 import { MediaRenderJobEntity } from './entities/media-render-job.entity';
+import { MediaSpecCheckEntity } from './entities/media-spec-check.entity';
 import {
   OriginalAccessBundleCategoryEntity,
   OriginalAccessBundleEntity,
@@ -93,6 +94,7 @@ import { OriginalAccessBundles2160000000000 } from './migrations/2160000000000-o
 import { UploadSpeedLogRange2170000000000 } from './migrations/2170000000000-upload-speed-log-range';
 import { UploadFailureLog2180000000000 } from './migrations/2180000000000-upload-failure-log';
 import { PartnersContracts2190000000000 } from './migrations/2190000000000-partners-contracts';
+import { ProjectContractChecks2200000000000 } from './migrations/2200000000000-project-contract-checks';
 
 loadEnv();
 
@@ -152,6 +154,7 @@ export const AppDataSource = new DataSource({
     PartnerEntity,
     ContractEntity,
     ContractAmendmentEntity,
+    MediaSpecCheckEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -203,6 +206,7 @@ export const AppDataSource = new DataSource({
     UploadSpeedLogRange2170000000000,
     UploadFailureLog2180000000000,
     PartnersContracts2190000000000,
+    ProjectContractChecks2200000000000,
   ],
   synchronize: false,
 });

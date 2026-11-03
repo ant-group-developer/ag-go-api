@@ -7,13 +7,15 @@ import { AnalysisOutboxService } from '../../modules/analysis/analysis-outbox.se
 import { ASSET_PREP_REQUESTED_EVENT } from '../../modules/analysis/prep/prep-batches';
 import { PrepPipelineService } from '../../modules/analysis/prep/prep-pipeline.service';
 import { STORAGE_ADAPTER, type StorageAdapter } from '../../modules/assets/storage/storage-adapter';
+import { ProjectContractsOutboxService } from '../../modules/project-contracts/project-contracts-outbox.service';
+import { PROJECT_SPEC_CHECKS_REQUESTED_EVENT } from '../../modules/project-contracts/project-contracts.events';
 import { ASSET_STORAGE_PURGE_EVENT } from '../../modules/projects/project-asset-cleanup';
 import { MediaQueueService } from './media-queue.service';
 
 export const ASSET_ANALYSIS_REQUESTED_EVENT = 'asset.analysis.requested';
 /**
- * Written when an analysis becomes the asset's current one. Nothing consumes it yet (Studio reads
- * footage on demand); it stays in the outbox as the record a future consumer hooks into.
+ * Written when an analysis becomes the asset's current one: the technical checks of the
+ * contract-linked projects showing the asset run again (Studio reads footage on demand).
  */
 export const ASSET_ANALYSIS_COMPLETED_EVENT = 'asset.analysis.completed';
 
@@ -52,6 +54,9 @@ export class OutboxDispatcherService implements OnModuleDestroy {
     @Optional()
     @Inject(forwardRef(() => PrepPipelineService))
     private readonly prepPipeline?: PrepPipelineService,
+    @Optional()
+    @Inject(forwardRef(() => ProjectContractsOutboxService))
+    private readonly projectContractsOutbox?: ProjectContractsOutboxService,
   ) {}
 
   start(): void {
@@ -177,7 +182,24 @@ export class OutboxDispatcherService implements OnModuleDestroy {
         }
         await this.prepPipeline.handlePrepRequested(prepId);
       } else if (event.eventType === ASSET_ANALYSIS_COMPLETED_EVENT) {
-        // No consumer yet: published as is.
+        const assetId = this.readString(event.payload.assetId);
+        // Without the contracts module (or an asset id) there is nothing to check again.
+        if (assetId && this.projectContractsOutbox) {
+          await this.projectContractsOutbox.handleAnalysisCompleted(assetId);
+        }
+      } else if (event.eventType === PROJECT_SPEC_CHECKS_REQUESTED_EVENT) {
+        const projectId = this.readString(event.payload.projectId);
+        if (!projectId) {
+          throw new Error(
+            `Outbox event ${PROJECT_SPEC_CHECKS_REQUESTED_EVENT} is missing projectId`,
+          );
+        }
+        if (!this.projectContractsOutbox) {
+          throw new Error(
+            'ProjectContractsOutboxService not available — ProjectContractsModule not loaded',
+          );
+        }
+        await this.projectContractsOutbox.handleSpecChecksRequested(projectId);
       } else {
         this.logger.warn(
           `Outbox event ${event.id} has unknown type "${event.eventType}" — marking published`,

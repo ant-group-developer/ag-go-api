@@ -4,6 +4,7 @@ import { OutboxService } from '../../common/outbox.service';
 import { OutboxEventEntity } from '../../database/entities/outbox-event.entity';
 import { AnalysisModule } from '../../modules/analysis/analysis.module';
 import { StorageModule } from '../../modules/assets/storage/storage.module';
+import { ProjectContractsModule } from '../../modules/project-contracts/project-contracts.module';
 import { DownloadQueueService } from './download-queue.service';
 import { ImportQueueService } from './import-queue.service';
 import { MediaQueueService } from './media-queue.service';
@@ -14,6 +15,7 @@ import { OutboxDispatcherService } from './outbox-dispatcher.service';
     TypeOrmModule.forFeature([OutboxEventEntity]),
     StorageModule,
     forwardRef(() => AnalysisModule),
+    forwardRef(() => ProjectContractsModule),
   ],
   providers: [
     MediaQueueService,

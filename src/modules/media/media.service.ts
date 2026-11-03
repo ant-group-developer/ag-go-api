@@ -23,6 +23,7 @@ import { STORAGE_ADAPTER, type StorageAdapter } from '../assets/storage/storage-
 import { diffAuditSnapshots, type AuditChange } from '../audit/audit-changes';
 import { AuditService } from '../audit/audit.service';
 import { FolderAccessLevel, FolderAccessService } from '../folders/folder-access.service';
+import { recordProjectDelivery } from '../project-contracts/project-delivery';
 import {
   comparePreviews,
   describePreview,
@@ -41,6 +42,13 @@ import { ReorderProjectMediaDto } from './dto/reorder-project-media.dto';
 import { SetProjectThumbnailDto } from './dto/set-project-thumbnail.dto';
 import { UpdateProjectMediaDto } from './dto/update-project-media.dto';
 import { deriveProjectEvaluationStatus } from './evaluation-status';
+
+type MediaSpecCheck = {
+  result: 'pass' | 'warn' | 'fail' | 'unknown';
+  findings: Array<Record<string, unknown>>;
+  analysisId: string | null;
+  checkedAt: Date;
+};
 
 type MediaCursor = {
   sortOrder: number;
@@ -129,6 +137,7 @@ export class MediaService {
     const activeProfile = await findActiveRenderProfile(
       this.dataSource.getRepository(RenderProfileEntity),
     );
+    const specChecks = await this.specChecksOf(projectId, items);
     const servable = variants.filter(
       (variant) =>
         variant.status === 'ready' && isVariantServable(variant, activeProfile, unwatermarked),
@@ -169,6 +178,8 @@ export class MediaService {
             previewVariants: previews.map((variant) => describePreview(variant, durationSeconds)),
             previewVariantCode: largestPreview?.variantCode ?? null,
             watermarkVariant: largestPreview?.hasWatermark ? largestPreview.variantCode : null,
+            // Technical check against the project's contract (spec 7.5): a hint, not a decision.
+            specCheck: specChecks.get(item.id) ?? null,
             creatorName:
               typeof sourceMetadata.driveCreator === 'string' ? sourceMetadata.driveCreator : null,
             modifiedAt:
@@ -509,6 +520,32 @@ export class MediaService {
     return this.projectRepository.save(project);
   }
 
+  /**
+   * Stored technical checks of these media under the project's current contract (refreshed by
+   * GET /projects/:id/spec-checks and when analyses complete).
+   */
+  private async specChecksOf(
+    projectId: string,
+    items: ProjectMediaEntity[],
+  ): Promise<Map<string, MediaSpecCheck>> {
+    if (items.length === 0) {
+      return new Map();
+    }
+    const rows = (await this.dataSource.query(
+      `SELECT spec_check.project_media_id AS "projectMediaId", spec_check.result,
+              spec_check.findings, spec_check.analysis_id AS "analysisId",
+              spec_check.checked_at AS "checkedAt"
+       FROM media_spec_checks spec_check
+       INNER JOIN projects project
+         ON project.id = spec_check.project_id AND project.contract_id = spec_check.contract_id
+       WHERE spec_check.project_id = $1 AND spec_check.project_media_id = ANY($2::uuid[])`,
+      [projectId, items.map((item) => item.id)],
+    )) as Array<MediaSpecCheck & { projectMediaId: string }>;
+    return new Map(
+      rows.map(({ projectMediaId, ...check }) => [projectMediaId, check as MediaSpecCheck]),
+    );
+  }
+
   private async getProject(projectId: string): Promise<ProjectEntity> {
     const project = await this.projectRepository.findOne({ where: { id: projectId } });
     if (!project) {
@@ -734,6 +771,7 @@ export class MediaService {
     const evaluationStatus = deriveProjectEvaluationStatus(total, pending, approved, rejected);
 
     await manager.update(ProjectEntity, projectId, { evaluationStatus });
+    await recordProjectDelivery(manager, projectId, evaluationStatus);
     await manager.upsert(
       ProjectEvaluationSummaryEntity,
       {
