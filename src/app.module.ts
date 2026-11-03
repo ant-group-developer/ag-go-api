@@ -48,6 +48,7 @@ import {
 } from './database/entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './database/entities/outbox-event.entity';
 import { PartnerEntity } from './database/entities/partner.entity';
+import { PaymentEntity } from './database/entities/payment.entity';
 import { ProductPackageEntity } from './database/entities/product-package.entity';
 import { ProjectAuditLogEntity } from './database/entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './database/entities/project-evaluation-summary.entity';
@@ -87,6 +88,7 @@ import { LogsModule } from './modules/logs/logs.module';
 import { MediaModule } from './modules/media/media.module';
 import { PackagesModule } from './modules/packages/packages.module';
 import { PartnersModule } from './modules/partners/partners.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 import { ProjectContractsModule } from './modules/project-contracts/project-contracts.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { ProvincesModule } from './modules/provinces/provinces.module';
@@ -168,6 +170,7 @@ import { WorkersModule } from './modules/workers/workers.module';
           AcceptanceItemSourceEntity,
           DocumentTemplateEntity,
           GeneratedDocumentEntity,
+          PaymentEntity,
         ],
         synchronize: false,
         migrationsRun: false,
@@ -203,6 +206,7 @@ import { WorkersModule } from './modules/workers/workers.module';
     AcceptancesModule,
     DocumentsModule,
     ContractDocumentsModule,
+    PaymentsModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

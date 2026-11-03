@@ -306,7 +306,7 @@ describe('per_unit — real record D4 (Nguyễn Văn Cường, THIÊN NHIÊN)', 
     });
   });
 
-  it('TC-4: with 50.000.000 advance (full_first) offsets 16.470.000 and pays 0', async () => {
+  it('TC-4: with 50.000.000 advance paid (full_first) offsets 16.470.000 and pays 0', async () => {
     const partner = await fixtures.partner(preparer.userId);
     const contractId = await fixtures.contract(partner.id, preparer.userId, {
       pricingModel: 'per_unit',
@@ -315,11 +315,15 @@ describe('per_unit — real record D4 (Nguyễn Văn Cường, THIÊN NHIÊN)', 
       advanceAmount: 50_000_000,
     });
     await deliveredProject(partner.goUserId, contractId, Array(61).fill(75));
-    const record = await service.create(
+    // Agreed but not paid yet: nothing to offset (the balance is the advance actually paid).
+    const unpaid = await service.create(
       contractId,
       { periodStart: '2026-08-01', periodEnd: '2026-09-30' },
       preparer,
     );
+    expect(unpaid).toMatchObject({ advanceOffsetAmount: 0, netPayable: 16_470_000 });
+    await fixtures.advancePaid(contractId, 50_000_000);
+    const record = await service.recalculate(unpaid.id, preparer);
     expect(record).toMatchObject({
       grossAmount: 18_300_000,
       taxAmount: 1_830_000,

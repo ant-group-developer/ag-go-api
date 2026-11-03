@@ -1,8 +1,9 @@
 import type { AcceptanceStatus } from '../../database/entities/acceptance.entity';
 
 /**
- * Acceptance record state machine (spec 5.3). Payment statuses (`partially_paid`, `paid`) come
- * with the payments phase.
+ * Acceptance record state machine (spec 5.3). Payment statuses are not actions: payments set them
+ * (payments service, FR-$-02) — signed → partially_paid → paid as settlements add up to the net
+ * payable, back when a settlement is cancelled; a record with nothing to pay is paid when signed.
  *
  *   draft → submitted (submit) → approved (approve) → issued (issue: appendix number, locked)
  *   submitted → draft (return, with a reason)

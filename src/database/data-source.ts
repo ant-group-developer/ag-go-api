@@ -40,6 +40,7 @@ import {
 } from './entities/original-access-bundle.entity';
 import { OutboxEventEntity } from './entities/outbox-event.entity';
 import { PartnerEntity } from './entities/partner.entity';
+import { PaymentEntity } from './entities/payment.entity';
 import { ProductPackageEntity } from './entities/product-package.entity';
 import { ProjectAuditLogEntity } from './entities/project-audit-log.entity';
 import { ProjectEvaluationSummaryEntity } from './entities/project-evaluation-summary.entity';
@@ -112,6 +113,7 @@ import { RateCards2210000000000 } from './migrations/2210000000000-rate-cards';
 import { ProductPackages2220000000000 } from './migrations/2220000000000-product-packages';
 import { Acceptances2230000000000 } from './migrations/2230000000000-acceptances';
 import { ContractDocuments2240000000000 } from './migrations/2240000000000-contract-documents';
+import { Payments2250000000000 } from './migrations/2250000000000-payments';
 
 loadEnv();
 
@@ -181,6 +183,7 @@ export const AppDataSource = new DataSource({
     AcceptanceItemSourceEntity,
     DocumentTemplateEntity,
     GeneratedDocumentEntity,
+    PaymentEntity,
   ],
   migrations: [
     InitialPhaseOneMigration1710000000000,
@@ -237,6 +240,7 @@ export const AppDataSource = new DataSource({
     ProductPackages2220000000000,
     Acceptances2230000000000,
     ContractDocuments2240000000000,
+    Payments2250000000000,
   ],
   synchronize: false,
 });

@@ -56,7 +56,8 @@ VALUES
   ('9a000022-dbef-11f0-ab89-18c04dc47bd5', '[GO] Contract Template Manage', 'go.contract.template_manage', 'Manage contract / acceptance templates and company details', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000023-dbef-11f0-ab89-18c04dc47bd5', '[GO] Rate Card Manage', 'go.rate_card.manage', 'Create, edit drafts, publish, import and export CTV rate card versions', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000024-dbef-11f0-ab89-18c04dc47bd5', '[GO] Acceptance Prepare', 'go.acceptance.prepare', 'Create and edit draft acceptance records and packages of managed partners', @app_id, 1, NOW(), NOW(), NULL, NULL),
-  ('9a000025-dbef-11f0-ab89-18c04dc47bd5', '[GO] Acceptance Approve', 'go.acceptance.approve', 'Approve, return, issue and cancel acceptance records', @app_id, 1, NOW(), NOW(), NULL, NULL)
+  ('9a000025-dbef-11f0-ab89-18c04dc47bd5', '[GO] Acceptance Approve', 'go.acceptance.approve', 'Approve, return, issue and cancel acceptance records', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a000026-dbef-11f0-ab89-18c04dc47bd5', '[GO] Payment Manage', 'go.payment.manage', 'Record and cancel advances, payments of acceptance records and refunds; export payouts', @app_id, 1, NOW(), NOW(), NULL, NULL)
 ON DUPLICATE KEY UPDATE
   name = VALUES(name),
   description = VALUES(description),
@@ -125,6 +126,7 @@ FROM (
   UNION ALL SELECT '[GO] Admin', 'go.rate_card.manage'
   UNION ALL SELECT '[GO] Admin', 'go.acceptance.prepare'
   UNION ALL SELECT '[GO] Admin', 'go.acceptance.approve'
+  UNION ALL SELECT '[GO] Admin', 'go.payment.manage'
 
   -- AG Go Manager: tất cả trừ settings
   UNION ALL SELECT '[GO] Manager', 'go.project.read'
@@ -162,6 +164,7 @@ FROM (
   UNION ALL SELECT '[GO] Manager', 'go.rate_card.manage'
   UNION ALL SELECT '[GO] Manager', 'go.acceptance.prepare'
   UNION ALL SELECT '[GO] Manager', 'go.acceptance.approve'
+  UNION ALL SELECT '[GO] Manager', 'go.payment.manage'
 
   -- AG Go Editor: làm việc với project, Drive, render
   UNION ALL SELECT '[GO] Editor', 'go.project.read'

@@ -46,6 +46,8 @@ export const GO_PERMISSIONS = {
   ACCEPTANCE_PREPARE: 'go.acceptance.prepare',
   /** Approve, return, issue (lock) and cancel acceptance records. */
   ACCEPTANCE_APPROVE: 'go.acceptance.approve',
+  /** Record and cancel advances, payments of acceptance records and refunds; export payouts. */
+  PAYMENT_MANAGE: 'go.payment.manage',
 } as const;
 
 export type GoPermission = (typeof GO_PERMISSIONS)[keyof typeof GO_PERMISSIONS];
