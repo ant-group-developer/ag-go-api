@@ -4,6 +4,11 @@ import type { UserType } from './auth/user-type';
 
 export type AuthContext = {
   userId: string;
+  /**
+   * Raw token subject (`auth0|…`, `google-oauth2|…`), for Account API lookups by subject. Absent for
+   * service keys: rebuild it from `userId` with `subjectOfUserId`.
+   */
+  sub?: string;
   /** Bearer token (set for real Auth0 users; absent for service-key act-as). */
   accessToken: string;
   userType?: UserType;

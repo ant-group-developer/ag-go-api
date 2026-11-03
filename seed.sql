@@ -45,7 +45,15 @@ VALUES
   ('9a000017-dbef-11f0-ab89-18c04dc47bd5', '[GO] Footage Produce', 'go.footage.produce', 'Resolve footage segments for production rendering', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000018-dbef-11f0-ab89-18c04dc47bd5', '[GO] Folder Create Root', 'go.folder.create_root', 'Create root folders and move folders to the root', @app_id, 1, NOW(), NOW(), NULL, NULL),
   ('9a000019-dbef-11f0-ab89-18c04dc47bd5', '[GO] Category Access Manage', 'go.category.access_manage', 'Open the Permissions menu and grant originals by folder and category, within one''s own reach', @app_id, 1, NOW(), NOW(), NULL, NULL),
-  ('9a00001a-dbef-11f0-ab89-18c04dc47bd5', '[GO] Project Read All', 'go.project.read_all', 'See every evaluated project on Projects (watermarked unless granted the originals)', @app_id, 1, NOW(), NOW(), NULL, NULL)
+  ('9a00001a-dbef-11f0-ab89-18c04dc47bd5', '[GO] Project Read All', 'go.project.read_all', 'See every evaluated project on Projects (watermarked unless granted the originals)', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a00001b-dbef-11f0-ab89-18c04dc47bd5', '[GO] Partner Read', 'go.partner.read', 'Read partners; personal data stays masked', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a00001c-dbef-11f0-ab89-18c04dc47bd5', '[GO] Partner Read All', 'go.partner.read_all', 'See every partner, not only the ones one manages', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a00001d-dbef-11f0-ab89-18c04dc47bd5', '[GO] Partner Manage', 'go.partner.manage', 'Create and edit partners and their contract profile', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a00001e-dbef-11f0-ab89-18c04dc47bd5', '[GO] Partner PII Read', 'go.partner.pii_read', 'Reveal full ID card, tax and bank numbers of partners (audited)', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a00001f-dbef-11f0-ab89-18c04dc47bd5', '[GO] Contract Read', 'go.contract.read', 'Read partner contracts', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a000020-dbef-11f0-ab89-18c04dc47bd5', '[GO] Contract Read All', 'go.contract.read_all', 'See every contract, not only the ones one manages', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a000021-dbef-11f0-ab89-18c04dc47bd5', '[GO] Contract Manage', 'go.contract.manage', 'Create, edit, issue, activate, suspend and terminate contracts', @app_id, 1, NOW(), NOW(), NULL, NULL),
+  ('9a000022-dbef-11f0-ab89-18c04dc47bd5', '[GO] Contract Template Manage', 'go.contract.template_manage', 'Manage contract / acceptance templates and company details', @app_id, 1, NOW(), NOW(), NULL, NULL)
 ON DUPLICATE KEY UPDATE
   name = VALUES(name),
   description = VALUES(description),
@@ -103,6 +111,14 @@ FROM (
   UNION ALL SELECT '[GO] Admin', 'go.analysis.manage'
   UNION ALL SELECT '[GO] Admin', 'go.footage.search'
   UNION ALL SELECT '[GO] Admin', 'go.footage.produce'
+  UNION ALL SELECT '[GO] Admin', 'go.partner.read'
+  UNION ALL SELECT '[GO] Admin', 'go.partner.read_all'
+  UNION ALL SELECT '[GO] Admin', 'go.partner.manage'
+  UNION ALL SELECT '[GO] Admin', 'go.partner.pii_read'
+  UNION ALL SELECT '[GO] Admin', 'go.contract.read'
+  UNION ALL SELECT '[GO] Admin', 'go.contract.read_all'
+  UNION ALL SELECT '[GO] Admin', 'go.contract.manage'
+  UNION ALL SELECT '[GO] Admin', 'go.contract.template_manage'
 
   -- AG Go Manager: tất cả trừ settings
   UNION ALL SELECT '[GO] Manager', 'go.project.read'
@@ -130,6 +146,13 @@ FROM (
   UNION ALL SELECT '[GO] Manager', 'go.analysis.manage'
   UNION ALL SELECT '[GO] Manager', 'go.footage.search'
   UNION ALL SELECT '[GO] Manager', 'go.footage.produce'
+  UNION ALL SELECT '[GO] Manager', 'go.partner.read'
+  UNION ALL SELECT '[GO] Manager', 'go.partner.read_all'
+  UNION ALL SELECT '[GO] Manager', 'go.partner.manage'
+  UNION ALL SELECT '[GO] Manager', 'go.partner.pii_read'
+  UNION ALL SELECT '[GO] Manager', 'go.contract.read'
+  UNION ALL SELECT '[GO] Manager', 'go.contract.read_all'
+  UNION ALL SELECT '[GO] Manager', 'go.contract.manage'
 
   -- AG Go Editor: làm việc với project, Drive, render
   UNION ALL SELECT '[GO] Editor', 'go.project.read'

@@ -11,11 +11,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import Redis from 'ioredis';
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { DataSource, In, Not, Repository } from 'typeorm';
 import { v7 as uuidv7 } from 'uuid';
 import { ActorEnrichmentService } from '../../common/actor-enrichment.service';
 import { isAdminUserType } from '../../common/auth/user-type';
+import { decryptAesGcm, encryptAesGcm, parseAes256Key } from '../../common/crypto/aes-gcm';
 import { AssetImportEntity } from '../../database/entities/asset-import.entity';
 import { AssetEntity } from '../../database/entities/asset.entity';
 import { GoogleDriveConnectionEntity } from '../../database/entities/google-drive-connection.entity';
@@ -1149,31 +1150,11 @@ export class GoogleDriveService implements OnModuleDestroy {
   }
 
   private encrypt(value: string): string {
-    const key = this.getEncryptionKey();
-    const iv = randomBytes(12);
-    const cipher = createCipheriv('aes-256-gcm', key, iv);
-    const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
-    const tag = cipher.getAuthTag();
-    return `${iv.toString('base64url')}.${tag.toString('base64url')}.${encrypted.toString(
-      'base64url',
-    )}`;
+    return encryptAesGcm(value, this.getEncryptionKey());
   }
 
   private decrypt(value: string): string {
-    const [ivPart, tagPart, encryptedPart] = value.split('.');
-    if (!ivPart || !tagPart || !encryptedPart) {
-      throw new Error('Invalid encrypted token');
-    }
-    const decipher = createDecipheriv(
-      'aes-256-gcm',
-      this.getEncryptionKey(),
-      Buffer.from(ivPart, 'base64url'),
-    );
-    decipher.setAuthTag(Buffer.from(tagPart, 'base64url'));
-    return Buffer.concat([
-      decipher.update(Buffer.from(encryptedPart, 'base64url')),
-      decipher.final(),
-    ]).toString('utf8');
+    return decryptAesGcm(value, this.getEncryptionKey());
   }
 
   private getEncryptionKey(): Buffer {
@@ -1181,8 +1162,8 @@ export class GoogleDriveService implements OnModuleDestroy {
     if (!raw) {
       throw new ServiceUnavailableException('Google token encryption is not configured');
     }
-    const key = Buffer.from(raw, 'base64');
-    if (key.length !== 32) {
+    const key = parseAes256Key(raw);
+    if (!key) {
       throw new ServiceUnavailableException('Google token encryption key must be 32 bytes');
     }
     return key;

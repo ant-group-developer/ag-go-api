@@ -103,6 +103,19 @@ export const envValidationSchema = Joi.object({
     .allow('')
     .optional(),
   ACCOUNT_API_KEY: Joi.string().trim().allow('').optional(),
+  // Shared secret of the AG Account webhook (applications.webhook_secret): POST /webhooks/account
+  // checks X-AgAccount-Signature with it; unset = webhooks are refused.
+  ACCOUNT_WEBHOOK_SECRET: Joi.string().trim().allow('').optional(),
+
+  // Partner personal data kept by AG Go (contract snapshots): AES-256-GCM, base64 32-byte key.
+  // KEY_ID is stored with each ciphertext; PREVIOUS_KEYS (`id:base64,id2:base64`) still decrypt.
+  PARTNER_PII_ENCRYPTION_KEY: Joi.string().trim().allow('').optional(),
+  PARTNER_PII_ENCRYPTION_KEY_ID: Joi.string()
+    .trim()
+    .pattern(/^[A-Za-z0-9_-]{1,20}$/)
+    .allow('')
+    .optional(),
+  PARTNER_PII_ENCRYPTION_PREVIOUS_KEYS: Joi.string().trim().allow('').optional(),
 
   // Google Drive OAuth
   GOOGLE_CLIENT_ID: Joi.string().trim().allow('').optional(),
