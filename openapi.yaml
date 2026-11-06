@@ -5478,6 +5478,40 @@ paths:
       summary: Worker processes on every host, with the commit they run (admins only)
       tags:
         - system
+  /system/storage:
+    get:
+      operationId: StorageMonitorController_overview
+      parameters: []
+      responses:
+        "200":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: &a50
+        - bearer: []
+      summary:
+        R2 bucket size against the bytes the database knows of, with alerts
+        (admins only)
+      tags: &a51
+        - system
+  /system/storage/audits:
+    post:
+      operationId: StorageMonitorController_requestAudit
+      parameters: []
+      responses:
+        "201":
+          description: ""
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiResponse"
+      security: *a50
+      summary:
+        Queue a full bucket audit, or return the one already queued or running
+        (admins only)
+      tags: *a51
   /rate-cards:
     get:
       operationId: RateCardsController_list
@@ -5519,10 +5553,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a50
+      security: &a52
         - bearer: []
       summary: Các phiên bản bảng giá CTV (lọc mã, trạng thái), mới nhất trước
-      tags: &a51
+      tags: &a53
         - rate-cards
     post:
       operationId: RateCardsController_create
@@ -5540,9 +5574,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a50
+      security: *a52
       summary: Tạo phiên bản nháp (phiên bản tự tăng theo mã)
-      tags: *a51
+      tags: *a53
   /rate-cards/effective:
     get:
       operationId: RateCardsController_effective
@@ -5567,11 +5601,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a50
+      security: *a52
       summary:
         Phiên bản đã phát hành của mã bảng giá hiệu lực tại một ngày (Q-R1);
         404 RATE_CARD_NOT_IN_FORCE
-      tags: *a51
+      tags: *a53
   /rate-cards/import:
     post:
       operationId: RateCardsController_importXlsx
@@ -5605,12 +5639,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a50
+      security: *a52
       summary:
         Nhập file Excel theo bố cục "Bảng lương CTV (chuẩn)" thành phiên bản
         nháp mới (tất cả hoặc không; 400 RATE_CARD_FILE_INVALID kèm
         details.errors)
-      tags: *a51
+      tags: *a53
   /rate-cards/{id}:
     get:
       operationId: RateCardsController_get
@@ -5627,9 +5661,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a50
+      security: *a52
       summary: "Chi tiết phiên bản: ô giá (sản phẩm × cấp × Mức), quy tắc cấp"
-      tags: *a51
+      tags: *a53
     patch:
       operationId: RateCardsController_update
       parameters:
@@ -5651,11 +5685,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a50
+      security: *a52
       summary:
         Sửa bản nháp (items / levelRules thay toàn bộ); 409 RATE_CARD_LOCKED
         khi đã phát hành
-      tags: *a51
+      tags: *a53
     delete:
       operationId: RateCardsController_remove
       parameters:
@@ -5671,9 +5705,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a50
+      security: *a52
       summary: Xoá bản nháp
-      tags: *a51
+      tags: *a53
   /rate-cards/{id}/clone:
     post:
       operationId: RateCardsController_clone
@@ -5696,9 +5730,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a50
+      security: *a52
       summary: Tạo phiên bản mới (nháp) từ phiên bản này
-      tags: *a51
+      tags: *a53
   /rate-cards/{id}/publish:
     post:
       operationId: RateCardsController_publish
@@ -5721,10 +5755,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a50
+      security: *a52
       summary: Phát hành bản nháp; phiên bản trước kết thúc ngày hôm trước. 409
         RATE_CARD_EFFECTIVE_FROM_INVALID nếu không sau phiên bản đã phát hành
-      tags: *a51
+      tags: *a53
   /rate-cards/{id}/archive:
     post:
       operationId: RateCardsController_archive
@@ -5741,9 +5775,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a50
+      security: *a52
       summary: Lưu trữ (không còn dùng để tính tiền)
-      tags: *a51
+      tags: *a53
   /rate-cards/{id}/export:
     get:
       operationId: RateCardsController_exportXlsx
@@ -5760,9 +5794,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a50
+      security: *a52
       summary: Xuất Excel theo bố cục "Bảng lương CTV (chuẩn)"
-      tags: *a51
+      tags: *a53
   /packages:
     get:
       operationId: PackagesController_list
@@ -5836,12 +5870,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a52
+      security: &a54
         - bearer: []
       summary: "Danh sách gói (FR-K-07): CTV thấy gói của mình, người phụ trách
         (go.acceptance.prepare) gói của HĐ mình phụ trách, người nghiệm thu mọi
         gói. Lọc HĐ, CTV, danh mục, trạng thái, mine, readyForAcceptance"
-      tags: &a53
+      tags: &a55
         - packages
     post:
       operationId: PackagesController_create
@@ -5859,12 +5893,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary:
         "Tạo gói (FR-K-01): CTV tạo cho mình (contractId tuỳ chọn), người phụ
         trách tạo hộ. Danh mục thuộc HĐ package_tier đang active và tính theo
         Mức; mã gói tự sinh"
-      tags: *a53
+      tags: *a55
   /packages/{id}:
     get:
       operationId: PackagesController_get
@@ -5881,12 +5915,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary:
         "Chi tiết gói kèm bảng tính tạm (FR-K-03): bối cảnh tính được / không
         (lý do), source hợp lệ, tỷ lệ ≥ 20s, Mức hiện tại, thành tiền, còn thiếu
         để lên Mức tiếp theo"
-      tags: *a53
+      tags: *a55
     patch:
       operationId: PackagesController_update
       parameters:
@@ -5908,9 +5942,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary: Đổi tên gói
-      tags: *a53
+      tags: *a55
   /packages/{id}/preview:
     get:
       operationId: PackagesController_preview
@@ -5927,9 +5961,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary: Tính lại và lưu bảng tính tạm của gói
-      tags: *a53
+      tags: *a55
   /packages/{id}/projects/{projectId}:
     post:
       operationId: PackagesController_addProject
@@ -5951,11 +5985,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary:
         "Thêm dự án vào gói open (FR-K-02): cùng CTV, cùng HĐ, cùng danh mục,
         chưa thuộc gói khác; dự án chưa gắn HĐ được gắn vào HĐ của gói"
-      tags: *a53
+      tags: *a55
     delete:
       operationId: PackagesController_removeProject
       parameters:
@@ -5976,9 +6010,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary: Bớt dự án khỏi gói open
-      tags: *a53
+      tags: *a55
   /packages/{id}/submit:
     post:
       operationId: PackagesController_submit
@@ -5995,11 +6029,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary:
         'Gửi nghiệm thu (FR-K-04): 422 PACKAGE_BELOW_TIER_1 ("Gói chưa đạt Mức
         1: thiếu N source") khi tính tạm chưa đạt Mức 1; khoá danh sách dự án'
-      tags: *a53
+      tags: *a55
   /packages/{id}/withdraw:
     post:
       operationId: PackagesController_withdraw
@@ -6016,9 +6050,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary: Rút lại gói đã gửi (submitted → open)
-      tags: *a53
+      tags: *a55
   /packages/{id}/return:
     post:
       operationId: PackagesController_returnPackage
@@ -6041,9 +6075,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary: Người nghiệm thu trả lại gói kèm lý do (→ open)
-      tags: *a53
+      tags: *a55
   /packages/{id}/reopen:
     post:
       operationId: PackagesController_reopen
@@ -6060,9 +6094,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary: Mở lại gói đã nghiệm thu xong để bổ sung (evaluated → open, FR-K-08)
-      tags: *a53
+      tags: *a55
   /packages/{id}/cancel:
     post:
       operationId: PackagesController_cancel
@@ -6079,9 +6113,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a52
+      security: *a54
       summary: Huỷ gói open, trả các dự án ra ngoài
-      tags: *a53
+      tags: *a55
   /contracts/{id}/eligible-projects:
     get:
       operationId: AcceptancesController_eligible
@@ -6105,13 +6139,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a54
+      security: &a56
         - bearer: []
       summary:
         "Xem trước BBNT của HĐ cho kỳ kết thúc ngày periodEnd: dòng sẽ gom (gói
         evaluated / dự án đã giao), dự án không tính kèm lý do, cảnh báo. Không
         lưu"
-      tags: &a55
+      tags: &a57
         - acceptances
   /contracts/{id}/acceptances:
     post:
@@ -6135,11 +6169,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary:
         "Tạo BBNT nháp cho HĐ active và kỳ: tự gom (BR-20) và tính tiền theo mô
         hình giá, thuế, đối trừ tạm ứng, bằng chữ (FR-A-01, FR-A-02, FR-A-05)"
-      tags: *a55
+      tags: *a57
   /acceptances:
     get:
       operationId: AcceptancesController_list
@@ -6203,11 +6237,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary:
         "Danh sách BBNT (lọc HĐ, đối tác, trạng thái, người phụ trách). Không
         có go.contract.read_all: chỉ HĐ mình phụ trách"
-      tags: *a55
+      tags: *a57
   /acceptances/{id}:
     get:
       operationId: AcceptancesController_get
@@ -6224,11 +6258,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary:
         "Chi tiết BBNT: dòng (giá trị tính / điều chỉnh / lý do), dự án gom vào
         và bị loại kèm lý do, tổng tiền, trần HĐ, cảnh báo, thao tác được phép"
-      tags: *a55
+      tags: *a57
     patch:
       operationId: AcceptancesController_update
       parameters:
@@ -6250,12 +6284,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary:
         "Sửa BBNT nháp: kỳ, ngày lập, hình thức bàn giao, thuế (tỷ lệ / nhập
         tay có lý do), đối trừ tạm ứng nhập tay, bỏ dự án / gói (FR-A-04). Đổi
         kỳ hoặc danh sách bỏ thì tính lại"
-      tags: *a55
+      tags: *a57
   /acceptances/{id}/items/{itemId}:
     patch:
       operationId: AcceptancesController_adjustItem
@@ -6283,11 +6317,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary:
         "Điều chỉnh một dòng (khối lượng, đơn giá, tên): bắt buộc lý do khi
         khác giá trị hệ thống tính (FR-A-03, BR-14); ghi audit chênh lệch"
-      tags: *a55
+      tags: *a57
   /acceptances/{id}/recalculate:
     post:
       operationId: AcceptancesController_recalculate
@@ -6304,9 +6338,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary: Gom và tính lại từ dữ liệu mới nhất, giữ điều chỉnh của các dòng còn lại
-      tags: *a55
+      tags: *a57
   /acceptances/{id}/submit:
     post:
       operationId: AcceptancesController_submit
@@ -6323,11 +6357,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary:
         Gửi duyệt (draft → submitted); 422 ACCEPTANCE_EMPTY khi không có gì để
         trả
-      tags: *a55
+      tags: *a57
   /acceptances/{id}/return:
     post:
       operationId: AcceptancesController_returnRecord
@@ -6350,9 +6384,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary: Trả lại kèm lý do (submitted → draft)
-      tags: *a55
+      tags: *a57
   /acceptances/{id}/approve:
     post:
       operationId: AcceptancesController_approve
@@ -6375,12 +6409,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary:
         Duyệt (submitted → approved). 409 ACCEPTANCE_CAP_EXCEEDED khi vượt
         trần; 422 ACCEPTANCE_APPROVAL_NOTE_REQUIRED khi còn cảnh báo (80/20, tụt
         Mức…) mà không ghi quyết định
-      tags: *a55
+      tags: *a57
   /acceptances/{id}/issue:
     post:
       operationId: AcceptancesController_issue
@@ -6397,7 +6431,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary:
         "Phát hành và khoá (approved → issued): cấp số phụ lục tiếp theo của
         HĐ, chụp hồ sơ đối tác mã hoá (BR-02) và thông tin Bên A, gói →
@@ -6405,7 +6439,7 @@ paths:
         Chặn khi HĐ không active, dòng không có giá, vượt trần (FR-A-07); 422
         COMPANY_PROFILE_INCOMPLETE / DOCUMENT_TEMPLATE_MISSING /
         DOCUMENT_DATA_MISSING (details.missing) trước khi sinh (FR-D-03)"
-      tags: *a55
+      tags: *a57
   /acceptances/{id}/sign:
     post:
       operationId: AcceptancesController_sign
@@ -6428,12 +6462,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary:
         "Ghi nhận đã ký (issued → signed), tính hạn thanh toán theo ngày làm
         việc (BR-34). signedFileId: bản ký đã upload (POST
         /acceptances/:id/signed-file)"
-      tags: *a55
+      tags: *a57
   /acceptances/{id}/cancel:
     post:
       operationId: AcceptancesController_cancel
@@ -6456,12 +6490,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a54
+      security: *a56
       summary:
         "Huỷ kèm lý do: nháp / chờ duyệt cần go.acceptance.prepare, đã duyệt /
         đã phát hành cần go.acceptance.approve. Trả dự án và gói, số phụ lục
         không dùng lại"
-      tags: *a55
+      tags: *a57
   /contracts/{id}/documents:
     get:
       operationId: ContractDocumentsController_contractDocuments
@@ -6478,12 +6512,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a56
+      security: &a58
         - bearer: []
       summary:
         "Chứng từ của HĐ, các phụ lục sửa đổi và BBNT: bản sinh (generated,
         theo phiên bản, trạng thái DOCX / PDF) và bản ký (signed)"
-      tags: &a57
+      tags: &a59
         - contract-documents
   /contracts/{id}/versions/{no}/content:
     get:
@@ -6522,10 +6556,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary: File HĐ phiên bản :no (inline, ?download=true để tải). 409
         DOCUMENT_NOT_READY / DOCUMENT_PDF_NOT_READY. Ghi audit
-      tags: *a57
+      tags: *a59
   /contracts/{id}/preview:
     post:
       operationId: ContractDocumentsController_contractPreview
@@ -6551,13 +6585,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary:
         "Xem trước HĐ từ dữ liệu hiện tại với template đang dùng, không lưu.
         Nháp: hồ sơ AG Account đọc trực tiếp (ghi audit như xem PII). Header
         X-Document-Missing: placeholder còn trống. 409 DOCUMENT_PDF_DISABLED khi
         chưa cấu hình Gotenberg, 503 DOCUMENT_PDF_FAILED"
-      tags: *a57
+      tags: *a59
   /contracts/{id}/signed-file:
     post:
       operationId: ContractDocumentsController_contractSigned
@@ -6587,11 +6621,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary:
         Upload bản ký của HĐ đã phát hành lên R2, gắn signedFileId của HĐ (dùng
         khi kích hoạt)
-      tags: *a57
+      tags: *a59
   /contracts/{id}/amendments/{amendmentId}/documents:
     get:
       operationId: ContractDocumentsController_amendmentDocuments
@@ -6613,9 +6647,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary: Chứng từ của một phụ lục sửa đổi (bản sinh và bản ký)
-      tags: *a57
+      tags: *a59
   /contracts/{id}/amendments/{amendmentId}/versions/{no}/content:
     get:
       operationId: ContractDocumentsController_amendmentVersion
@@ -6658,9 +6692,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary: File phụ lục sửa đổi phiên bản :no (inline). Ghi audit
-      tags: *a57
+      tags: *a59
   /contracts/{id}/amendments/{amendmentId}/preview:
     post:
       operationId: ContractDocumentsController_amendmentPreview
@@ -6691,9 +6725,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary: Xem trước phụ lục sửa đổi, không lưu (như xem trước HĐ)
-      tags: *a57
+      tags: *a59
   /contracts/{id}/amendments/{amendmentId}/signed-file:
     post:
       operationId: ContractDocumentsController_amendmentSigned
@@ -6728,11 +6762,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary:
         Upload bản ký của phụ lục đã phát hành, gắn signedFileId (dùng khi ghi
         nhận đã ký)
-      tags: *a57
+      tags: *a59
   /acceptances/{id}/documents:
     get:
       operationId: ContractDocumentsController_acceptanceDocuments
@@ -6749,9 +6783,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary: Chứng từ của BBNT (các phiên bản sinh và bản ký)
-      tags: *a57
+      tags: *a59
   /acceptances/{id}/versions/{no}/content:
     get:
       operationId: ContractDocumentsController_acceptanceVersion
@@ -6789,10 +6823,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary: "File BBNT đã phát hành phiên bản :no, Content-Disposition inline
         (backend đọc R2). PDF chưa có: 409 DOCUMENT_PDF_NOT_READY. Ghi audit"
-      tags: *a57
+      tags: *a59
   /acceptances/{id}/preview:
     post:
       operationId: ContractDocumentsController_acceptancePreview
@@ -6818,12 +6852,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary:
         Xem trước BBNT từ dữ liệu nháp ở server, không lưu (spec 13); mỗi lần
         xem ghi audit như xem PII. Header X-Document-Missing; 409
         DOCUMENT_PDF_DISABLED, 503 DOCUMENT_PDF_FAILED
-      tags: *a57
+      tags: *a59
   /acceptances/{id}/signed-file:
     post:
       operationId: ContractDocumentsController_acceptanceSigned
@@ -6853,11 +6887,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary:
         Upload bản ký của BBNT đã phát hành, gắn signedFileId (dùng khi ghi
         nhận đã ký)
-      tags: *a57
+      tags: *a59
   /documents/{id}/content:
     get:
       operationId: ContractDocumentsController_documentContent
@@ -6890,11 +6924,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary:
         "File của một chứng từ theo id (bản sinh: format=docx|pdf; bản ký: file
         đã upload). Inline, ?download=true để tải. Ghi audit"
-      tags: *a57
+      tags: *a59
   /documents/{id}/regenerate:
     post:
       operationId: ContractDocumentsController_regenerate
@@ -6911,12 +6945,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a56
+      security: *a58
       summary:
         "Tạo lại: bản sinh lỗi / chưa xong thì sinh lại DOCX (cùng snapshot,
         cùng template), bản đã có thì tạo lại PDF. HĐ / phụ lục cần
         go.contract.manage, BBNT cần go.acceptance.approve"
-      tags: *a57
+      tags: *a59
   /contracts/{id}/payments:
     post:
       operationId: PaymentsController_create
@@ -6939,7 +6973,7 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a58
+      security: &a60
         - bearer: []
       summary:
         Ghi nhận chi tạm ứng (advance, HĐ active/suspended, không vượt tạm ứng
@@ -6947,7 +6981,7 @@ paths:
         nhiều lần; đủ thực lĩnh → paid, chưa đủ → partially_paid) hoặc đối tác
         hoàn tạm ứng (refund, không vượt số dư). Tạm ứng/hoàn đổi thì BBNT nháp
         của HĐ được tính lại. Ghi audit
-      tags: &a59
+      tags: &a61
         - payments
   /contracts/{id}/ledger:
     get:
@@ -6965,13 +6999,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a58
+      security: *a60
       summary:
         "Sổ công nợ HĐ (FR-$-04): đã nghiệm thu, thuế, đối trừ, thực lĩnh, đã
         chi, tạm ứng đã chi / số dư, còn phải trả, quá hạn, % trần và cảnh báo
         80%/100%, số phải hoàn khi HĐ đóng (FR-C-10); BBNT đã phát hành và các
         khoản chi"
-      tags: *a59
+      tags: *a61
   /payments:
     get:
       operationId: PaymentsController_list
@@ -7047,11 +7081,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a58
+      security: *a60
       summary:
         "Danh sách khoản chi (lọc HĐ, đối tác, BBNT, loại, trạng thái, ngày
         chi). Không có go.contract.read_all: chỉ HĐ mình phụ trách"
-      tags: *a59
+      tags: *a61
   /payments/overdue:
     get:
       operationId: PaymentsController_overdue
@@ -7082,11 +7116,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a58
+      security: *a60
       summary:
         BBNT đã ký quá hạn thanh toán (hạn theo ngày làm việc, BR-34) còn phải
         trả, kèm số ngày quá hạn (FR-$-03, FR-R-05)
-      tags: *a59
+      tags: *a61
   /payments/export:
     get:
       operationId: PaymentsController_exportPayouts
@@ -7125,13 +7159,13 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a58
+      security: *a60
       summary:
         "Xuất Excel danh sách chi trả cho kế toán (FR-$-05): BBNT đã ký còn
         phải trả, đối tác, MST, số tài khoản, ngân hàng (từ hồ sơ chụp khi phát
         hành), gộp / thuế / đối trừ / thực lĩnh / đã chi / còn lại / hạn. MST và
         STK bị che trừ khi reveal=true (cần go.partner.pii_read). Ghi audit"
-      tags: *a59
+      tags: *a61
   /payments/{id}:
     get:
       operationId: PaymentsController_get
@@ -7148,9 +7182,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a58
+      security: *a60
       summary: Chi tiết một khoản chi
-      tags: *a59
+      tags: *a61
   /payments/{id}/cancel:
     post:
       operationId: PaymentsController_cancel
@@ -7173,11 +7207,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a58
+      security: *a60
       summary: Huỷ khoản chi kèm lý do (không xoá). Chi trả BBNT huỷ → BBNT về
         partially_paid / signed; không huỷ được tạm ứng đã đối trừ ở BBNT đã
         phát hành (409 PAYMENT_ADVANCE_ALREADY_OFFSET). Ghi audit
-      tags: *a59
+      tags: *a61
   /payments/{id}/proof:
     post:
       operationId: PaymentsController_uploadProof
@@ -7207,9 +7241,9 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a58
+      security: *a60
       summary: Upload chứng từ chuyển khoản (lưu R2, thay bản trước nếu có). Ghi audit
-      tags: *a59
+      tags: *a61
     get:
       operationId: PaymentsController_proof
       parameters:
@@ -7225,10 +7259,10 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a58
+      security: *a60
       summary: Xem chứng từ chuyển khoản (inline, đọc từ R2 qua API). 404
         PAYMENT_PROOF_MISSING. Ghi audit
-      tags: *a59
+      tags: *a61
   /payment-reports/payables:
     get:
       operationId: PaymentReportsController_payables
@@ -7272,14 +7306,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: &a60
+      security: &a62
         - bearer: []
       summary:
         "Công nợ hiện tại theo HĐ và theo đối tác (sổ công nợ của nhiều HĐ):
         nghiệm thu, thuế, thực lĩnh, đã chi, tạm ứng, số dư tạm ứng, còn phải
         trả, quá hạn, % trần; capAlerts: HĐ đạt 80%/100% trần (FR-C-09,
         FR-R-05). from/to không áp dụng"
-      tags: &a61
+      tags: &a63
         - payment-reports
   /payment-reports/payments:
     get:
@@ -7324,12 +7358,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a60
+      security: *a62
       summary:
         "Thanh toán theo kỳ (ngày chi trong from–to): tổng theo tháng và loại
         (tạm ứng, thanh toán BBNT, hoàn tạm ứng, chi ròng) và danh sách khoản
         chi (FR-R-01)"
-      tags: *a61
+      tags: *a63
   /payment-reports/acceptances:
     get:
       operationId: PaymentReportsController_acceptances
@@ -7388,12 +7422,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a60
+      security: *a62
       summary:
         "BBNT theo trạng thái (ngày lập trong from–to): số lượng, gộp, thuế,
         thực lĩnh, đã chi, còn phải trả theo trạng thái và danh sách (lọc
         status)"
-      tags: *a61
+      tags: *a63
   /payment-reports/tax:
     get:
       operationId: PaymentReportsController_tax
@@ -7418,11 +7452,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a60
+      security: *a62
       summary:
         Thuế TNCN đã khấu trừ theo đối tác trong năm (BBNT đã phát hành, theo
         ngày lập), hỗ trợ quyết toán (FR-R-04)
-      tags: *a61
+      tags: *a63
   /payment-reports/export:
     get:
       operationId: PaymentReportsController_export
@@ -7498,12 +7532,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiResponse"
-      security: *a60
+      security: *a62
       summary:
         "Xuất Excel một báo cáo: report=payables (2 sheet: theo HĐ, theo đối
         tác) | payments (theo tháng, chi tiết) | acceptances (theo trạng thái,
         danh sách) | tax (cần year). Ghi audit"
-      tags: *a61
+      tags: *a63
 info:
   title: AG Go API
   description: AG Go backend API
@@ -7511,7 +7545,7 @@ info:
   contact: {}
 tags: []
 servers:
-  - url: http://localhost:3000/api
+  - url: http://localhost:3738/api
 components:
   securitySchemes:
     bearer:
@@ -7562,7 +7596,7 @@ components:
             format: uuid
         accessLevel:
           type: string
-          enum: &a62
+          enum: &a64
             - viewer
             - editor
             - manager
@@ -7578,7 +7612,7 @@ components:
       properties:
         accessLevel:
           type: string
-          enum: *a62
+          enum: *a64
         inheritChildren:
           type: boolean
     PreviewOriginalAccessBundleDto:
@@ -7780,7 +7814,7 @@ components:
       properties:
         contractType:
           type: string
-          enum: &a63
+          enum: &a65
             - content_production
           default: content_production
         contractNumber:
@@ -7809,7 +7843,7 @@ components:
           description: Hạn tạm ứng (ngày làm việc), bắt buộc khi có tạm ứng
         advanceOffsetRule:
           type: string
-          enum: &a64
+          enum: &a66
             - full_first
             - proportional
           default: full_first
@@ -7826,7 +7860,7 @@ components:
           additionalProperties: true
         techSpecPreset:
           type: string
-          enum: &a65
+          enum: &a67
             - footage_4k60
             - topic_video
             - shot_4k
@@ -7864,7 +7898,7 @@ components:
           example: 2026-08-01
         pricingModel:
           type: string
-          enum: &a66
+          enum: &a68
             - per_topic
             - per_unit
             - package_tier
@@ -7876,7 +7910,7 @@ components:
           additionalProperties: true
         acceptanceCycle:
           type: string
-          enum: &a67
+          enum: &a69
             - on_demand
             - weekly
             - monthly
@@ -7896,7 +7930,7 @@ components:
       properties:
         contractType:
           type: string
-          enum: *a63
+          enum: *a65
           default: content_production
         contractNumber:
           type: string
@@ -7924,7 +7958,7 @@ components:
           description: Hạn tạm ứng (ngày làm việc), bắt buộc khi có tạm ứng
         advanceOffsetRule:
           type: string
-          enum: *a64
+          enum: *a66
           default: full_first
         deliveryRule:
           type: object
@@ -7939,7 +7973,7 @@ components:
           additionalProperties: true
         techSpecPreset:
           type: string
-          enum: *a65
+          enum: *a67
           default: footage_4k60
         penaltyPercent:
           type: number
@@ -7971,13 +8005,13 @@ components:
           example: 2026-08-01
         pricingModel:
           type: string
-          enum: *a66
+          enum: *a68
         pricingConfig:
           type: object
           additionalProperties: true
         acceptanceCycle:
           type: string
-          enum: *a67
+          enum: *a69
         paymentTermBusinessDays:
           type: number
           example: 10
@@ -8678,7 +8712,7 @@ components:
             type: string
         purpose:
           type: string
-          enum: &a68
+          enum: &a70
             - preview
             - final
         prefer:
@@ -8716,7 +8750,7 @@ components:
             type: string
         purpose:
           type: string
-          enum: *a68
+          enum: *a70
         prefer:
           $ref: "#/components/schemas/ResolvePreferDto"
         projectIds:
@@ -9005,7 +9039,7 @@ components:
           description: Ngày lập ghi trên biên bản
         deliveryMethod:
           type: string
-          enum: &a69
+          enum: &a71
             - ag_go
             - hard_drive
             - google_drive
@@ -9036,7 +9070,7 @@ components:
           nullable: true
         deliveryMethod:
           type: string
-          enum: *a69
+          enum: *a71
         deliveryNote:
           type: object
           nullable: true
