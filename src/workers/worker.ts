@@ -7,6 +7,7 @@ import { MediaQueueWorkerService } from '../modules/assets/media-queue-worker.se
 import { DocumentWorkerService } from '../modules/documents/document-worker.service';
 import { DownloadWorkerService } from '../modules/downloads/download-worker.service';
 import { GoogleDriveImportWorkerService } from '../modules/google-drive/google-drive-import-worker.service';
+import { StorageMonitorService } from '../modules/storage-monitor/storage-monitor.service';
 import { WorkerHeartbeatPublisher } from './worker-heartbeat-publisher';
 
 const WORKER_ROLES = ['media', 'download', 'import', 'outbox', 'documents'] as const;
@@ -59,6 +60,8 @@ async function bootstrap(): Promise<void> {
     app.get(OutboxDispatcherService).start();
     // Start farm result poller only in outbox role; no-ops automatically if FARM_URL is unset.
     app.get(FarmResultPollerService).start();
+    // Hourly R2 bucket snapshots and the weekly bucket audit (System > R2 storage).
+    app.get(StorageMonitorService).start();
     started.push('outbox');
   }
 

@@ -114,6 +114,7 @@ import { ProductPackages2220000000000 } from './migrations/2220000000000-product
 import { Acceptances2230000000000 } from './migrations/2230000000000-acceptances';
 import { ContractDocuments2240000000000 } from './migrations/2240000000000-contract-documents';
 import { Payments2250000000000 } from './migrations/2250000000000-payments';
+import { StorageMonitor2260000000000 } from './migrations/2260000000000-storage-monitor';
 
 loadEnv();
 
@@ -241,6 +242,7 @@ export const AppDataSource = new DataSource({
     Acceptances2230000000000,
     ContractDocuments2240000000000,
     Payments2250000000000,
+    StorageMonitor2260000000000,
   ],
   synchronize: false,
 });

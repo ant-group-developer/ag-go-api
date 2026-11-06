@@ -96,6 +96,7 @@ import { RateCardsModule } from './modules/rate-cards/rate-cards.module';
 import { RenderModule } from './modules/render/render.module';
 import { SettingsModule } from './modules/settings/settings.module';
 import { StatisticsModule } from './modules/statistics/statistics.module';
+import { StorageMonitorModule } from './modules/storage-monitor/storage-monitor.module';
 import { TagsModule } from './modules/tags/tags.module';
 import { UsageModule } from './modules/usage/usage.module';
 import { WorkersModule } from './modules/workers/workers.module';
@@ -197,6 +198,7 @@ import { WorkersModule } from './modules/workers/workers.module';
     FootageModule,
     UsageModule,
     WorkersModule,
+    StorageMonitorModule,
     PartnersModule,
     ContractsModule,
     ProjectContractsModule,

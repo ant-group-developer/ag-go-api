@@ -149,6 +149,12 @@ export const envValidationSchema = Joi.object({
   FARM_URL_TTL_SECONDS: Joi.number().integer().min(1).default(3600),
   FARM_POLL_INTERVAL_MS: Joi.number().integer().min(100).default(5000),
 
+  // R2 storage monitor (System > R2 storage): bucket size and operations from the Cloudflare
+  // GraphQL Analytics API. Needs a token with "Account Analytics: Read"; unset, the monitor
+  // still records the bytes the database knows of and runs the weekly bucket audit.
+  CLOUDFLARE_ACCOUNT_ID: Joi.string().trim().allow('').optional(),
+  CLOUDFLARE_ANALYTICS_TOKEN: Joi.string().trim().allow('').optional(),
+
   // Content analysis
   ANALYSIS_AUTO_ENQUEUE: Joi.boolean().truthy('true').falsy('false').default(false),
   // Studio inputs (prep): new video footage is prepared once processed, independent of analysis
