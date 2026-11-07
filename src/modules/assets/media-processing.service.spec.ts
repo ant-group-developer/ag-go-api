@@ -470,6 +470,7 @@ describe('MediaProcessingService video variants', () => {
   };
   let dir: string;
   let source: string;
+  let insvSource: string;
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'media-video-spec-'));
@@ -499,11 +500,52 @@ describe('MediaProcessingService video variants', () => {
       '-shortest',
       source,
     ]);
+    // Insta360 layout: each fisheye lens as its own square video stream, plus audio.
+    insvSource = join(dir, 'VID_20260909_115757_00_005.insv');
+    execFileSync(ffmpegPath as unknown as string, [
+      '-hide_banner',
+      '-loglevel',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=360x360:rate=30',
+      '-f',
+      'lavfi',
+      '-i',
+      'smptebars=size=360x360:rate=30',
+      '-f',
+      'lavfi',
+      '-i',
+      'sine=frequency=440',
+      '-map',
+      '0:v',
+      '-map',
+      '1:v',
+      '-map',
+      '2:a',
+      '-t',
+      '2',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'ultrafast',
+      '-c:a',
+      'aac',
+      '-f',
+      'mp4',
+      insvSource,
+    ]);
   }, 60_000);
 
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  async function renderVideo(existing: SavedVariant[] = [], reuse = false) {
+  async function renderVideo(
+    existing: SavedVariant[] = [],
+    reuse = false,
+    input: { path: string; filename: string } = { path: source, filename: 'a.mp4' },
+  ) {
+    const ext = input.filename.slice(input.filename.lastIndexOf('.'));
     const logo = await sharp({
       create: { width: 64, height: 64, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } },
     })
@@ -558,8 +600,13 @@ describe('MediaProcessingService video variants', () => {
     };
     const runProcess = jest.spyOn(internals, 'runProcess');
     const result = await internals.processVideo(
-      { id: 'asset-1', assetType: 'video', originalStorageKey: 'projects/p1/originals/a.mp4' },
-      source,
+      {
+        id: 'asset-1',
+        assetType: 'video',
+        originalFilename: input.filename,
+        originalStorageKey: `projects/p1/originals/a${ext}`,
+      },
+      input.path,
       profile,
       async () => undefined,
       reuse,
@@ -589,6 +636,32 @@ describe('MediaProcessingService video variants', () => {
     }
     // ffprobe, the thumbnail frame, then one run for all previews.
     expect(runProcess).toHaveBeenCalledTimes(3);
+  }, 60_000);
+
+  it('stitches an Insta360 .insv into 2:1 equirectangular previews', async () => {
+    const { saved, runProcess, result } = await renderVideo([], false, {
+      path: insvSource,
+      filename: 'VID_20260909_115757_00_005.insv',
+    });
+
+    expect(result.metadata).toMatchObject({ width: 720, height: 360 });
+    expect(result.metadata).toMatchObject({ projection: 'equirect' });
+    // A stitched render never reuses a plain (single-lens) one of the same size.
+    for (const variant of saved) {
+      expect(variant.renderSpec).toMatch(/^video\|equirect\|/);
+    }
+    expect(saved.map((variant) => [variant.variantCode, variant.width, variant.height])).toEqual([
+      ['thumbnail', 120, 60],
+      ['preview_180p_wm', 360, 180],
+      ['preview_360p', 720, 360],
+      ['preview_360p_wm', 720, 360],
+    ]);
+    const ffmpegArgs = runProcess.mock.calls
+      .slice(1)
+      .map((call) => (call[1] as string[]).join(' '));
+    for (const args of ffmpegArgs) {
+      expect(args).toContain('[0:v:0][0:v:1]hstack=inputs=2,v360=input=dfisheye:output=e');
+    }
   }, 60_000);
 
   it('with reuse, renders only the missing preview', async () => {

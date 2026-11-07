@@ -44,6 +44,7 @@ import {
   THUMBNAIL_VARIANT_CODE,
   watermarkFingerprint,
 } from '../render/watermark-policy';
+import { dualFisheyeFilter, equirectSize, isDualFisheyeVideo } from './dual-fisheye';
 import { STORAGE_ADAPTER, type StorageAdapter } from './storage/storage-adapter';
 
 type ProgressReporter = (percent: number, message: string) => Promise<void>;
@@ -55,6 +56,8 @@ type MediaMetadata = {
   format?: string;
   codec?: string;
   frameRate?: number;
+  /** 'equirect' for a 360 video stitched from dual fisheye lenses. */
+  projection?: 'equirect';
 };
 
 /** One variant a render of a file should end with, and the spec it is rendered with. */
@@ -552,8 +555,11 @@ export class MediaProcessingService {
     sourceWidth: number,
     sourceHeight: number,
     profile: RenderProfileEntity | null,
+    equirect = false,
   ): PlannedOutput[] {
     const isVideo = assetType === 'video';
+    // Stitched 360 renders differ from plain ones of the same size, so neither reuses the other.
+    const kind = equirect ? `${assetType}|equirect` : assetType;
     const sizes = this.getRenderSizes(profile);
     const quality = this.getImageQuality(profile);
     const watermarkActive = isWatermarkActive(profile);
@@ -581,7 +587,7 @@ export class MediaProcessingService {
         height: preview.height,
         watermark: preview.watermark,
         bitrate,
-        renderSpec: `${assetType}|${preview.resolution}p|wm=${preview.watermark ? watermarkSpec : 'none'}|${encoding}`,
+        renderSpec: `${kind}|${preview.resolution}p|wm=${preview.watermark ? watermarkSpec : 'none'}|${encoding}`,
       };
     });
     outputs.push({
@@ -592,7 +598,7 @@ export class MediaProcessingService {
       height: 0,
       watermark: false,
       bitrate: null,
-      renderSpec: `${assetType}|thumbnail|w=${sizes.thumbnailWidth}|q=${quality.thumbnail}`,
+      renderSpec: `${kind}|thumbnail|w=${sizes.thumbnailWidth}|q=${quality.thumbnail}`,
     });
     return outputs;
   }
@@ -636,7 +642,13 @@ export class MediaProcessingService {
     if (!width || !height) {
       return null;
     }
-    const outputs = this.planOutputs(asset.assetType, width, height, profile);
+    const outputs = this.planOutputs(
+      asset.assetType,
+      width,
+      height,
+      profile,
+      asset.sourceMetadata?.projection === 'equirect',
+    );
     const { toRender, reused } = await this.splitReusable(asset.id, outputs, true);
     if (toRender.length > 0) {
       return null;
@@ -773,8 +785,14 @@ export class MediaProcessingService {
       }>;
     };
     const videoStream = parsed.streams?.find((stream) => stream.codec_type === 'video');
-    const width = videoStream?.width;
-    const height = videoStream?.height;
+    // An Insta360 .insv holds both fisheye lenses; previews show them stitched into one 360 frame.
+    const dualFisheye =
+      isDualFisheyeVideo(asset.originalFilename, parsed.streams) ||
+      isDualFisheyeVideo(asset.originalStorageKey, parsed.streams);
+    const stitched =
+      dualFisheye && videoStream?.height ? equirectSize(videoStream.height) : undefined;
+    const width = stitched?.width ?? videoStream?.width;
+    const height = stitched?.height ?? videoStream?.height;
     const parsedDuration = parsed.format?.duration ? Number(parsed.format.duration) : undefined;
     const durationSeconds =
       parsedDuration !== undefined && Number.isFinite(parsedDuration) ? parsedDuration : undefined;
@@ -787,17 +805,20 @@ export class MediaProcessingService {
 
     // FFmpeg applies the rotation of phone videos before the filters, so previews are planned on
     // the displayed frame.
-    const rotation = Number(
-      videoStream?.side_data_list?.find((data) => data.rotation !== undefined)?.rotation ??
-        videoStream?.tags?.rotate ??
-        0,
-    );
+    const rotation = dualFisheye
+      ? 0
+      : Number(
+          videoStream?.side_data_list?.find((data) => data.rotation !== undefined)?.rotation ??
+            videoStream?.tags?.rotate ??
+            0,
+        );
     const quarterTurn = Math.abs(Math.round(rotation / 90)) % 2 === 1;
     const outputs = this.planOutputs(
       'video',
       quarterTurn ? height : width,
       quarterTurn ? width : height,
       profile,
+      dualFisheye,
     );
     const { toRender, reused } = await this.splitReusable(asset.id, outputs, reuse);
     const thumbnail = toRender.find((output) => output.kind === 'thumbnail');
@@ -806,7 +827,7 @@ export class MediaProcessingService {
 
     if (thumbnail) {
       await report(this.progressFor(0, 1), 'Rendering video thumbnail');
-      await this.createVideoThumbnail(asset, inputPath, thumbnail, quality, profile);
+      await this.createVideoThumbnail(asset, inputPath, thumbnail, quality, profile, dualFisheye);
     }
 
     if (previews.length > 0) {
@@ -824,6 +845,7 @@ export class MediaProcessingService {
           profile,
           durationSeconds,
           renderProgress.update,
+          dualFisheye,
         );
       } finally {
         await renderProgress.settled();
@@ -843,6 +865,7 @@ export class MediaProcessingService {
         format: parsed.format?.format_name,
         codec: videoStream?.codec_name,
         frameRate,
+        ...(dualFisheye ? { projection: 'equirect' as const } : {}),
       },
       summary: { rendered: toRender.map((output) => output.variantCode), reused, removed },
     };
@@ -855,6 +878,7 @@ export class MediaProcessingService {
     output: PlannedOutput,
     quality: { thumbnail: number },
     profile: RenderProfileEntity | null,
+    dualFisheye = false,
   ): Promise<string> {
     const posterPath = join(tmpdir(), `${TEMP_FILE_PREFIX}poster-${asset.id}-${Date.now()}.jpg`);
     try {
@@ -865,8 +889,9 @@ export class MediaProcessingService {
         inputPath,
         '-frames:v',
         '1',
-        '-vf',
-        `scale='min(${output.width},iw)':-2`,
+        ...(dualFisheye
+          ? ['-filter_complex', dualFisheyeFilter(...this.stitchedSize(output.width))]
+          : ['-vf', `scale='min(${output.width},iw)':-2`]),
         posterPath,
       ]);
       const poster = await sharp(await fs.readFile(posterPath))
@@ -904,6 +929,7 @@ export class MediaProcessingService {
     profile: RenderProfileEntity | null,
     durationSeconds: number | undefined,
     onFraction: (fraction: number) => void,
+    dualFisheye = false,
   ): Promise<string[]> {
     const prefix = this.projectPrefix(asset.originalStorageKey, asset.id);
     const stamp = `${asset.id}-${Date.now()}`;
@@ -931,10 +957,12 @@ export class MediaProcessingService {
 
       // Scale the 4K source once to the largest size; smaller sizes are scaled from that.
       const largest = outputs.find((output) => area(output) === largestArea)!;
+      // A dual-fisheye source is stitched straight to that size.
+      const source = dualFisheye
+        ? dualFisheyeFilter(largest.width, largest.height)
+        : `[0:v]scale=${largest.width}:${largest.height}`;
       const filters = [
-        `[0:v]scale=${largest.width}:${largest.height},split=${outputs.length}${outputs
-          .map((_, index) => `[s${index}]`)
-          .join('')}`,
+        `${source},split=${outputs.length}${outputs.map((_, index) => `[s${index}]`).join('')}`,
       ];
       const watermarkArgs: string[] = [];
       for (const [index, output] of outputs.entries()) {
@@ -1410,6 +1438,12 @@ export class MediaProcessingService {
       };
       return entities[character] ?? character;
     });
+  }
+
+  /** Even-sized 2:1 frame `width` wide, for a stitched 360 thumbnail. */
+  private stitchedSize(width: number): [number, number] {
+    const height = Math.max(2, Math.floor(width / 4) * 2);
+    return [height * 2, height];
   }
 
   /**
